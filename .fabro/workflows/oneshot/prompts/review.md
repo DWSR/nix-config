@@ -26,15 +26,37 @@ changed files where the diff is not enough. This diff is your primary input.
 Run the checks and use their results; do not rely on visual inspection where a command
 can decide.
 
-1. Regression safety: discover the repository's canonical test command(s) from its
-   manifests, task runners, CI config, and README, and run them. A failure rejects the
-   change only when it is introduced by the diff or is an issue requirement left
-   unverified. For every failing canonical check that could reflect a code defect, compare
-   the same check at `baseline_sha` in a temporary detached checkout (for example, with
+1. Regression safety: select checks from the changed paths, rather than running the full
+   canonical suite for every change. Derive changed paths from the baseline diff and
+   include untracked deliverable files; apply every matching rule:
+   - For `flake.lock` or `flake.nix`, validate `flake.lock` as JSON with
+     `python3 -m json.tool flake.lock >/dev/null` and run `nix flake check --no-build`.
+     For `flake.lock`, use `nix eval` on the affected inputs' locked versions; for
+     `flake.nix`, evaluate only affected outputs or versions. For a lockfile-only change,
+     do not run `nix flake check` without `--no-build`. Run full `nix flake check`
+     only when the change also touches a Nix module or package. Inspect `flake.nix` hunks:
+     input declarations alone do not count as package or module changes.
+   - For `.github/workflows/**`, run `actionlint` on the touched workflow files,
+     `python3 tests/dependency-cooldown/cooldown.test.py`, and
+     `nix flake check --no-build`.
+   - For `tests/**` or `scripts/**`, run the suites covering the touched files and
+     `nix develop --command prek run --all-files`.
+   - Full `nix flake check` is required for any changed Nix module, package definition,
+     or `.fabro/workflows/**/workflow.fabro` workflow graph. Apply every matching path
+     rule; do not let one category suppress another.
+   - Always run `git diff --check` against `baseline_sha`, scan changed files for
+     placeholder markers and secrets, and check new files for scratch artifacts.
+   Find precise suite and version-evaluation targets from repository conventions. Do not
+   replace focused checks with a full flake build. If a required check fails, reject only
+   when the diff introduces the failure or leaves an issue requirement unverified. For
+   every failing required check that could reflect a code defect, compare the same check
+   at `baseline_sha` in a temporary detached checkout (for example, with
    `git worktree add --detach`); do not alter the review worktree. Treat a failure as
-   pre-existing only when the same check fails for the same reason at baseline and the diff
-   does not introduce or worsen it. Record that evidence in `review_findings` as explicitly
-   non-blocking.
+   pre-existing only when it fails for the same reason at baseline and the diff does not
+   introduce or worsen it. Record that evidence in `review_findings` as explicitly
+   non-blocking. In `review_mechanical`, record every selected check with the changed-path
+   reason that selected it, along with universal checks and any required checks that could
+   not run; do not report a bare pass/fail list.
 2. Environmental failures: if a check cannot be evaluated because the sandbox cannot
    resolve a host or fetch a pinned source, such as `Could not resolve host: github.com`,
    `Temporary failure in name resolution`, DNS errors, or network timeouts, stop treating
