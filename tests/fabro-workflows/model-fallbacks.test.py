@@ -6,6 +6,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".fabro" / "workflows"
 FABRO_NIX = ROOT / "configurations" / "fabro-vm" / "fabro.nix"
 LITELLM_NIX = ROOT / "configurations" / "fabro-vm" / "litellm.nix"
+ONESHOT_GRAPH = WORKFLOW_DIR / "oneshot" / "workflow.fabro"
+ONESHOT_REVIEW = WORKFLOW_DIR / "oneshot" / "prompts" / "review.md"
 
 # Every workflow whose agent nodes can use the runner's default
 # deepseek-v4.1-flash model.
@@ -79,6 +81,26 @@ class ModelFallbackTests(unittest.TestCase):
         self.assertTrue(tail, "chatgpt/gpt-6-luna deployment is missing")
         block = tail.split("model_name =", 1)[0]
         self.assertIn('reasoning_effort = "xhigh";', block)
+
+    def test_oneshot_routes_environmental_reviews_directly_to_failure(self):
+        graph = ONESHOT_GRAPH.read_text()
+        network_edge = 'review -> fail [condition="outcome=failed && context.failure_class contains network"]'
+        blocked_edge = 'review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]'
+        rework_edge = 'review -> rework [condition="outcome=failed && context.verdict=REJECTED"]'
+
+        self.assertIn(network_edge, graph)
+        self.assertIn(blocked_edge, graph)
+        self.assertLess(graph.index(network_edge), graph.index(rework_edge))
+        self.assertLess(graph.index(blocked_edge), graph.index(rework_edge))
+        self.assertNotIn("Review rejected the change after 2 rework rounds", graph)
+
+    def test_oneshot_reviewer_distinguishes_environment_and_baseline_failures(self):
+        review = ONESHOT_REVIEW.read_text()
+
+        self.assertIn("failure_class` to `network`", review)
+        self.assertIn("context_updates.stage_failure", review)
+        self.assertIn("temporary detached checkout", review)
+        self.assertIn("explicitly non-blocking", review)
 
 
 if __name__ == "__main__":

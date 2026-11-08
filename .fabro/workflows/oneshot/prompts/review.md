@@ -27,15 +27,30 @@ Run the checks and use their results; do not rely on visual inspection where a c
 can decide.
 
 1. Regression safety: discover the repository's canonical test command(s) from its
-   manifests, task runners, CI config, and README, and run them. Any test failure rejects
-   the change.
-2. Placeholder markers: grep the changed files for `TBD`, `TODO`, `FIXME`, `HACK`, `XXX`.
+   manifests, task runners, CI config, and README, and run them. A failure rejects the
+   change only when it is introduced by the diff or is an issue requirement left
+   unverified. For every failing canonical check that could reflect a code defect, compare
+   the same check at `baseline_sha` in a temporary detached checkout (for example, with
+   `git worktree add --detach`); do not alter the review worktree. Treat a failure as
+   pre-existing only when the same check fails for the same reason at baseline and the diff
+   does not introduce or worsen it. Record that evidence in `review_findings` as explicitly
+   non-blocking.
+2. Environmental failures: if a check cannot be evaluated because the sandbox cannot
+   resolve a host or fetch a pinned source, such as `Could not resolve host: github.com`,
+   `Temporary failure in name resolution`, DNS errors, or network timeouts, stop treating
+   it as a code failure. Return `outcome` `failed`, set `failure_class` to `network`, and
+   put the concrete error in both `failure_reason` and `context_updates.stage_failure`.
+   Set `context_updates.verdict` to `BLOCKED`; do not describe the environmental failure
+   as a code defect. Apply this output to any failure that prevents review completion.
+   For every other rejected or blocked review, also set `context_updates.stage_failure`
+   to the concrete reason so a terminal failure reports the finding, not a generic message.
+3. Placeholder markers: grep the changed files for `TBD`, `TODO`, `FIXME`, `HACK`, `XXX`.
    New markers reject the change unless the issue itself requires them.
-3. Secrets: grep the changed files for hardcoded secrets or credentials. Concrete secret
+4. Secrets: grep the changed files for hardcoded secrets or credentials. Concrete secret
    patterns reject the change.
-4. Scratch files: any new file that is not part of the deliverable (plan, notes, report,
+5. Scratch files: any new file that is not part of the deliverable (plan, notes, report,
    debug artifact) rejects the change.
-5. Static checks: run the repository's linter or typechecker when one is configured for
+6. Static checks: run the repository's linter or typechecker when one is configured for
    the touched stack. Otherwise spot-check the changed files for runtime-only breakage
    such as type-only imports used as values, unresolved globals, or newly introduced
    runtime dependencies.
@@ -57,11 +72,14 @@ Read the code and compare it against the issue.
 
 ## Verdict rules
 
-- APPROVED only when every mechanical check passes and no judgment check finds a real gap.
-- REJECTED otherwise. If a check cannot be evaluated, say so explicitly and reject; never
-  assume success.
+- APPROVED only when every required check is evaluated and no change-introduced defect or
+  issue requirement gap remains. Baseline failures are documented as non-blocking findings.
+- REJECTED when the diff introduces a defect or an issue requirement remains unverified.
+  Use verdict `BLOCKED` for environmental failures or any other condition that prevents
+  completing the review; never assume success.
 - A rejection must include remediation: the exact file, the exact problem, and the exact
-  fix, with issue references where applicable.
+  fix, with issue references where applicable. A blocked review must name the concrete
+  blocker and what would unblock it.
 
 ## Hard constraints
 
@@ -77,8 +95,16 @@ single-line JSON string; escape embedded double quotes as `\"` and newlines as `
 
 When the change is approved:
 
-{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: <command> PASS; TODO grep: CLEAN; secrets grep: CLEAN; scratch files: NONE", "review_findings": "", "review_remediation": ""}}
+{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: <command> PASS; TODO grep: CLEAN; secrets grep: CLEAN; scratch files: NONE", "review_findings": "<baseline failures and evidence, explicitly non-blocking, or empty>", "review_remediation": ""}}
 
-When the change is rejected:
+When the change is rejected for a change-introduced defect or an unverified requirement:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"verdict": "REJECTED", "review_summary": "<one-sentence outcome>", "review_mechanical": "<concise mechanical results>", "review_findings": "1. <finding with exact file, line range, and why it violates the issue>; 2. <finding>", "review_remediation": "1. <exact fix>; 2. <exact fix>"}}
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"verdict": "REJECTED", "stage_failure": "<concrete reason>", "review_summary": "<one-sentence outcome>", "review_mechanical": "<concise mechanical results>", "review_findings": "1. <finding with exact file, line range, and why it violates the issue>; 2. <finding>", "review_remediation": "1. <exact fix>; 2. <exact fix>"}}
+
+When the review is blocked by a network failure:
+
+{"outcome": "failed", "failure_reason": "<concrete network error>", "context_updates": {"verdict": "BLOCKED", "failure_class": "network", "stage_failure": "<same concrete network error>", "review_summary": "Review blocked by a network failure.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}
+
+When the review is blocked for another reason:
+
+{"outcome": "failed", "failure_reason": "<concrete blocker>", "context_updates": {"verdict": "BLOCKED", "stage_failure": "<same concrete blocker>", "review_summary": "Review blocked: <concrete blocker>.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}
