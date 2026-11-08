@@ -3102,6 +3102,14 @@
                 pass_filenames = false;
               };
 
+              dependency-cooldown = {
+                enable = true;
+                name = "dependency-cooldown";
+                entry = "${pkgs.python3}/bin/python3 tests/dependency-cooldown/cooldown.test.py";
+                language = "system";
+                pass_filenames = false;
+              };
+
               flake-checker = {
                 enable = true;
                 # flake-checker 0.2.11 (shipped by both nixpkgs 25.11 and
