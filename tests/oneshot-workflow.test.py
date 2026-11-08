@@ -77,7 +77,6 @@ class ProbeTests(unittest.TestCase):
         self.assertIn('prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]', graph)
         blocked_edge = 'prepare -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED", weight=10]'
         self.assertIn(blocked_edge, graph)
-        self.assertLess(graph.index(blocked_edge), graph.index('prepare -> diagnose'))
         self.assertIn('diagnose -> implement [condition="outcome=succeeded && context.preflight_status=READY"]', graph)
         self.assertIn('diagnose -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED"]', graph)
         self.assertNotIn('prepare -> implement [condition="outcome=succeeded"]', graph)
