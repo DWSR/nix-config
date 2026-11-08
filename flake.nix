@@ -3015,7 +3015,7 @@
           fabro-workflows-model-fallbacks =
             pkgs.runCommand "fabro-workflows-model-fallbacks"
               {
-                nativeBuildInputs = [ pkgs.python3 ];
+                nativeBuildInputs = [ pkgs.git pkgs.python3 ];
               }
               ''
                 export HOME=$(mktemp -d)
@@ -3023,6 +3023,7 @@
                 chmod -R u+w source
                 cd source
                 python3 tests/fabro-workflows/model-fallbacks.test.py
+                python3 tests/fabro-workflows/oneshot-salvage.test.py
                 touch $out
               '';
 

@@ -314,6 +314,23 @@ def load_publish_meta(issue_number, state):
 
 
 def publish(argv):
+    draft = False
+    failure_reason = ""
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--draft":
+            draft = True
+        elif argv[i] == "--failure-reason" and i + 1 < len(argv):
+            i += 1
+            failure_reason = argv[i]
+        else:
+            sys.exit("usage: tools.py publish [--draft] [--failure-reason TEXT]")
+        i += 1
+    if draft and not failure_reason:
+        failure_reason = sys.stdin.read().strip()
+    if draft and not failure_reason:
+        sys.exit("draft salvage requires a concrete failure reason from stage_failure")
+
     state = load_state()
     owner, repo = origin_repo()
     slug = "%s/%s" % (owner, repo)
@@ -321,17 +338,31 @@ def publish(argv):
     trunk = state.get("trunk") or detect_trunk()
     branch = "oneshot/issue-%d" % issue_number
     title, summary = load_publish_meta(issue_number, state)
+    baseline = state.get("baseline_sha")
+    if not baseline:
+        sys.exit("state file %s has no baseline_sha; cannot verify the change to publish" % STATE_PATH)
 
     run(["git", "add", "-A"])
+    tree = run(["git", "write-tree"])
+    diff_status = subprocess.run(["git", "diff", "--quiet", baseline, tree]).returncode
+    if diff_status == 0:
+        reason = "working tree has no changes relative to baseline %s; refusing to publish an empty commit" % baseline[:12]
+        if failure_reason:
+            reason = "%s; salvage reason: %s" % (reason, failure_reason)
+        sys.exit(reason)
+    if diff_status != 1:
+        sys.exit("failed to compare the working tree with baseline %s" % baseline[:12])
+
     run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % trunk])
     base = run(["git", "rev-parse", "FETCH_HEAD"])
-    tree = run(["git", "write-tree"])
-    diff_status = subprocess.run(["git", "diff", "--quiet", base, tree]).returncode
-    if diff_status == 0:
-        sys.exit("working tree has no changes relative to %s; refusing to publish an empty commit" % trunk)
-    if diff_status != 1:
-        sys.exit("failed to compare the working tree with %s" % trunk)
-
+    trunk_diff = subprocess.run(["git", "diff", "--quiet", base, tree]).returncode
+    if trunk_diff == 0:
+        reason = "working tree has no changes relative to current trunk %s; refusing to publish an empty commit" % base[:12]
+        if failure_reason:
+            reason = "%s; salvage reason: %s" % (reason, failure_reason)
+        sys.exit(reason)
+    if trunk_diff != 1:
+        sys.exit("failed to compare the working tree with current trunk %s" % base[:12])
     ident = []
     if not run(["git", "config", "user.name"], check=False) or not run(["git", "config", "user.email"], check=False):
         ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
@@ -341,6 +372,11 @@ def publish(argv):
     run(["git", "push", "--quiet", "--force-with-lease", "origin",
          "%s:refs/heads/%s" % (commit, branch)])
 
+    body = summary
+    if failure_reason:
+        body += "\n\n## Salvage reason\n\n%s" % failure_reason
+    body += "\n\nCloses #%d\n" % issue_number
+
     def find_open_pr():
         query = urllib.parse.urlencode({"state": "open", "head": "%s:%s" % (owner, branch), "per_page": 100})
         _, prs = gh("GET", "/repos/%s/pulls?%s" % (slug, query))
@@ -349,14 +385,29 @@ def publish(argv):
             sys.exit("multiple open pull requests for head %s: %s" % (branch, [p["number"] for p in prs]))
         return prs[0] if prs else None
 
+    def set_draft(pr):
+        if bool(pr.get("draft")) == draft:
+            return pr
+        if not pr.get("node_id"):
+            sys.exit("open PR #%s is missing node_id; cannot change its draft state" % pr.get("number"))
+        mutation = "convertPullRequestToDraft" if draft else "convertPullRequestToReadyForReview"
+        query = 'mutation { %s(input: {pullRequestId: "%s"}) { pullRequest { isDraft } } }' % (
+            mutation, pr["node_id"])
+        response = gh("POST", "/graphql", {"query": query})[1]
+        updated = response.get("data", {}).get(mutation, {}).get("pullRequest")
+        if updated is None:
+            sys.exit("GitHub did not return the updated draft state for PR #%s" % pr.get("number"))
+        pr["draft"] = updated.get("isDraft", draft)
+        return pr
+
     pr = find_open_pr()
+    created_new = False
     if pr is None:
-        body = "%s\n\nCloses #%d\n" % (summary, issue_number)
         status, created = gh("POST", "/repos/%s/pulls" % slug, {
             "title": title,
             "head": branch,
             "base": trunk,
-            "draft": False,
+            "draft": draft,
             "body": body,
         }, expect=(201, 422))
         if status == 422:
@@ -365,9 +416,17 @@ def publish(argv):
                 sys.exit("pull request create for head %s returned 422 and no open PR exists" % branch)
         else:
             pr = created
+            created_new = True
         print("oneshot publish: created PR #%s %s -> %s" % (pr.get("number"), branch, trunk), file=sys.stderr)
     else:
         print("oneshot publish: reusing PR #%s for %s" % (pr.get("number"), branch), file=sys.stderr)
+
+    if not created_new:
+        _, updated = gh("PATCH", "/repos/%s/pulls/%s" % (slug, pr["number"]), {
+            "title": title,
+            "body": body,
+        })
+        pr = set_draft(updated or pr)
 
     print(json.dumps({"context_updates": {
         "pr_number": str(pr.get("number")),
