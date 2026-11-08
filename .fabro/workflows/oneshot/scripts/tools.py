@@ -164,7 +164,9 @@ def prepare(argv):
     if issue.get("pull_request"):
         sys.exit("#%d is a pull request, not an issue" % issue_number)
     if issue.get("state") != "open":
-        sys.exit("issue #%d is %s; refusing to implement a non-open issue" % (issue_number, issue.get("state")))
+        print("oneshot prepare: issue #%d is %s; skipping" % (issue_number, issue.get("state")), file=sys.stderr)
+        print(json.dumps({"context_updates": {"issue_open": "false"}}))
+        return
     title = (issue.get("title") or "").strip()
     if not title:
         sys.exit("issue #%d has an empty title" % issue_number)
@@ -230,6 +232,7 @@ def prepare(argv):
     print("oneshot prepare: issue=#%d trunk=%s baseline=%s fingerprint=%s" % (
         issue_number, state["trunk"], state["baseline_sha"][:12], fingerprint[:12]), file=sys.stderr)
     print(json.dumps({"context_updates": {
+        "issue_open": "true",
         "issue_number": str(issue_number),
         "issue_title": title,
         "trunk": state["trunk"],

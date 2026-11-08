@@ -27,10 +27,13 @@ Run the checks and use their results; do not rely on visual inspection where a c
 can decide.
 
 1. Regression safety: discover the repository's canonical test command(s) from its
-   manifests, task runners, CI config, and README, and run them. A failure rejects the
-   change only when it is introduced by the diff or is an issue requirement left
-   unverified. For every failing canonical check that could reflect a code defect, compare
-   the same check at `baseline_sha` in a temporary detached checkout (for example, with
+   manifests, task runners, CI config, and README, and run them. If a failure already exists
+   at `baseline_sha`, report it as a baseline failure and continue reviewing; do not classify
+   the review as approved until the change-specific requirements are otherwise verified.
+   Record baseline-red checks as `context.baseline_red=true` when returning `outcome`
+   `succeeded` with verdict `APPROVED`, so the workflow continues to publish the change.
+   For every failing canonical check that could reflect a code defect, compare the same
+   check at `baseline_sha` in a temporary detached checkout (for example, with
    `git worktree add --detach`); do not alter the review worktree. Treat a failure as
    pre-existing only when the same check fails for the same reason at baseline and the diff
    does not introduce or worsen it. Record that evidence in `review_findings` as explicitly

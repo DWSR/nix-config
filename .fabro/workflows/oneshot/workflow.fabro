@@ -7,6 +7,14 @@ digraph Oneshot {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    finish [
+        label="Complete oneshot run",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="printf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
     setup_helpers [
         label="Prepare workflow helpers",
         shape=parallelogram,
@@ -20,8 +28,14 @@ digraph Oneshot {
         label="Validate labels and prepare",
         shape=parallelogram,
         output_schema="routing",
-        goal_gate=true,
         script="test -f .git/oneshot-scripts/tools.py || { echo 'oneshot: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/oneshot-scripts/tools.py prepare {{ inputs.issue }}"
+    ]
+
+    skip [
+        label="Skip closed issue",
+        shape=parallelogram,
+        output_schema="routing",
+        script="printf 'oneshot: issue #{{ inputs.issue }} is closed; skipping implementation and publish\\n' >&2\nprintf '{\"outcome\":\"succeeded\"}\\n'"
     ]
 
     implement [
@@ -68,6 +82,13 @@ digraph Oneshot {
         script="set -eu\nROUND=$(cat 2>/dev/null | tr -d '[:space:]' || true)\ncase \"$ROUND\" in ''|*[!0-9]*) ROUND=0 ;; esac\nROUND=$((ROUND + 1))\nprintf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\"}}\\n' \"$ROUND\""
     ]
 
+    salvage [
+        label="Preserve exhausted change for manual follow-up",
+        shape=parallelogram,
+        output_schema="routing",
+        script="printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"stage_failure\":\"Review remained rejected after 2 rework rounds; no pull request was published and the working tree is preserved for manual follow-up.\"}}\\n'"
+    ]
+
     wait_implement_rate_limit [
         label="Wait for rate limit (implement)",
         shape=parallelogram,
@@ -111,8 +132,11 @@ digraph Oneshot {
 
     start -> setup_helpers -> prepare
 
-    prepare -> implement [condition="outcome=succeeded"]
+    prepare -> skip [condition="outcome=succeeded && context.issue_open=false"]
+    prepare -> implement [condition="outcome=succeeded && context.issue_open=true"]
     prepare -> fail
+    skip -> finish [condition="outcome=succeeded"]
+    skip -> fail
 
     implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
     implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
@@ -133,6 +157,7 @@ digraph Oneshot {
     review -> publish [condition="outcome=succeeded && context.verdict=APPROVED"]
     review -> fail [condition="outcome=failed && context.failure_class contains network"]
     review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]
+    review -> fail [condition="outcome=failed && context.failure_class contains timeout"]
     review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
     review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
     review -> fail
@@ -140,8 +165,12 @@ digraph Oneshot {
     wait_review_rate_limit -> fail
 
     rework -> implement [condition="outcome=succeeded && context.rework_round <= 2"]
+    rework -> salvage [condition="outcome=succeeded && context.rework_round > 2"]
     rework -> fail
+    salvage -> exit [condition="outcome=succeeded"]
 
     publish -> exit
+    finish -> exit
+    salvage -> exit
     fail -> exit
 }
