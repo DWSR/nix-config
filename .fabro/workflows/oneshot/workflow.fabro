@@ -141,8 +141,7 @@ digraph Oneshot {
     prepare -> implement [condition="outcome=succeeded"]
     prepare -> fail
 
-    implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]
-    implement -> normalize_implement [condition="outcome=succeeded"]
+    implement -> normalize_implement [condition="outcome=succeeded || outcome=failed"]
     implement -> fail
     normalize_implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
     normalize_implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]
@@ -154,8 +153,7 @@ digraph Oneshot {
     check -> simplify [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=true"]
     check -> fail
 
-    simplify -> wait_simplify_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]
-    simplify -> normalize_simplify [condition="outcome=succeeded"]
+    simplify -> normalize_simplify [condition="outcome=succeeded || outcome=failed"]
     simplify -> fail
     normalize_simplify -> check [condition="outcome=succeeded"]
     normalize_simplify -> wait_simplify_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]

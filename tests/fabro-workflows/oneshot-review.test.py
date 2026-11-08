@@ -59,6 +59,17 @@ class OneshotReviewResultTests(unittest.TestCase):
         self.assertIn("normalize_review -> fail [condition=\"outcome=failed && context.verdict=BLOCKED\"]", graph)
         self.assertIn("review -> normalize_review [condition=\"outcome=succeeded || outcome=failed\"]", graph)
 
+    def test_failed_agent_results_are_normalized_before_rate_limit_routing(self):
+        graph = WORKFLOW.read_text()
+        for node in ("implement", "simplify"):
+            with self.subTest(node=node):
+                normalize = "normalize_%s" % node
+                self.assertIn('%s -> %s [condition="outcome=succeeded || outcome=failed"]' % (node, normalize), graph)
+                self.assertIn('%s -> wait_%s_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]' % (normalize, node), graph)
+                self.assertNotIn('%s -> wait_%s_rate_limit' % (node, node), graph)
+        for prompt in ("implement.md", "simplify.md"):
+            text = (ROOT / ".fabro" / "workflows" / "oneshot" / "prompts" / prompt).read_text()
+            self.assertIn("failure_class` `rate_limit`", text)
 
     def test_normalizer_preserves_updates_and_sets_typed_routing_fields(self):
         payload = {

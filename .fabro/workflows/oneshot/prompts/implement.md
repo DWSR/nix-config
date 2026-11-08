@@ -21,12 +21,12 @@ pull request; a separate reviewer will adversarially re-check your work.
   feedback on top of the issue: fix every finding and re-run the full validation set.
   Do not redo work the review already approved.
 - Return one JSON object matching the oneshot result schema: `outcome` (`succeeded` or
-  `failed`), `verdict` (`APPROVED` or `BLOCKED`), `failure_class` (`none` or `environment`),
+  `failed`), `verdict` (`APPROVED` or `BLOCKED`), `failure_class` (`none`, `rate_limit`, or `environment`),
   `check_results` (an object keyed by check name whose entries each contain `command`,
   `status`, `baseline_status`, and `reason`), and `context_updates`. On success use
   `outcome` `succeeded`, `verdict` `APPROVED`, and `failure_class` `none`; preserve the
   `impl_*` report in `context_updates`. On failure return `outcome` `failed`, `verdict`
-  `BLOCKED`, `failure_class` `environment`, and a concrete `failure_reason` plus
+  `BLOCKED`, `failure_class` `rate_limit` for a provider rate-limit failure or `environment` for another blocker, and a concrete `failure_reason` plus
   `context_updates.stage_failure`. Put `verdict` and `failure_class` at the top level;
   the workflow normalizes them into flat routing context. Include an `impl_status` field
   in `context_updates` (`READY` on success, `BLOCKED` otherwise).
