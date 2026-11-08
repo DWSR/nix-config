@@ -1,10 +1,15 @@
-import datetime, hashlib, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
+import datetime, hashlib, json, os, re, shlex, shutil, subprocess, sys, tempfile, time, urllib.error, urllib.parse, urllib.request
 
 READY_LABEL = "fabro-ready"
 RUNNING_LABEL = "fabro-running"
 TYPE_LABEL = "type/oneshot"
 DIFF_LIMIT = 1000
 MAX_SIMPLIFY_ROUNDS = 2
+BASELINE_BUDGET = 480
+BASELINE_TEST_TIMEOUT = 45
+BASELINE_VALIDATE_TIMEOUT = 25
+BASELINE_NIX_TIMEOUT = 180
+BASELINE_NIX_SYSTEMS = ("x86_64-linux", "aarch64-linux")
 STATE_PATH = ".git/oneshot-state.json"
 ISSUE_PATH = ".git/oneshot-issue.md"
 PUBLISH_PATH = ".git/oneshot-publish.json"
@@ -237,6 +242,151 @@ def prepare(argv):
     }}))
 
 
+def baseline_command(command, cwd, deadline, timeout):
+    label = shlex.join(command)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return {"command": label, "status": "unknown", "reason": "baseline time budget exhausted"}
+    env = dict(os.environ)
+    env.pop("GIT_DIR", None)
+    env.pop("GIT_WORK_TREE", None)
+    try:
+        result = subprocess.run(
+            command, cwd=cwd, capture_output=True, text=True, env=env,
+            timeout=min(timeout, remaining),
+        )
+    except OSError as e:
+        return {"command": label, "status": "unknown", "reason": str(e)}
+    except subprocess.TimeoutExpired:
+        return {"command": label, "status": "unknown", "reason": "timed out"}
+
+    output = (result.stderr + "\n" + result.stdout).strip()
+    if result.returncode == 0:
+        status, reason = "passed", "exit 0"
+    elif re.search(r"could not resolve|temporary failure in name resolution|network is unreachable|connection timed out|unable to access .*could not resolve", output, re.I):
+        status, reason = "unknown", "network unavailable: " + output[-1000:]
+    elif command[0] == "nix" and "error:" in output.lower():
+        status, reason = "unknown", "Nix flake could not be evaluated in this sandbox: " + output[-1000:]
+    else:
+        status = "failed"
+        reason = "exit %d%s" % (result.returncode, (": " + output[-1000:]) if output else "")
+    return {"command": label, "status": status, "reason": reason}
+
+
+def baseline(argv):
+    state = load_state()
+    baseline_sha = state.get("baseline_sha")
+    if not baseline_sha:
+        sys.exit("state file %s has no baseline_sha; start a fresh run" % STATE_PATH)
+    run(["git", "cat-file", "-e", "%s^{commit}" % baseline_sha])
+
+    parent = run(["git", "rev-parse", "--verify", baseline_sha + "^"], check=False)
+    if parent:
+        diff_check = ["git", "diff", "--check", parent, baseline_sha]
+    else:
+        empty_tree = run(["git", "hash-object", "-t", "tree", "/dev/null"])
+        diff_check = ["git", "diff", "--check", empty_tree, baseline_sha]
+
+    workflow_paths = run([
+        "git", "ls-tree", "-r", "--name-only", baseline_sha, "--", ".fabro/workflows"
+    ]).splitlines()
+    validations = [
+        ["fabro", "validate", "--quiet", "--no-upgrade-check", path]
+        for path in workflow_paths if path.endswith("/workflow.fabro")
+    ]
+    checks = [
+        (["python3", "tests/dependency-cooldown/cooldown.test.py"], BASELINE_TEST_TIMEOUT),
+        (["python3", "tests/fabro-workflows/model-fallbacks.test.py"], BASELINE_TEST_TIMEOUT),
+        (diff_check, 15),
+    ]
+    checks.extend((command, BASELINE_VALIDATE_TIMEOUT) for command in validations)
+
+    nix_reason = None
+    if not shutil.which("nix"):
+        nix_reason = "nix is not installed"
+    else:
+        env = dict(os.environ)
+        env.pop("GIT_DIR", None)
+        env.pop("GIT_WORK_TREE", None)
+        try:
+            evaluator = subprocess.run(
+                ["nix", "eval", "--impure", "--raw", "--expr", 'builtins.currentSystem'],
+                capture_output=True, text=True, env=env, timeout=15,
+            )
+            system = evaluator.stdout.strip()
+            if evaluator.returncode or system not in BASELINE_NIX_SYSTEMS:
+                detail = evaluator.stderr.strip() or system or "unsupported system"
+                nix_reason = "Nix flake cannot be evaluated here: " + detail[-1000:]
+        except (OSError, subprocess.TimeoutExpired) as e:
+            nix_reason = "Nix evaluator unavailable: " + str(e)
+    checks.append((
+        ["nix", "flake", "check", "--no-build"] if nix_reason is None else None,
+        BASELINE_NIX_TIMEOUT,
+    ))
+
+    deadline = time.monotonic() + BASELINE_BUDGET
+    results = []
+    worktree_error = ""
+    remove_error = ""
+    with tempfile.TemporaryDirectory(prefix="oneshot-baseline-") as temp:
+        checkout = os.path.join(temp, "checkout")
+        try:
+            add = subprocess.run(
+                ["git", "worktree", "add", "--quiet", "--detach", checkout, baseline_sha],
+                capture_output=True, text=True, timeout=20,
+            )
+            worktree_error = add.stderr.strip() if add.returncode else ""
+        except (OSError, subprocess.TimeoutExpired) as e:
+            worktree_error = str(e)
+
+        for command, timeout in checks:
+            if command is None:
+                results.append({
+                    "command": "nix flake check --no-build",
+                    "status": "unknown",
+                    "reason": nix_reason or "Nix evaluation unavailable",
+                })
+            elif worktree_error:
+                results.append({
+                    "command": shlex.join(command),
+                    "status": "unknown",
+                    "reason": "could not create baseline worktree: " + worktree_error[-1000:],
+                })
+            elif command[0] in ("fabro", "nix") and not shutil.which(command[0]):
+                results.append({
+                    "command": shlex.join(command),
+                    "status": "unknown",
+                    "reason": command[0] + " is not installed",
+                })
+            else:
+                results.append(baseline_command(command, checkout, deadline, timeout))
+
+        if not worktree_error:
+            try:
+                remove = subprocess.run(
+                    ["git", "worktree", "remove", "--force", checkout],
+                    capture_output=True, text=True, timeout=15,
+                )
+                remove_error = remove.stderr.strip() if remove.returncode else ""
+            except (OSError, subprocess.TimeoutExpired) as e:
+                remove_error = str(e)
+        if worktree_error or remove_error:
+            reason = worktree_error or remove_error
+            results.append({
+                "command": "git worktree cleanup <baseline-worktree>",
+                "status": "unknown",
+                "reason": "could not clean up baseline worktree: " + reason[-1000:],
+            })
+
+    state["baseline_results"] = results
+    save_state(state)
+    counts = {status: sum(item["status"] == status for item in results)
+              for status in ("passed", "failed", "unknown")}
+    print("oneshot baseline: %d passed, %d failed, %d unknown" % (
+        counts["passed"], counts["failed"], counts["unknown"]), file=sys.stderr)
+    print(json.dumps({"outcome": "succeeded", "context_updates": {"baseline_status": "RECORDED"}}))
+
+
 def check(argv):
     state = load_state()
     baseline = state.get("baseline_sha")
@@ -381,6 +531,8 @@ def main():
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd == "prepare":
         prepare(rest)
+    elif cmd == "baseline":
+        baseline(rest)
     elif cmd == "check":
         check(rest)
     elif cmd == "publish":

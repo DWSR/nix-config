@@ -26,15 +26,20 @@ changed files where the diff is not enough. This diff is your primary input.
 Run the checks and use their results; do not rely on visual inspection where a command
 can decide.
 
-1. Regression safety: discover the repository's canonical test command(s) from its
-   manifests, task runners, CI config, and README, and run them. A failure rejects the
-   change only when it is introduced by the diff or is an issue requirement left
-   unverified. For every failing canonical check that could reflect a code defect, compare
-   the same check at `baseline_sha` in a temporary detached checkout (for example, with
-   `git worktree add --detach`); do not alter the review worktree. Treat a failure as
-   pre-existing only when the same check fails for the same reason at baseline and the diff
-   does not introduce or worsen it. Record that evidence in `review_findings` as explicitly
-   non-blocking.
+1. Regression safety: read `baseline_results` in `.git/oneshot-state.json` and map each
+   result to the check it records. Run a check when its baseline status is `unknown`, when
+   the baseline result is missing or lacks a status (including checks not collected by the
+   baseline stage), or when the diff touches files or behavior that check covers. Do not spend
+   time rerunning a known baseline failure for an area the diff cannot affect; record its
+   command, failure
+   reason, status, and the unrelated changed paths in `review_findings` as explicitly
+   non-blocking evidence. A touched failure rejects only if the diff introduces or worsens
+   it. If a check fails and no baseline result exists, compare the same check at
+   `baseline_sha` in a temporary detached checkout (for example, with `git worktree add
+   --detach`); do not alter the review worktree. Treat a failure as pre-existing only when
+   the same check fails for the same reason at baseline and the diff does not introduce or
+   worsen it. If `baseline_results` is missing or malformed, use that comparison fallback
+   for every failing canonical check that could reflect a code defect.
 2. Environmental failures: if a check cannot be evaluated because the sandbox cannot
    resolve a host or fetch a pinned source, such as `Could not resolve host: github.com`,
    `Temporary failure in name resolution`, DNS errors, or network timeouts, stop treating
