@@ -17,6 +17,97 @@ def run(cmd, check=True, env=None):
     return r.stdout.strip()
 
 
+def run_probe(label, cmd, timeout):
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "%s probe timed out after %d seconds" % (label, timeout)
+    except OSError as e:
+        return "%s probe could not run: %s" % (label, e)
+    if result.returncode == 0:
+        return ""
+    detail = (result.stderr or result.stdout).strip()
+    detail = re.sub(r"(https?://)[^/@\s]+@", r"\1[redacted]@", detail)
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        detail = detail.replace(token, "[redacted]")
+    return "%s probe failed: %s" % (label, detail[:600] or "exit status %d" % result.returncode)
+
+
+def github_rate_limit_blocker():
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        return ""
+    base = os.environ.get("ONESHOT_API_BASE", "https://api.github.com").rstrip("/")
+    req = urllib.request.Request(base + "/rate_limit", headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "fabro-oneshot-workflow",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            limits = json.loads(response.read()).get("resources", {}).get("core", {})
+    except urllib.error.HTTPError as e:
+        return "GitHub rate-limit probe failed: HTTP %d" % e.code
+    except (OSError, ValueError) as e:
+        return "GitHub rate-limit probe failed: %s" % type(e).__name__
+    if limits.get("remaining") == 0:
+        return "GitHub API core rate limit exhausted (reset at %s)" % limits.get("reset", "unknown")
+    return ""
+
+
+def github_reachability_blocker():
+    return run_probe("GitHub reachability", ["git", "ls-remote", "origin", "HEAD"], 15)
+
+
+def diagnose_environment_blocker(issue_text):
+    blocker = github_reachability_blocker()
+    if not blocker:
+        blocker = run_probe("Nix flake input reachability", ["nix", "flake", "metadata", "--json", "--no-write-lock-file", "."], 45)
+    if not blocker:
+        blocker = github_rate_limit_blocker()
+    if not blocker and re.search(r"\bworkflow\b|\.fabro(?:/|\b)|\bfabro\b", issue_text, re.I):
+        blocker = run_probe("Fabro preflight", ["fabro", "preflight", ".fabro/workflows/oneshot/workflow.fabro"], 35)
+    return blocker
+
+
+def save_environment_blocker(issue_number, blocker, preflight_only=False):
+    if os.path.exists(STATE_PATH):
+        state = load_state()
+        if state.get("issue") != issue_number:
+            return "run state describes issue %s, not #%d" % (state.get("issue"), issue_number)
+    else:
+        state = {"issue": issue_number}
+    if blocker:
+        if preflight_only and not state.get("baseline_sha"):
+            state["preflight_only"] = True
+        state["environment_blocker"] = blocker
+    else:
+        state.pop("environment_blocker", None)
+        state.pop("preflight_only", None)
+    save_state(state)
+    return blocker
+
+
+def diagnose(argv):
+    issue_number = parse_issue_number(argv[0] if argv else "")
+    issue_text = open(ISSUE_PATH).read()
+    blocker = diagnose_environment_blocker(issue_text)
+    if blocker:
+        original_blocker = blocker
+        blocker = save_environment_blocker(issue_number, blocker, preflight_only=True) or original_blocker
+        print("oneshot diagnose: blocked: %s" % blocker, file=sys.stderr)
+        updates = {
+            "environment_blocker": blocker,
+            "stage_failure": "environment preflight: " + blocker,
+        }
+    else:
+        print("oneshot diagnose: network, Nix inputs, and provider preflight are healthy", file=sys.stderr)
+        updates = {}
+    updates["preflight_status"] = "BLOCKED" if blocker else "READY"
+    print(json.dumps({"outcome": "succeeded", "context_updates": updates}))
+
+
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -158,6 +249,17 @@ def record_fingerprint(issue_number, fingerprint, meta_sha):
 
 def prepare(argv):
     issue_number = parse_issue_number(argv[0] if argv else "")
+    blocker = github_reachability_blocker()
+    if blocker:
+        original_blocker = blocker
+        blocker = save_environment_blocker(issue_number, blocker, preflight_only=True) or original_blocker
+        print("oneshot prepare: environment blocked: %s" % blocker, file=sys.stderr)
+        print(json.dumps({"outcome": "succeeded", "context_updates": {
+            "preflight_status": "BLOCKED",
+            "environment_blocker": blocker,
+            "stage_failure": "environment preflight: " + blocker,
+        }}))
+        return
     owner, repo = origin_repo()
     run(["git", "fetch", "--prune", "--quiet", "origin"])
     issue = gh("GET", "/repos/%s/%s/issues/%d" % (owner, repo, issue_number))[1]
@@ -179,6 +281,8 @@ def prepare(argv):
             state = None
     if state is not None and state.get("issue") != issue_number:
         sys.exit("state file %s describes issue %s, not #%d; start a fresh run" % (STATE_PATH, state.get("issue"), issue_number))
+    if state is not None and state.get("preflight_only") is True:
+        state = None
 
     fingerprint = issue_fingerprint(title, issue.get("body"))
     meta, meta_sha = load_meta(issue_number)
@@ -200,7 +304,7 @@ def prepare(argv):
                 sys.exit("issue #%d changed after branch %s was published (fingerprint %s recorded %s, current %s); delete the branch and its pull request to regenerate" % (
                     issue_number, branch, str(meta.get("fingerprint", ""))[:12], meta.get("recorded_at", "unknown"), fingerprint[:12]))
 
-    if state is None:
+    if state is None or state.get("preflight_only") is True:
         missing = [l for l in (READY_LABEL, TYPE_LABEL) if l not in labels]
         if missing:
             sys.exit("issue #%d is not labelled %s (labels: %s); only correctly labelled oneshots may run" % (
@@ -222,6 +326,8 @@ def prepare(argv):
     else:
         gh("POST", "/repos/%s/%s/issues/%d/labels" % (owner, repo, issue_number), {"labels": [RUNNING_LABEL]})
 
+    state.pop("preflight_only", None)
+    state.pop("environment_blocker", None)
     state["issue_title"] = title
     state["issue_url"] = issue.get("html_url", "")
     write_issue_file(issue, owner, repo, labels)
@@ -377,10 +483,12 @@ def publish(argv):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <prepare|check|publish> [args]")
+        sys.exit("usage: tools.py <prepare|diagnose|check|publish> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd == "prepare":
         prepare(rest)
+    elif cmd == "diagnose":
+        diagnose(rest)
     elif cmd == "check":
         check(rest)
     elif cmd == "publish":
