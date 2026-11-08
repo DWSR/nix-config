@@ -61,4 +61,4 @@ On success:
 
 When blocked:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>"}}
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>", "stage_failure": "<the same concrete blocker>"}}
