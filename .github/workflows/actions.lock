@@ -8,6 +8,9 @@ workflows:
         - 'github/codeql-action@v4.39.1'
     '.github/workflows/dependabot-auto-merge.yml':
         - 'dependabot/fetch-metadata@v3.1.0'
+    '.github/workflows/nix-flake-check.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'cachix/install-nix-action@v31.11.3'
     '.github/workflows/prek.yml':
         - 'actions/checkout@v7.0.1'
         - 'cachix/install-nix-action@v31.11.3'
