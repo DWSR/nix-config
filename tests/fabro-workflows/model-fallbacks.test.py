@@ -82,17 +82,42 @@ class ModelFallbackTests(unittest.TestCase):
         block = tail.split("model_name =", 1)[0]
         self.assertIn('reasoning_effort = "xhigh";', block)
 
-    def test_oneshot_routes_environmental_reviews_directly_to_failure(self):
+    def test_oneshot_routes_non_approval_paths_to_salvage(self):
         graph = ONESHOT_GRAPH.read_text()
-        network_edge = 'review -> fail [condition="outcome=failed && context.failure_class contains network"]'
-        blocked_edge = 'review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]'
-        rework_edge = 'review -> rework [condition="outcome=failed && context.verdict=REJECTED"]'
+        expected_edges = (
+            'implement -> salvage [condition="outcome=failed && context.impl_status=BLOCKED"]',
+            'check -> salvage [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=false"]',
+            'review -> salvage [condition="outcome=failed && context.failure_class contains network"]',
+            'review -> salvage [condition="outcome=failed && context.failure_class contains environment"]',
+            'review -> salvage [condition="outcome=failed && context.verdict=BLOCKED"]',
+            'rework -> salvage [condition="outcome=succeeded && context.rework_round > 2"]',
+        )
 
-        self.assertIn(network_edge, graph)
-        self.assertIn(blocked_edge, graph)
-        self.assertLess(graph.index(network_edge), graph.index(rework_edge))
-        self.assertLess(graph.index(blocked_edge), graph.index(rework_edge))
-        self.assertNotIn("Review rejected the change after 2 rework rounds", graph)
+        for edge in expected_edges:
+            with self.subTest(edge=edge):
+                self.assertIn(edge, graph)
+        self.assertIn('stdin_source="stage_failure"', graph)
+        self.assertIn('script="python3 .git/oneshot-scripts/tools.py publish --draft"', graph)
+        self.assertIn("salvage -> exit", graph)
+
+    def test_oneshot_salvage_publish_has_draft_idempotent_and_empty_diff_guards(self):
+        tools = (WORKFLOW_DIR / "oneshot" / "scripts" / "tools.py").read_text()
+
+        self.assertIn('if argv[i] == "--draft":', tools)
+        self.assertIn('"draft": draft', tools)
+        self.assertIn('gh("PATCH", "/repos/%s/pulls/%s"', tools)
+        self.assertIn('body += "\\n\\nCloses #%d\\n" % issue_number', tools)
+        self.assertIn("refusing to publish an empty commit", tools)
+        self.assertIn('body += "\\n\\n## Salvage reason\\n\\n%s" % failure_reason', tools)
+
+    def test_oneshot_reviewer_records_findings_for_salvage(self):
+        review = ONESHOT_REVIEW.read_text()
+        implement = (WORKFLOW_DIR / "oneshot" / "prompts" / "implement.md").read_text()
+
+        self.assertIn("Include the complete review findings", review)
+        self.assertIn('"stage_failure": "<the same concrete blocker>"', implement)
+        self.assertIn("failure_class` to `network`", review)
+        self.assertIn("context_updates.stage_failure", review)
 
     def test_oneshot_reviewer_distinguishes_environment_and_baseline_failures(self):
         review = ONESHOT_REVIEW.read_text()

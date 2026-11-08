@@ -43,7 +43,8 @@ can decide.
    Set `context_updates.verdict` to `BLOCKED`; do not describe the environmental failure
    as a code defect. Apply this output to any failure that prevents review completion.
    For every other rejected or blocked review, also set `context_updates.stage_failure`
-   to the concrete reason so a terminal failure reports the finding, not a generic message.
+   to the concrete reason. Include the complete review findings in this value when any exist;
+   salvage publishes it in the draft PR body so the blocker and findings remain actionable.
 3. Placeholder markers: grep the changed files for `TBD`, `TODO`, `FIXME`, `HACK`, `XXX`.
    New markers reject the change unless the issue itself requires them.
 4. Secrets: grep the changed files for hardcoded secrets or credentials. Concrete secret

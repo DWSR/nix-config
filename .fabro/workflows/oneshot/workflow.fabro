@@ -102,6 +102,13 @@ digraph Oneshot {
         script="python3 .git/oneshot-scripts/tools.py publish"
     ]
 
+    salvage [
+        label="Salvage draft pull request",
+        shape=parallelogram,
+        stdin_source="stage_failure",
+        script="python3 .git/oneshot-scripts/tools.py publish --draft"
+    ]
+
     fail [
         label="Fail run",
         shape=parallelogram,
@@ -116,12 +123,14 @@ digraph Oneshot {
 
     implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
     implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    implement -> salvage [condition="outcome=failed && context.impl_status=BLOCKED"]
     implement -> fail
     wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
     wait_implement_rate_limit -> fail
 
     check -> review [condition="outcome=succeeded && context.over_limit=false"]
     check -> simplify [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=true"]
+    check -> salvage [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=false"]
     check -> fail
 
     simplify -> check [condition="outcome=succeeded"]
@@ -131,8 +140,9 @@ digraph Oneshot {
     wait_simplify_rate_limit -> fail
 
     review -> publish [condition="outcome=succeeded && context.verdict=APPROVED"]
-    review -> fail [condition="outcome=failed && context.failure_class contains network"]
-    review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]
+    review -> salvage [condition="outcome=failed && context.failure_class contains network"]
+    review -> salvage [condition="outcome=failed && context.failure_class contains environment"]
+    review -> salvage [condition="outcome=failed && context.verdict=BLOCKED"]
     review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
     review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
     review -> fail
@@ -140,8 +150,10 @@ digraph Oneshot {
     wait_review_rate_limit -> fail
 
     rework -> implement [condition="outcome=succeeded && context.rework_round <= 2"]
+    rework -> salvage [condition="outcome=succeeded && context.rework_round > 2"]
     rework -> fail
 
+    salvage -> exit
     publish -> exit
     fail -> exit
 }
