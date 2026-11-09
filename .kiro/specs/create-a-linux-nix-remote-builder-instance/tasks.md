@@ -44,7 +44,7 @@
   - Done when fixture runs produce both records and invalid/missing Linux inputs fail without replacing the prior complete output.
   - _Requirements: 3.1, 3.3, 4.1, 4.3_
 
-- [ ] 3.2 Configure Fabro's Linux client credentials, dispatch, and build policy
+- [x] 3.2 Configure Fabro's Linux client credentials, dispatch, and build policy
   - Declare Fabro's dedicated Linux client key as a root-only SOPS runtime secret and add its operator 1Password source to `scripts/fabro-sync-from-1password.nix`.
   - Extend `configurations/fabro-vm/darwin-dispatch.nix` to pass Linux machine inputs to the existing renderer/service, retaining its runtime builders path, substitutes, ordering, and Darwin entry.
   - Set `nix.settings.max-jobs = 0` while retaining distributed builds, so unavailable remote builders fail rather than compiling locally.
