@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Establish the external compatibility gates
-- [ ] 1.1 Prove the pinned self-contained OCI image contract on Linux
+- [x] 1.1 Prove the pinned self-contained OCI image contract on Linux
   - Add a build fixture using the pinned snapshotter `fromImage` with a complete `dockerTools` runtime closure; inspect the resulting OCI archive for runnable contents without a host store mount.
   - Done when the fixture builds and verifies the closure and pinned publisher interface; stop and request a requirement decision if the pinned hybrid path cannot produce it.
   - _Boundary: `tests/fly-app/image.test.nix`_
