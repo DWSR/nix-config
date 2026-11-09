@@ -9,6 +9,21 @@ let
 
   cfg = config.virtualisation.limaLinuxBuilder;
   yamlFormat = pkgs.formats.yaml { };
+  limaHome = "${config.xdg.stateHome}/lima";
+  logDir = "${config.home.homeDirectory}/Library/Logs/lima-vm";
+  agentName = "lima-${cfg.name}";
+
+  servicePath = lib.concatStringsSep ":" [
+    (lib.makeBinPath [
+      cfg.package
+      pkgs.openssh
+    ])
+    "/usr/local/bin"
+    "/usr/bin"
+    "/bin"
+    "/usr/sbin"
+    "/sbin"
+  ];
 
   limaConfigYaml = yamlFormat.generate "lima-${cfg.name}.yaml" {
     images = [
@@ -49,6 +64,70 @@ let
       }
     ];
   };
+
+  supervisor = pkgs.writeShellApplication {
+    name = "${agentName}-supervisor";
+    runtimeInputs = [
+      cfg.package
+      pkgs.openssh
+    ];
+    text = ''
+      export LIMA_HOME=${lib.escapeShellArg limaHome}
+
+      name=${lib.escapeShellArg cfg.name}
+      config=${lib.escapeShellArg limaConfigYaml}
+
+      if ! limactl list --json "$name" >/dev/null 2>&1; then
+        limactl --tty=false create --name="$name" "$config"
+      fi
+
+      exec limactl --tty=false start --foreground "$name"
+    '';
+  };
+
+  deploy = pkgs.writeShellApplication {
+    name = "linux-builder-deploy";
+    runtimeInputs = [
+      pkgs.gnutar
+      pkgs.gzip
+      pkgs.openssh
+    ];
+    text = ''
+      export LIMA_HOME=${lib.escapeShellArg limaHome}
+
+      repo=''${1:-$PWD}
+      name=${lib.escapeShellArg cfg.name}
+      system=${lib.escapeShellArg cfg.guestSystem}
+      sshConfig="$LIMA_HOME/$name/ssh.config"
+      remoteHost="lima-$name"
+      scratch=/tmp/linux-builder-deploy
+
+      if [ ! -f "$repo/flake.nix" ] || [ ! -f "$repo/flake.lock" ]; then
+        echo "linux-builder-deploy: $repo is not a locked flake (usage: linux-builder-deploy [REPO])" >&2
+        exit 1
+      fi
+      if [ ! -f "$sshConfig" ]; then
+        echo "linux-builder-deploy: no ssh config at $sshConfig; is the instance running? try: limactl start $name" >&2
+        exit 1
+      fi
+
+      remote() {
+        ssh -F "$sshConfig" "$remoteHost" "$@"
+      }
+
+      remote "rm -rf '$scratch' && mkdir -p '$scratch'"
+
+      tar --exclude=.git --exclude=.direnv --exclude=result --exclude='result-*' \
+        --exclude=.pre-commit-config.yaml \
+        --exclude='*.aac' --exclude='*.mp4*' --exclude='*.mp3' \
+        -cf - -C "$repo" . \
+        | gzip \
+        | remote "tar -xzf - -C '$scratch'"
+
+      remote "nixos-rebuild switch --sudo --no-update-lock-file --flake '$scratch#$system'"
+      echo "linux-builder-deploy: switched guest to '$system'; scratch tree left at $scratch."
+    '';
+  };
 in
 {
   options.virtualisation.limaLinuxBuilder = {
@@ -70,6 +149,13 @@ in
       type = types.str;
       default = "linux-builder";
       description = "NixOS flake configuration deployed to the Linux builder guest.";
+    };
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs.unstable.lima;
+      defaultText = "pkgs.unstable.lima";
+      description = "The Lima package providing limactl.";
     };
 
     cpus = mkOption {
@@ -97,6 +183,20 @@ in
       default = if cfg.enable then limaConfigYaml else null;
       description = "Rendered Lima configuration for the Linux builder instance.";
     };
+
+    _supervisor = mkOption {
+      type = types.path;
+      internal = true;
+      readOnly = true;
+      description = "Internal launchd supervisor for the Linux builder instance.";
+    };
+
+    _deploy = mkOption {
+      type = types.path;
+      internal = true;
+      readOnly = true;
+      description = "Internal deployment command for the Linux builder guest.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -119,5 +219,43 @@ in
       }
     ];
 
+    virtualisation.limaLinuxBuilder = {
+      _supervisor = supervisor;
+      _deploy = deploy;
+    };
+
+    home.packages = [
+      cfg.package
+      cfg._deploy
+    ];
+
+    launchd.agents.${agentName} = {
+      enable = true;
+      config = {
+        Label = "dev.dwsr.${agentName}";
+        ProgramArguments = [ (lib.getExe supervisor) ];
+        RunAtLoad = true;
+        KeepAlive = {
+          SuccessfulExit = false;
+        };
+        ProcessType = "Background";
+        EnvironmentVariables = {
+          LIMA_HOME = limaHome;
+          HOME = config.home.homeDirectory;
+          PATH = servicePath;
+        };
+        StandardOutPath = "${logDir}/${agentName}.log";
+        StandardErrorPath = "${logDir}/${agentName}.error.log";
+      };
+    };
+
+    home.activation.limaLinuxBuilderDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run mkdir -p ${
+        lib.escapeShellArgs [
+          limaHome
+          logDir
+        ]
+      }
+    '';
   };
 }
