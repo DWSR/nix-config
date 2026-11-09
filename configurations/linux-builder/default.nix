@@ -128,16 +128,42 @@ in
 
   services.tailscale = {
     enable = true;
-    authKeyFile = config.sops.secrets."builder-tailscale-oauth-secret".path;
-    authKeyParameters = {
-      ephemeral = false;
-      preauthorized = true;
-    };
-    extraUpFlags = [
-      "--hostname=linux-builder"
-      "--advertise-tags=tag:linux-nix-remote-builder"
-    ];
     openFirewall = true;
+  };
+
+  systemd.services.builder-tailscale-auth = {
+    description = "Join the linux-builder node to its tailnet using its OAuth credential";
+    wantedBy = [ "multi-user.target" ];
+    requires = [
+      "sops-install-secrets.service"
+      "tailscaled.service"
+    ];
+    after = [
+      "sops-install-secrets.service"
+      "tailscaled.service"
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      TimeoutStartSec = "0";
+    };
+    script = ''
+      set -eu
+      credential_file=${lib.escapeShellArg config.sops.secrets."builder-tailscale-oauth-secret".path}
+      if [ ! -s "$credential_file" ]; then
+        echo "linux-builder: required Tailscale OAuth credential is missing or empty at $credential_file" >&2
+        exit 1
+      fi
+
+      until ${config.services.tailscale.package}/bin/tailscale up \
+        --auth-key="$(cat "$credential_file")?ephemeral=false&preauthorized=true" \
+        --hostname=linux-builder \
+        --advertise-tags=tag:linux-nix-remote-builder \
+        --accept-dns=false; do
+        echo "linux-builder: Tailscale enrollment failed; retrying in 30 seconds" >&2
+        ${pkgs.coreutils}/bin/sleep 30
+      done
+    '';
   };
 
   nix.gc = {

@@ -52,8 +52,13 @@ function evalBuilder() {
       tailscale = {
         enable = cfg.services.tailscale.enable;
         authKeyFile = cfg.services.tailscale.authKeyFile;
-        authKeyParameters = cfg.services.tailscale.authKeyParameters;
-        extraUpFlags = cfg.services.tailscale.extraUpFlags;
+      };
+      tailscaleAuthService = {
+        after = cfg.systemd.services.builder-tailscale-auth.after;
+        requires = cfg.systemd.services.builder-tailscale-auth.requires;
+        script = cfg.systemd.services.builder-tailscale-auth.script;
+        serviceConfig = cfg.systemd.services.builder-tailscale-auth.serviceConfig;
+        tailscaleCli = "\${cfg.services.tailscale.package}/bin/tailscale";
       };
       ssh = {
         enable = cfg.services.openssh.enable;
@@ -201,11 +206,57 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
   const cfg = evalBuilder();
 
   assert.equal(cfg.tailscale.enable, true);
-  assert.equal(cfg.tailscale.authKeyFile, cfg.tailscaleSecret.path);
-  assert.equal(cfg.tailscale.authKeyParameters.ephemeral, false);
-  assert.equal(cfg.tailscale.authKeyParameters.preauthorized, true);
-  assert.ok(cfg.tailscale.extraUpFlags.includes('--hostname=linux-builder'));
-  assert.ok(cfg.tailscale.extraUpFlags.includes('--advertise-tags=tag:linux-nix-remote-builder'));
+  assert.equal(cfg.tailscale.authKeyFile, null);
+  assert.ok(cfg.tailscaleAuthService.after.includes('sops-install-secrets.service'));
+  assert.ok(cfg.tailscaleAuthService.requires.includes('sops-install-secrets.service'));
+  assert.ok(cfg.tailscaleAuthService.after.includes('tailscaled.service'));
+  assert.ok(cfg.tailscaleAuthService.requires.includes('tailscaled.service'));
+  assert.equal(cfg.tailscaleAuthService.serviceConfig.Type, 'oneshot');
+  assert.equal(cfg.tailscaleAuthService.serviceConfig.TimeoutStartSec, '0');
+  assert.match(cfg.tailscaleAuthService.script, /tailscale up/);
+  assert.match(cfg.tailscaleAuthService.script, /--auth-key=/);
+  assert.match(cfg.tailscaleAuthService.script, /\?ephemeral=false&preauthorized=true/);
+  assert.match(cfg.tailscaleAuthService.script, /--advertise-tags=tag:linux-nix-remote-builder/);
+  assert.match(cfg.tailscaleAuthService.script, /--hostname=linux-builder/);
+  assert.doesNotMatch(cfg.tailscaleAuthService.script, /builder-tailscale-oauth-client-id/);
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'linux-builder-tailscale-'));
+  try {
+    const credentialPath = path.join(tempRoot, 'oauth-secret');
+    const mockTailscale = path.join(tempRoot, 'tailscale');
+    const scriptPath = path.join(tempRoot, 'builder-tailscale-auth');
+    const capturePath = path.join(tempRoot, 'tailscale-args');
+    fs.writeFileSync(mockTailscale, '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CAPTURE_FILE"\n', { mode: 0o700 });
+    const mockSleep = path.join(tempRoot, 'sleep');
+    fs.writeFileSync(mockSleep, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+    const script = cfg.tailscaleAuthService.script
+      .replaceAll(cfg.tailscaleAuthService.tailscaleCli, mockTailscale)
+      .replaceAll('/run/current-system/sw/bin/sleep', mockSleep)
+      .replaceAll(cfg.tailscaleSecret.path, credentialPath);
+    fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+
+    const missingCredential = childProcess.spawnSync('/bin/bash', [scriptPath], {
+      encoding: 'utf8',
+      env: { ...process.env, CAPTURE_FILE: capturePath },
+    });
+    assert.notEqual(missingCredential.status, 0);
+    assert.match(missingCredential.stderr, /Tailscale OAuth credential is missing or empty/);
+
+    fs.writeFileSync(credentialPath, 'fixture-oauth-client-secret');
+    const enrolled = childProcess.spawnSync('/bin/bash', [scriptPath], {
+      encoding: 'utf8',
+      env: { ...process.env, CAPTURE_FILE: capturePath },
+    });
+    assert.equal(enrolled.status, 0, enrolled.stderr);
+    const args = fs.readFileSync(capturePath, 'utf8').trim().split('\n');
+    assert.ok(args.includes('--auth-key=fixture-oauth-client-secret?ephemeral=false&preauthorized=true'));
+    assert.ok(args.includes('--hostname=linux-builder'));
+    assert.ok(args.includes('--advertise-tags=tag:linux-nix-remote-builder'));
+    assert.ok(args.includes('--accept-dns=false'));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+
   assert.equal(cfg.garbageCollection.automatic, true);
   assert.equal(cfg.optimisation.automatic, true);
 
