@@ -53,6 +53,7 @@
   - Preserve personal-host `max-jobs = 0`, the existing Darwin endpoint, and the local binary cache distributed-build policy.
   - Done when the personal Darwin configuration evaluates with both target systems and contains no private key value in the generated builders file or Nix store.
   - _Requirements: 3.2, 3.3_
+  - _Blocked: Task 4.1 needs the public host-key pin owned by 5.1; complete 5.1 and provide certificates/linux-builder/ssh_host_ed25519_key.pub to unblock._
 
 - [ ] 5. Integrate operator-managed secret and trust material
 
