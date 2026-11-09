@@ -37,7 +37,7 @@
 
 - [ ] 3. Wire Fabro Linux dispatch and enforce no local builds
 
-- [ ] 3.1 Extend the Fabro machines renderer for both builder records
+- [x] 3.1 Extend the Fabro machines renderer for both builder records
   - Extend `scripts/fabro-darwin-machines.nix` to validate Linux endpoint, `aarch64-linux`, job count, runtime key path, and pinned public host-key input.
   - Atomically render the Linux record alongside the existing Darwin record; retain the Darwin record's values and ordering, set mode `0600`, and never read or emit a private-key value.
   - Set the Linux machine record to `max-jobs = 4` and `speed-factor = 1`; never put private key contents in the record.
