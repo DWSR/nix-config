@@ -47,6 +47,23 @@ function standaloneLinuxBuilderExpr(extraModule = `{ ... }: { virtualisation.lim
           builtins.readFile hm.config.virtualisation.limaLinuxBuilder._configYaml
         else
           null;
+      hasAgent = hm.config.launchd.agents ? lima-linux-builder;
+      agent = hm.config.launchd.agents.lima-linux-builder or null;
+      packages = map (p: p.name or "") hm.config.home.packages;
+      supervisorText =
+        if (hm.config.virtualisation.limaLinuxBuilder._supervisor or null) != null then
+          builtins.readFile (
+            hm.config.virtualisation.limaLinuxBuilder._supervisor + "/bin/lima-linux-builder-supervisor"
+          )
+        else
+          null;
+      deployText =
+        if (hm.config.virtualisation.limaLinuxBuilder._deploy or null) != null then
+          builtins.readFile (
+            hm.config.virtualisation.limaLinuxBuilder._deploy + "/bin/linux-builder-deploy"
+          )
+        else
+          null;
     }
   `;
 }
@@ -123,6 +140,36 @@ test('builder adapter renders an independent NixOS Lima instance', () => {
   assert.match(rendered.configYaml, /cpus: ?['"]?4/);
   assert.match(rendered.configYaml, /memory: ?['"]?8GiB/);
   assert.match(rendered.configYaml, /disk: ?['"]?128GiB/);
+});
+
+test('builder adapter exposes its dedicated lifecycle and deployment wiring', () => {
+  const rendered = nixEvalJson(standaloneLinuxBuilderExpr());
+
+  assert.equal(rendered.hasAgent, true);
+  assert.equal(rendered.agent.enable, true);
+  assert.equal(rendered.agent.config.Label, 'dev.dwsr.lima-linux-builder');
+  assert.match(rendered.agent.config.ProgramArguments[0], /lima-linux-builder-supervisor$/);
+  assert.equal(rendered.agent.config.RunAtLoad, true);
+  assert.equal(rendered.agent.config.KeepAlive.SuccessfulExit, false);
+  assert.equal(rendered.agent.config.ProcessType, 'Background');
+  assert.ok(rendered.supervisorText.includes('limactl --tty=false create --name="$name" "$config"'));
+  assert.ok(rendered.supervisorText.includes('exec limactl --tty=false start --foreground "$name"'));
+  assert.ok(
+    rendered.packages.includes('linux-builder-deploy'),
+    `expected linux-builder-deploy in home.packages, got: ${JSON.stringify(rendered.packages)}`,
+  );
+
+  const deploy = rendered.deployText;
+  assert.ok(deploy, 'expected virtualisation.limaLinuxBuilder._deploy to render');
+  assert.ok(deploy.includes('usage: linux-builder-deploy [REPO]'));
+  assert.ok(deploy.includes('[ ! -f "$repo/flake.nix" ] || [ ! -f "$repo/flake.lock" ]'));
+  assert.ok(deploy.includes('ssh -F "$sshConfig" "$remoteHost" "$@"'));
+  assert.ok(deploy.includes('sshConfig="$LIMA_HOME/$name/ssh.config"'));
+  assert.ok(!deploy.includes('remote -- '));
+  assert.ok(deploy.includes('tar --exclude=.git'));
+  assert.ok(deploy.includes('-cf - -C "$repo" .'));
+  assert.ok(deploy.includes("system=linux-builder\n"));
+  assert.ok(deploy.includes("nixos-rebuild switch --sudo --no-update-lock-file --flake '$scratch#$system'"));
 });
 
 test('builder guest identity cannot drift from its dedicated instance', () => {
