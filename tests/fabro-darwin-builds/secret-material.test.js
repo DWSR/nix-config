@@ -100,13 +100,23 @@ function generateKeyPair(directory, name) {
 function renderMachines(renderer, directory, clientKey, hostKey) {
   const clientPath = path.join(directory, 'client-key');
   const hostPath = path.join(directory, 'host-key');
+  const linuxClientPath = path.join(directory, 'linux-client-key');
+  const linuxHostKeyPath = path.join(directory, 'ssh_host_ed25519_key.pub');
   const output = path.join(directory, 'machines');
   fs.writeFileSync(clientPath, clientKey);
   fs.writeFileSync(hostPath, hostKey);
+  const linuxClientRuntimePath = '/run/secrets/linux-builder-client-key';
+  fs.writeFileSync(
+    linuxHostKeyPath,
+    'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID1AF8PoQ4lakrcKp00bfrycmCzPLsSWjMDNVfEq9GYM linux-builder\n',
+  );
   const result = childProcess.spawnSync(renderer, [
     '--output', output, '--host-name', 'mac-builder.example.ts.net',
     '--ssh-user', 'nix-builder', '--system', 'aarch64-darwin',
     '--max-jobs', '4', '--speed-factor', '2', '--client-key', clientPath, '--host-key', hostPath,
+    '--linux-host-name', 'linux-builder.tuxedo-musical.ts.net', '--linux-ssh-user', 'builder',
+    '--linux-system', 'aarch64-linux', '--linux-max-jobs', '4', '--linux-speed-factor', '1',
+    '--linux-client-key', linuxClientRuntimePath, '--linux-host-key', linuxHostKeyPath,
   ], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   return { line: fs.readFileSync(output, 'utf8'), clientPath };
@@ -138,6 +148,8 @@ test('synthetic poisoned secret values never enter evaluated guest configuration
     const { line, clientPath } = renderMachines(renderer, directory, poison.client, poison.host);
     const evaluated = JSON.stringify(config);
     assert.match(line, new RegExp(` ${clientPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} 4 2 - - `));
+    assert.match(line, /ssh-ng:\/\/builder@linux-builder\.tuxedo-musical\.ts\.net aarch64-linux .* 4 1 - - /);
+    assert.ok(!line.includes('LINUX PRIVATE CLIENT KEY FIXTURE'));
     assert.ok(!line.includes(poison.client));
     assert.ok(!line.includes(poison.host));
     assert.ok(!line.includes('/nix/store'));
