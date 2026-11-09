@@ -36,6 +36,7 @@
   - Set the Linux machine record to `max-jobs = 4` and `speed-factor = 1`; never put private key contents in the record.
   - Done when fixture runs produce both records and invalid/missing Linux inputs fail without replacing the prior complete output.
   - _Requirements: 3.1, 3.3, 4.1, 4.3_
+  - _Blocked: Implementation and review were interrupted before full validation; resume implementation, complete remaining tests and repository checks, then adversarially review the diff._
 
 - [ ] 3.2 Configure Fabro's Linux client credentials, dispatch, and build policy
   - Declare Fabro's dedicated Linux client key as a root-only SOPS runtime secret and add its operator 1Password source to `scripts/fabro-sync-from-1password.nix`.
