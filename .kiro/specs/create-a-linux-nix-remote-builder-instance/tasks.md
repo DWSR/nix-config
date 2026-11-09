@@ -13,7 +13,7 @@
 
 - [ ] 2. Provision the builder as a separate personal-host Lima guest
 
-- [ ] 2.1 Add the builder-specific Lima adapter and instance configuration
+- [x] 2.1 Add the builder-specific Lima adapter and instance configuration
   - Create `home-manager/common/lima-linux-builder.nix` with a separate instance identity and rendered Lima configuration, modeled on existing NixOS guest conventions without changing `lima-vm.nix`.
   - Reuse the pinned NixOS release image defaults and native aarch64 architecture; configure `linux-builder` with 4 CPUs, `8GiB` memory, and `128GiB` disk, and enable it from the personal-host Home Manager configuration.
   - Import the adapter from `home-manager/common/default.nix` and preserve the existing Fabro Lima guest configuration.
