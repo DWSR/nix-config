@@ -11,7 +11,7 @@ const { nixEvalJson, repoRoot } = require('./helpers');
 
 const poison = {
   client: 'PRIVATE-CLIENT-KEY-FILE-CONTENTS-POISON-DO-NOT-LEAK',
-  host: 'HOST-PUBLIC-KEY-FILE-CONTENTS-POISON-DO-NOT-LEAK',
+  host: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f linux-builder\n',
   authorized: 'AUTHORIZED-PUBLIC-KEY-FILE-CONTENTS-POISON-DO-NOT-LEAK',
 };
 
@@ -100,16 +100,23 @@ function generateKeyPair(directory, name) {
 function renderMachines(renderer, directory, clientKey, hostKey) {
   const clientPath = path.join(directory, 'client-key');
   const hostPath = path.join(directory, 'host-key');
+  const linuxClientPath = path.join(directory, 'linux-client-key');
+  const linuxHostPath = path.join(directory, 'linux-host-key');
+  const linuxClientRuntimePath = '/run/secrets/linux-builder-client-key';
   const output = path.join(directory, 'machines');
   fs.writeFileSync(clientPath, clientKey);
   fs.writeFileSync(hostPath, hostKey);
+  fs.writeFileSync(linuxClientPath, clientKey);
+  fs.writeFileSync(linuxHostPath, `${hostKey.trimEnd()} linux-builder\n`);
   const result = childProcess.spawnSync(renderer, [
     '--output', output, '--host-name', 'mac-builder.example.ts.net',
     '--ssh-user', 'nix-builder', '--system', 'aarch64-darwin',
     '--max-jobs', '4', '--speed-factor', '2', '--client-key', clientPath, '--host-key', hostPath,
+    '--linux-host-name', 'linux-builder.tuxedo-musical.ts.net', '--linux-system', 'aarch64-linux',
+    '--linux-max-jobs', '4', '--linux-client-key', linuxClientRuntimePath, '--linux-host-key', linuxHostPath,
   ], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  return { line: fs.readFileSync(output, 'utf8'), clientPath };
+  return { line: fs.readFileSync(output, 'utf8'), clientPath, linuxClientPath, linuxClientRuntimePath };
 }
 
 function fingerprint(publicKey, directory) {
@@ -135,9 +142,10 @@ test('synthetic poisoned secret values never enter evaluated guest configuration
   const renderer = buildRenderer();
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fabro-poison-files-'));
   try {
-    const { line, clientPath } = renderMachines(renderer, directory, poison.client, poison.host);
+    const { line, clientPath, linuxClientRuntimePath } = renderMachines(renderer, directory, poison.client, poison.host);
     const evaluated = JSON.stringify(config);
     assert.match(line, new RegExp(` ${clientPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} 4 2 - - `));
+    assert.match(line, new RegExp(` ${linuxClientRuntimePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} 4 1 - - `));
     assert.ok(!line.includes(poison.client));
     assert.ok(!line.includes(poison.host));
     assert.ok(!line.includes('/nix/store'));
