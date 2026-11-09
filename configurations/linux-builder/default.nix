@@ -60,6 +60,7 @@ in
     };
   };
 
+  sops.useSystemdActivation = true;
   sops.age = {
     keyFile = "/var/lib/sops-nix/key.txt";
     sshKeyPaths = [ ];
@@ -68,8 +69,9 @@ in
   # The encrypted builder store is operator-provisioned by task 5.1. The
   # evaluation-only empty file keeps the portable host evaluable in advance;
   # actual activation still requires the provisioned store and age key.
-  sops.defaultSopsFile =
-    if builtins.pathExists secretStore then secretStore else builtins.toString evaluationOnlyStore;
+  sops.defaultSopsFile = builtins.toString (
+    if builtins.pathExists secretStore then secretStore else evaluationOnlyStore
+  );
   sops.secrets = {
     "builder-authorized-keys" = {
       path = "/run/secrets/builder-authorized-keys";
@@ -82,6 +84,17 @@ in
       owner = "root";
     };
   };
+
+  systemd.services.sops-install-secrets.preStart = ''
+    if [ ! -f ${lib.escapeShellArg (toString secretStore)} ] || [ ! -s ${lib.escapeShellArg (toString secretStore)} ]; then
+      echo "linux-builder: required encrypted SOPS store is missing or empty at ${toString secretStore}; provision it before activation" >&2
+      exit 1
+    fi
+    if [ ! -s ${lib.escapeShellArg config.sops.age.keyFile} ]; then
+      echo "linux-builder: required SOPS age key is missing at ${config.sops.age.keyFile}; provision it before activation" >&2
+      exit 1
+    fi
+  '';
 
   systemd.services.builder-authorized-keys = {
     description = "Install the SOPS-managed builder SSH authorized keys";

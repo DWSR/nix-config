@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -40,6 +41,13 @@ function evalBuilder() {
         path = cfg.sops.secrets."builder-tailscale-oauth-secret".path;
         owner = cfg.sops.secrets."builder-tailscale-oauth-secret".owner;
         mode = cfg.sops.secrets."builder-tailscale-oauth-secret".mode;
+      };
+      sopsActivation = {
+        enabled = cfg.sops.useSystemdActivation;
+        installerServiceExists = cfg.systemd.services ? sops-install-secrets;
+        installerPreStart = (cfg.systemd.services.sops-install-secrets or { }).preStart or "";
+        installerWantedBy = (cfg.systemd.services.sops-install-secrets or { }).wantedBy or [ ];
+        ageKeyFile = cfg.sops.age.keyFile;
       };
       tailscale = {
         enable = cfg.services.tailscale.enable;
@@ -126,6 +134,10 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   assert.equal(cfg.tailscaleSecret.path, '/run/secrets/builder-tailscale-oauth-secret');
   assert.equal(cfg.tailscaleSecret.owner, 'root');
   assert.equal(cfg.tailscaleSecret.mode, '0400');
+  assert.equal(cfg.sopsActivation.enabled, true);
+  assert.equal(cfg.sopsActivation.installerServiceExists, true);
+  assert.ok(cfg.sopsActivation.installerWantedBy.includes('sysinit.target'));
+  assert.match(cfg.sopsActivation.installerPreStart, /required.*(key|secret)|missing.*(key|secret)/i);
   assert.equal(cfg.materializer.serviceConfig.Type, 'oneshot');
   assert.ok(cfg.materializer.after.includes('sops-install-secrets.service'));
   assert.ok(cfg.materializer.requires.includes('sops-install-secrets.service'));
@@ -135,6 +147,54 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   assert.match(cfg.materializer.script, /authorized_keys/);
   assert.match(cfg.materializer.script, /install -m 0600/);
   assert.match(cfg.materializer.script, /builder-authorized-keys/);
+});
+
+test('SOPS activation fails clearly when the encrypted store or age key is missing', () => {
+  const cfg = evalBuilder();
+  const preStart = cfg.sopsActivation.installerPreStart;
+
+  assert.match(preStart, /required encrypted SOPS store is missing or empty/);
+  assert.match(preStart, /required SOPS age key is missing/);
+  assert.match(preStart, /secrets\/remote-builder\.linux-builder\.yaml/);
+  assert.match(preStart, /\/var\/lib\/sops-nix\/key\.txt/);
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'linux-builder-sops-'));
+  try {
+    const scriptPath = path.join(tempRoot, 'sops-pre-start');
+    fs.writeFileSync(scriptPath, preStart, { mode: 0o700 });
+
+    const missingStore = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    assert.notEqual(missingStore.status, 0);
+    assert.match(missingStore.stderr, /required encrypted SOPS store is missing/);
+
+    const provisionedRoot = path.join(tempRoot, 'repo');
+    const storePath = path.join(provisionedRoot, 'secrets/remote-builder.linux-builder.yaml');
+    const keyPath = path.join(tempRoot, 'age-key.txt');
+    fs.mkdirSync(path.dirname(storePath), { recursive: true });
+    fs.writeFileSync(storePath, '');
+    fs.writeFileSync(keyPath, 'fixture age key');
+    const configuredStorePath = preStart.match(/required encrypted SOPS store is missing or empty at (.*); provision it/)[1];
+    const provisionedScript = preStart
+      .replaceAll(configuredStorePath, storePath)
+      .replaceAll('/var/lib/sops-nix/key.txt', keyPath);
+    fs.writeFileSync(scriptPath, provisionedScript, { mode: 0o700 });
+    const emptyStore = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    assert.notEqual(emptyStore.status, 0);
+    assert.match(emptyStore.stderr, /required encrypted SOPS store is missing or empty/);
+
+    fs.writeFileSync(storePath, 'fixture encrypted store');
+    fs.writeFileSync(keyPath, 'fixture age key');
+
+    const provisioned = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    assert.equal(provisioned.status, 0, provisioned.stderr);
+
+    fs.rmSync(keyPath);
+    const missingKey = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    assert.notEqual(missingKey.status, 0);
+    assert.match(missingKey.stderr, /required SOPS age key is missing/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test('Tailscale and Nix maintenance are configured without Lima dependencies', () => {
