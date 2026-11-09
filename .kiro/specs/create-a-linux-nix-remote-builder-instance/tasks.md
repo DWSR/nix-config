@@ -20,7 +20,7 @@
   - Done when the personal host renders the specified resources for a distinct builder instance and its existing Fabro instance remains unchanged.
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [ ] 2.2 Implement the builder VM lifecycle and deployment wrapper
+- [x] 2.2 Implement the builder VM lifecycle and deployment wrapper
   - Add a builder-specific launchd supervisor and deploy command following the existing Lima start and tar-over-SSH NixOS deployment conventions.
   - Deploy the locked repository flake output `linux-builder` into the guest; keep instance lifecycle and image provisioning outside the portable host module.
   - Ensure launchd starts the instance at load, restarts unexpected failures, and honors a clean stop without modifying the existing Fabro supervisor.
