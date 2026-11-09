@@ -29,6 +29,7 @@
     ./launchd-activation.nix
     ./lima-mac-guest.nix
     ./lima-vm.nix
+    ./lima-linux-builder.nix
     ./litellm.nix
     ./opencode-cost-diagnosis.nix
     ./opencode-nono.nix
