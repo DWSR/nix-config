@@ -1,0 +1,141 @@
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+let
+  secretStore = ../../secrets/remote-builder.linux-builder.yaml;
+  evaluationOnlyStore = pkgs.writeText "linux-builder-unprovisioned-secrets.yaml" "";
+in
+{
+  nixpkgs.hostPlatform = "aarch64-linux";
+  networking.hostName = "linux-builder";
+
+  boot.loader.grub = {
+    enable = true;
+    device = "nodev";
+    efiSupport = true;
+    efiInstallAsRemovable = true;
+  };
+  fileSystems."/" = {
+    device = "/dev/disk/by-label/nixos";
+    fsType = "ext4";
+  };
+
+  nix.enable = true;
+  nix.settings = {
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
+    extra-platforms = [ ];
+    max-jobs = 4;
+    build-users-group = "nixbld";
+    trusted-users = lib.mkForce [ "builder" ];
+  };
+
+  users.groups.builder = { };
+  users.users.builder = {
+    isNormalUser = true;
+    group = "builder";
+    home = "/home/builder";
+    createHome = true;
+  };
+
+  services.openssh = {
+    enable = true;
+    openFirewall = false;
+    hostKeys = [
+      {
+        path = "/var/lib/ssh/ssh_host_ed25519_key";
+        type = "ed25519";
+      }
+    ];
+    settings = {
+      AllowUsers = [ "builder" ];
+      KbdInteractiveAuthentication = false;
+      PasswordAuthentication = false;
+      PermitRootLogin = "no";
+    };
+  };
+
+  sops.age = {
+    keyFile = "/var/lib/sops-nix/key.txt";
+    sshKeyPaths = [ ];
+  };
+  sops.gnupg.sshKeyPaths = [ ];
+  # The encrypted builder store is operator-provisioned by task 5.1. The
+  # evaluation-only empty file keeps the portable host evaluable in advance;
+  # actual activation still requires the provisioned store and age key.
+  sops.defaultSopsFile =
+    if builtins.pathExists secretStore then secretStore else builtins.toString evaluationOnlyStore;
+  sops.secrets = {
+    "builder-authorized-keys" = {
+      path = "/run/secrets/builder-authorized-keys";
+      mode = "0400";
+      owner = "root";
+    };
+    "builder-tailscale-oauth-secret" = {
+      path = "/run/secrets/builder-tailscale-oauth-secret";
+      mode = "0400";
+      owner = "root";
+    };
+  };
+
+  systemd.services.builder-authorized-keys = {
+    description = "Install the SOPS-managed builder SSH authorized keys";
+    wantedBy = [ "multi-user.target" ];
+    requires = [ "sops-install-secrets.service" ];
+    after = [ "sops-install-secrets.service" ];
+    before = [ "sshd.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      set -eu
+      secret_file="${config.sops.secrets."builder-authorized-keys".path}"
+      ssh_dir="/home/builder/.ssh"
+
+      if [ ! -s "$secret_file" ]; then
+        echo "linux-builder: required builder-authorized-keys secret is missing or empty at $secret_file" >&2
+        exit 1
+      fi
+
+      install -d -m 0700 -o builder -g builder "$ssh_dir"
+      install -m 0600 -o builder -g builder "$secret_file" "$ssh_dir/authorized_keys"
+    '';
+  };
+
+  systemd.services.sshd = {
+    requires = [ "builder-authorized-keys.service" ];
+    after = [ "builder-authorized-keys.service" ];
+  };
+
+  services.tailscale = {
+    enable = true;
+    authKeyFile = config.sops.secrets."builder-tailscale-oauth-secret".path;
+    authKeyParameters = {
+      ephemeral = false;
+      preauthorized = true;
+    };
+    extraUpFlags = [
+      "--hostname=linux-builder"
+      "--advertise-tags=tag:linux-nix-remote-builder"
+    ];
+    openFirewall = true;
+  };
+
+  nix.gc = {
+    automatic = true;
+    dates = "daily";
+    options = "--delete-older-than 7d";
+  };
+  nix.optimise = {
+    automatic = true;
+    dates = [ "daily" ];
+  };
+
+  system.stateVersion = "26.05";
+}
