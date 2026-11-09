@@ -2,7 +2,7 @@
 
 - [ ] 1. Add the portable Linux builder host
 
-- [ ] 1.1 Define and register the NixOS builder host
+- [x] 1.1 Define and register the NixOS builder host
   - Create `configurations/linux-builder/default.nix` for native `aarch64-linux`, with Nix remote-build support, a dedicated non-root `builder` account, and trust limited to that account.
   - Configure OpenSSH with persistent host-key paths, declare SOPS runtime secrets for authorized keys and the Tailscale OAuth credential, and materialize authorized keys at runtime; do not place secret values in the Nix store.
   - Configure the stable `linux-builder.tuxedo-musical.ts.net` endpoint and dedicated tailnet tag; support at least four concurrent remote jobs and explicitly avoid extra execution platforms.
