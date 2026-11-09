@@ -7,7 +7,10 @@
 #
 #   1. The source manifest is the guest config's
 #      `fabro.onePasswordSecrets` map (configurations/fabro-vm/default.nix:
-#      sops secret name -> `op://…` URI), read from
+#      sops secret name -> `op://…` URI), including the distinct Darwin and
+#      Linux builder client keys. Fabro's Linux client key is mirrored from
+#      `op://Infrastructure/Fabro Linux nix remote builder key/private key`.
+#      The manifest is read from
 #      `.#nixosConfigurations.fabro-vm` instead of a darwinConfiguration's
 #      `home.mcp` namespace (the guest runs no home-manager).
 #   2. The guest's age PRIVATE key is not on the mac: /var/lib/sops-nix/
