@@ -2,7 +2,7 @@
 
 - [ ] 1. Add the portable Linux builder host
 
-- [ ] 1.1 Define and register the NixOS builder host
+- [x] 1.1 Define and register the NixOS builder host
   - Create `configurations/linux-builder/default.nix` for native `aarch64-linux`, with Nix remote-build support, a dedicated non-root `builder` account, and trust limited to that account.
   - Configure OpenSSH with persistent host-key paths, declare SOPS runtime secrets for authorized keys and the Tailscale OAuth credential, and materialize authorized keys at runtime; do not place secret values in the Nix store.
   - Configure the stable `linux-builder.tuxedo-musical.ts.net` endpoint and dedicated tailnet tag; support at least four concurrent remote jobs and explicitly avoid extra execution platforms.
@@ -13,14 +13,14 @@
 
 - [ ] 2. Provision the builder as a separate personal-host Lima guest
 
-- [ ] 2.1 Add the builder-specific Lima adapter and instance configuration
+- [x] 2.1 Add the builder-specific Lima adapter and instance configuration
   - Create `home-manager/common/lima-linux-builder.nix` with a separate instance identity and rendered Lima configuration, modeled on existing NixOS guest conventions without changing `lima-vm.nix`.
   - Reuse the pinned NixOS release image defaults and native aarch64 architecture; configure `linux-builder` with 4 CPUs, `8GiB` memory, and `128GiB` disk, and enable it from the personal-host Home Manager configuration.
   - Import the adapter from `home-manager/common/default.nix` and preserve the existing Fabro Lima guest configuration.
   - Done when the personal host renders the specified resources for a distinct builder instance and its existing Fabro instance remains unchanged.
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [ ] 2.2 Implement the builder VM lifecycle and deployment wrapper
+- [x] 2.2 Implement the builder VM lifecycle and deployment wrapper
   - Add a builder-specific launchd supervisor and deploy command following the existing Lima start and tar-over-SSH NixOS deployment conventions.
   - Deploy the locked repository flake output `linux-builder` into the guest; keep instance lifecycle and image provisioning outside the portable host module.
   - Ensure launchd starts the instance at load, restarts unexpected failures, and honors a clean stop without modifying the existing Fabro supervisor.
