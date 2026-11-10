@@ -163,7 +163,7 @@
 
 - [ ] 8. Workstation capture and MCP clients
 
-- [ ] 8.1 Declare the home.totalRecall module and enable it on the workstation
+- [x] 8.1 Declare the home.totalRecall module and enable it on the workstation
   - Create `home-manager/common/total-recall.nix` with `home.totalRecall` options: `enable` (default false), `endpoint`, `databaseConnection` (default `memory`), and the client package options `harnessEvents`, `opencodePlugin`, `piExtension`, and `mcpWorker`
   - Import it from `home-manager/common/default.nix` and set `home.totalRecall = { enable = true; endpoint = "wss://total-recall.tuxedo-musical.ts.net"; databaseConnection = "memory"; }` in `configurations/personal/home-manager/default.nix`
   - Derive every adapter and MCP environment value from those two option values; repeat the URL and connection name in no consumer
