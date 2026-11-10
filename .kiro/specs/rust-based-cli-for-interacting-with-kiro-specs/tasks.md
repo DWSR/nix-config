@@ -3,7 +3,7 @@
 Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `requirements.md`, and `design.md`. Units are listed in dependency order; `(P)` marks peers that may run concurrently.
 
 - [ ] 1. Crate foundation and CLI shell
-- [ ] 1.1 Scaffold the Rust crate with a checked-in lockfile
+- [x] 1.1 Scaffold the Rust crate with a checked-in lockfile
   - Create `scripts/kiro-spec/Cargo.toml` (edition 2021, `serde` with `derive`, `serde_json`) and keep the generated `Cargo.lock` in the crate source; add no other runtime crate.
   - Add `src/main.rs` exiting with `run(std::env::args_os())` and `src/lib.rs` declaring `cli`, `error`, `paths`, `spec_json`, `tasks`, `requirements`, `validate`, `edit`, and `render` as compiling stubs.
   - Confirm `cargo build --locked` and `cargo test --locked` succeed in `scripts/kiro-spec/` and the produced binary is named `kiro-spec`.
