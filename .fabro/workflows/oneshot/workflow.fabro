@@ -24,6 +24,14 @@ digraph Oneshot {
         script="test -f .git/oneshot-scripts/tools.py || { echo 'oneshot: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/oneshot-scripts/tools.py prepare {{ inputs.issue }}"
     ]
 
+    diagnose [
+        label="Probe run environment",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="2m",
+        script="python3 .git/oneshot-scripts/tools.py diagnose {{ inputs.issue }}"
+    ]
+
     implement [
         label="Implement issue",
         prompt="@prompts/implement.md",
@@ -65,7 +73,7 @@ digraph Oneshot {
         output_schema="routing",
         max_visits=3,
         stdin_source="context.rework_round",
-        script="set -eu\nROUND=$(cat 2>/dev/null | tr -d '[:space:]' || true)\ncase \"$ROUND\" in ''|*[!0-9]*) ROUND=0 ;; esac\nROUND=$((ROUND + 1))\nif [ \"$ROUND\" -gt 2 ]; then\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\",\"stage_failure\":\"Review rejected the change after 2 rework rounds; giving up.\"}}\\n' \"$ROUND\"\nelse\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\"}}\\n' \"$ROUND\"\nfi"
+        script="set -eu\nROUND=$(cat 2>/dev/null | tr -d '[:space:]' || true)\ncase \"$ROUND\" in ''|*[!0-9]*) ROUND=0 ;; esac\nROUND=$((ROUND + 1))\nprintf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\"}}\\n' \"$ROUND\""
     ]
 
     wait_implement_rate_limit [
@@ -102,6 +110,13 @@ digraph Oneshot {
         script="python3 .git/oneshot-scripts/tools.py publish"
     ]
 
+    salvage [
+        label="Salvage draft pull request",
+        shape=parallelogram,
+        stdin_source="stage_failure",
+        script="python3 .git/oneshot-scripts/tools.py publish --draft"
+    ]
+
     fail [
         label="Fail run",
         shape=parallelogram,
@@ -111,17 +126,23 @@ digraph Oneshot {
 
     start -> setup_helpers -> prepare
 
-    prepare -> implement [condition="outcome=succeeded"]
+    prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]
+    prepare -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED", weight=10]
     prepare -> fail
+    diagnose -> implement [condition="outcome=succeeded && context.preflight_status=READY"]
+    diagnose -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED"]
+    diagnose -> fail
 
     implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
     implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    implement -> salvage [condition="outcome=failed && context.impl_status=BLOCKED"]
     implement -> fail
     wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
     wait_implement_rate_limit -> fail
 
     check -> review [condition="outcome=succeeded && context.over_limit=false"]
     check -> simplify [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=true"]
+    check -> salvage [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=false"]
     check -> fail
 
     simplify -> check [condition="outcome=succeeded"]
@@ -131,6 +152,9 @@ digraph Oneshot {
     wait_simplify_rate_limit -> fail
 
     review -> publish [condition="outcome=succeeded && context.verdict=APPROVED"]
+    review -> salvage [condition="outcome=failed && context.failure_class contains network"]
+    review -> salvage [condition="outcome=failed && context.failure_class contains environment"]
+    review -> salvage [condition="outcome=failed && context.verdict=BLOCKED"]
     review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
     review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
     review -> fail
@@ -138,8 +162,10 @@ digraph Oneshot {
     wait_review_rate_limit -> fail
 
     rework -> implement [condition="outcome=succeeded && context.rework_round <= 2"]
+    rework -> salvage [condition="outcome=succeeded && context.rework_round > 2"]
     rework -> fail
 
+    salvage -> exit
     publish -> exit
     fail -> exit
 }

@@ -257,7 +257,7 @@ in
     };
     cpus = 4;
     memory = "8GiB";
-    disk = "64GiB";
+    disk = "128GiB";
     suppressFirstLoginSetup = true;
     forward = {
       enable = true;
@@ -272,8 +272,6 @@ in
   };
 
   programs.ssh = {
-    includes = [ "~/.orbstack/ssh/config" ];
-
     settings = {
       "192.168.1.1" = {
         User = "root";

@@ -52,6 +52,7 @@ digraph KiroTask {
         max_visits=8,
         max_retries=2,
         retry_policy="patient",
+        timeout="20m",
         model="gpt-6-luna",
         provider="litellm",
         reasoning_effort="xhigh"

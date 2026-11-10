@@ -6,7 +6,11 @@
 }:
 
 {
-  imports = [ inputs.sops-nix.darwinModules.default ];
+  imports = [
+    inputs.sops-nix.darwinModules.default
+    ./tailscale.nix
+    ./substituters.nix
+  ];
 
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;

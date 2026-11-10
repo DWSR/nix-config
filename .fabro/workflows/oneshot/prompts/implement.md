@@ -33,10 +33,29 @@ pull request; a separate reviewer will adversarially re-check your work.
    - no scratch, plan, or report files inside the repository (use `.git/` or `/tmp`),
    - do not modify `.kiro/` state and do not touch CI workflow files unless the issue
      itself requires it.
-3. Add or update tests when the repository has a test suite for the touched area. Discover
-   the repository's canonical test, lint, and build commands from its manifests, task
-   runners, CI config, and README, and run them. Never claim a test passed unless you ran
-   it and saw it pass.
+3. Add or update tests when the repository has a test suite for the touched area. Select
+   validation from the changed paths instead of running every canonical check:
+   - For `flake.lock` or `flake.nix`, validate `flake.lock` as JSON with
+     `python3 -m json.tool flake.lock >/dev/null` and run `nix flake check --no-build`.
+     For `flake.lock`, use `nix eval` on the affected inputs' locked versions; for
+     `flake.nix`, evaluate only affected outputs or versions. For a lockfile-only change,
+     do not run `nix flake check` without `--no-build`. Run full `nix flake check`
+     only when the change also touches a Nix module or package. Inspect `flake.nix` hunks:
+     input declarations alone do not count as package or module changes.
+   - For `.github/workflows/**`, run `actionlint` on the touched workflow files,
+     `python3 tests/dependency-cooldown/cooldown.test.py`, and
+     `nix flake check --no-build`.
+   - For `tests/**` or `scripts/**`, run the suites covering the touched files and
+     `nix develop --command prek run --all-files`.
+   - Also run full `nix flake check` for any changed Nix module, package definition, or
+     `.fabro/workflows/**/workflow.fabro` workflow graph. Apply every matching path rule;
+     a broader rule does not cancel another required check.
+   - Always run `git diff --check` against `baseline_sha`, scan changed files for
+     placeholder markers and secrets, and check new files for scratch artifacts.
+   Derive changed paths from the baseline diff and include untracked deliverable files.
+   Discover precise suite and version-evaluation targets from repository conventions;
+   do not substitute a full flake build for focused checks. Never claim a check passed
+   unless you ran it and saw it pass.
 4. Self-review before reporting: every acceptance criterion from the issue is satisfied by
    concrete behavior, tests would fail if the implementation were removed, and nothing
    outside the issue's scope changed.
@@ -61,4 +80,4 @@ On success:
 
 When blocked:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>"}}
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>", "stage_failure": "<the same concrete blocker>"}}

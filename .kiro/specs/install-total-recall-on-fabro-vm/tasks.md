@@ -14,7 +14,7 @@
 
 - [ ] 1. Pinned packages and flake input
 
-- [ ] 1.1 Add and lock the total-recall flake input
+- [x] 1.1 Add and lock the total-recall flake input
   - Declare `total-recall.url = "github:DWSR/total-recall"` beside the other inputs in `flake.nix` with no `nixpkgs.follows` (upstream needs Rust 1.98.1 from its own nixpkgs)
   - Run `nix flake lock` so `flake.lock` records the input's `rev` and `narHash` plus the upstream-owned `nixpkgs` node
   - Add `totalRecall = inputs.total-recall;` to the `nixosConfigurations.fabro-vm` `specialArgs` block and accept `totalRecall` in the guest module that reads it
@@ -22,7 +22,7 @@
   - Completed when `nix flake metadata --json` shows a non-empty `locked.rev` for `total-recall` and the guest evaluation still succeeds
   - _Requirements: 1.1, 1.2_
 
-- [ ] 1.2 Build the pinned iii runtime and registry worker packages
+- [x] 1.2 Build the pinned iii runtime and registry worker packages
   - Create `overlays/total-recall.nix` with `fetchurl` derivations for iii 0.24.0 (`meta.mainProgram = "iii"`), `database` 0.5.26, `queue` 0.21.26, and `cron` 0.21.28 using the `aarch64-linux` hashes recorded in `research.md`
   - Re-export `harness-ingestion`, `harness-event-persistence`, `session-post-processing`, `opencode-harness-events`, `pi-harness-events`, and `mcp-worker` from `totalRecall.packages.${system}` under the `total-recall-*` names in the design's C1 contract
   - Add the overlay to `custom-packages` in `overlays/default.nix` and record each version and hash in a comment so a bump is a reviewable diff
@@ -31,7 +31,7 @@
   - _Requirements: 1.2, 1.4, 1.5, 1.6_
   - _Depends: 1.1_
 
-- [ ] 1.3 Add the repo-owned harness-events CLI derivation
+- [x] 1.3 Add the repo-owned harness-events CLI derivation
   - Build workspace package `harness-events-cli` from the pinned input's `Cargo.toml`/`Cargo.lock` as `total-recall-harness-events`, following the repository's existing Rust overlay derivation style
   - Set `nativeBuildInputs = [ protobuf ]`, `doCheck = false`, and `meta.mainProgram = "harness-events"` so unit `ExecStart` lines use `lib.getExe`
   - Use hashed cargo dependencies only: no `cargo install`, no build-time network fetch, and no copied upstream source tree
@@ -39,7 +39,7 @@
   - _Requirements: 1.3_
   - _Depends: 1.1, 1.2_
 
-- [ ] 2. Declare the guest totalRecall options, service account, and module enablement
+- [x] 2. Declare the guest totalRecall options, service account, and module enablement
   - Create `configurations/fabro-vm/total-recall.nix` with the design's `fabro.totalRecall` options: `enable` (default false), `iiiHost`/`iiiPort` (127.0.0.1/49134), `streamHost`/`streamPort` (127.0.0.1/3112), `databaseName`/`databaseConnection` (`memory`), `queueTopic` (`harness-events`), `postProcessingModel`, and `postProcessingBaseUrl` (`http://127.0.0.1:4000/v1/`)
   - Declare `users.groups.total-recall` and `users.users.total-recall` as a system user in that group; do not touch the Lima cidata account or `users.mutableUsers`
   - Import `./total-recall.nix` from `configurations/fabro-vm/default.nix` and set `fabro.totalRecall.enable = true` there
@@ -50,7 +50,7 @@
 
 - [ ] 3. Guest memory database
 
-- [ ] 3.1 Enable PostgreSQL 17 with the three memory extensions on loopback
+- [x] 3.1 Enable PostgreSQL 17 with the three memory extensions on loopback
   - Set `services.postgresql = { enable; package = pkgs.unstable.postgresql_17; extensions = ps: [ ps.pg_textsearch ps.pgvector ps.pg_uuidv7 ]; }` in `configurations/fabro-vm/total-recall.nix` (26.05 ships pgvector 0.8.2, below the 0.8.6 floor)
   - Set `settings.listen_addresses = lib.mkForce "127.0.0.1"` and `settings.shared_preload_libraries = "pg_textsearch"`
   - Declare `ensureDatabases = [ "memory" ]` and the four roles `memory_migration`, `memory_application`, `session_post_processing_migrator`, and `session_post_processing_application`
@@ -59,7 +59,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6, 6.4, 6.7_
   - _Depends: 2_
 
-- [ ] 3.2 (P) Write the bootstrap and runtime-grant SQL
+- [x] 3.2 (P) Write the bootstrap and runtime-grant SQL
   - Add `configurations/fabro-vm/total-recall/bootstrap.sql`: `CREATE EXTENSION IF NOT EXISTS` for the three extensions, `memory` database ownership to `memory_migration`, and `ALTER SCHEMA public OWNER TO memory_migration` only when the catalog reports a different owner
   - Add `runtime-grants.sql` granting `memory_application` `SELECT, INSERT` on `memories`/`memory_embeddings`, `SELECT` on the ledger tables, and `SELECT, INSERT, UPDATE` on the three post-processing tables
   - Grant no `DELETE` anywhere and add no `DROP`, `TRUNCATE`, or non-conditional ownership change
@@ -67,7 +67,7 @@
   - _Requirements: 2.2, 2.3, 2.4_
   - _Boundary: configurations/fabro-vm/total-recall/*.sql_
 
-- [ ] 3.3 Build the idempotent migration runner and ledger
+- [x] 3.3 Build the idempotent migration runner and ledger
   - Add `total-recall/migrate.nix` and `migrate.sh`: connect as `postgres` over the local socket to the module's database name, apply `bootstrap.sql`, then each upstream file whose name is absent from `public.total_recall_schema_migrations`
   - Apply exactly the design's four files in order: memory-store `0001_memory_schema_search.sql`, harness-event-persistence `0001_harness_event_ledger.sql` and `0002_session_embeddings.sql`, session-post-processing `0001_session_post_processing.sql`
   - Record `(name, sha256, applied_at)` per file, fail non-zero naming the file when an applied name's hash changed, and stop at the first `psql` failure
@@ -76,7 +76,7 @@
   - _Requirements: 2.2, 2.3, 2.4, 2.5_
   - _Depends: 3.2_
 
-- [ ] 3.4 Wire the total-recall-migrate service
+- [x] 3.4 Wire the total-recall-migrate service
   - Add `systemd.services.total-recall-migrate` as a `oneshot` running as `postgres`, `wantedBy = [ "multi-user.target" ]`, with `after` and `requires` on `postgresql.service` and no `StateDirectory`
   - Point `ExecStart` at the runner with the module's database name, set `Restart = "on-failure"`, and let `psql` errors reach the journal with the failing element named
   - Leave `postgresql.service` otherwise unmodified and do not gate PostgreSQL on the migration unit
@@ -86,7 +86,7 @@
 
 - [ ] 4. Guest memory runtime
 
-- [ ] 4.1 Render the iii engine configuration and worker files
+- [x] 4.1 Render the iii engine configuration and worker files
   - Render `config.yaml` with `pkgs.formats.yaml` declaring only `iii-worker-manager` (`127.0.0.1:49134`), `iii-stream` (`127.0.0.1:3112`, kv `file_based` at `/var/lib/total-recall/stream`), and `configuration` (fs adapter at `/var/lib/total-recall/config`)
   - Add `total-recall-config` as a `oneshot` with `RemainAfterExit`: copy the rendered config to `/var/lib/total-recall/iii/config.yaml` and write `database.yaml`, `queue.yaml`, and `cron.yaml` into the configuration directory
   - Use the design's structured database entry (`driver: postgres`, `host: 127.0.0.1`, `port: 5432`, `user: memory_application`, `database: memory`, `tls.mode: disable`, `pool.max: 10`, `history_max_entries: 0`), the builtin file-backed queue at `/var/lib/total-recall/queue`, and the `local` cron adapter
@@ -95,7 +95,7 @@
   - _Requirements: 3.1, 3.4, 3.5, 3.8_
   - _Depends: 2_
 
-- [ ] 4.2 Add the iii engine service
+- [x] 4.2 Add the iii engine service
   - Add `iii.service` running the pinned iii binary with `--config /var/lib/total-recall/iii/config.yaml`, `WorkingDirectory=/var/lib/total-recall/iii`, `User`/`Group` = `total-recall`, `Restart=always`, and `RestartSec=2`
   - Declare `StateDirectory` entries for `total-recall`, `total-recall/iii`, `total-recall/config`, `total-recall/queue`, and `total-recall/stream`, and `wantedBy = [ "multi-user.target" ]`
   - Order the unit `after` and `requires` `total-recall-config` and gate `ExecStartPost` on `127.0.0.1:49134` before the unit reports started
@@ -104,7 +104,7 @@
   - _Requirements: 3.1, 3.2, 3.5, 6.4_
   - _Depends: 4.1_
 
-- [ ] 4.3 Add the iii database, queue, and cron worker units
+- [x] 4.3 Add the iii database, queue, and cron worker units
   - Add `iii-database`, `iii-queue`, and `iii-cron` units running the task 1.2 packages with the shared `User`, `Group`, `StateDirectory`, `Restart=always`, `RestartSec=2`, and `wantedBy = [ "multi-user.target" ]` settings
   - Order every unit `after` and `requires` `iii.service`; order `iii-database` additionally `after` and `requires` `total-recall-migrate.service`
   - Keep the database worker on the `memory` connection entry from task 4.1 (no URL, no password, no `secret://` reference) and let an unwritable `/var/lib/total-recall/queue` fail `iii-queue` instead of falling back to memory
@@ -112,7 +112,7 @@
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.7_
   - _Depends: 4.2_
 
-- [ ] 4.4 Add the harness ingestion and persistence worker units
+- [x] 4.4 Add the harness ingestion and persistence worker units
   - Add `total-recall-harness-ingestion` and `total-recall-harness-event-persistence` with `III_URL = "ws://${iiiHost}:${toString iiiPort}"`, `TOTAL_RECALL_QUEUE_TOPIC` on both, and `TOTAL_RECALL_DATABASE` on persistence, all read from the module options
   - Order both `after` and `requires` `iii.service`, `total-recall-migrate.service`, `iii-database`, `iii-queue`, and `iii-cron` so the observers and the topic exist before registration; use the shared `Restart=always`, `RestartSec=2`, and `wantedBy`
   - Run the pinned ingestion worker unchanged so it validates events against the pinned protobuf contract and rejects an invalid event with a bounded, payload-free error while staying registered
@@ -123,7 +123,7 @@
 
 - [ ] 5. Session post-processing
 
-- [ ] 5.1 (P) Add the total-recall-env sops template
+- [x] 5.1 (P) Add the total-recall-env sops template
   - Add `sops.templates."total-recall-env"` in `configurations/fabro-vm/default.nix` exporting `TOTAL_RECALL_POST_PROCESSING_OPENAI_API_TOKEN=${config.sops.placeholder."litellm-master-key"}` with `restartUnits = [ "total-recall-session-post-processing.service" ]`
   - Reuse the already-declared `litellm-master-key` secret that `litellm-env` renders; add no new secret, no new `fabro.onePasswordSecrets` entry, and no literal value
   - Leave the operator-side sync to the design's `## Operator Provisioning` row; this task only wires the placeholder
