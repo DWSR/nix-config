@@ -39,7 +39,6 @@ jobs:
 
       - name: Run flake checks
         run: |
-          nix flake check --no-build --show-trace --keep-going
           # Building the opencode package cold takes over two hours, so gate
           # the remaining checks' builds while still evaluating every check.
           # shellcheck disable=SC2016
@@ -52,3 +51,6 @@ jobs:
             builtins.concatStringsSep " " (map (name: ".#checks.aarch64-darwin.${name}") names)')
           # shellcheck disable=SC2086
           nix build --no-link --keep-going $attrs
+          # The filtered build also materialises the IFD paths that --no-build
+          # needs (base16-schemes); evaluating after it avoids dry-run paths.
+          nix flake check --no-build --show-trace --keep-going
