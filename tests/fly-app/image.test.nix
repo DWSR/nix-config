@@ -8,48 +8,13 @@ assert pkgs.lib.assertMsg pkgs.stdenv.hostPlatform.isLinux
 
 let
   runtime = pkgs.pkgsStatic.busybox;
-  runtimeRoot = pkgs.buildEnv {
-    name = "fly-app-image-runtime";
-    paths = [ runtime ];
-    pathsToLink = [ "/bin" ];
-  };
   runtimeClosure = pkgs.closureInfo {
     rootPaths = [ runtime ];
   };
-  dockerToolsBaseGzip = pkgs.dockerTools.buildImage {
-    name = "fly-app-image-base";
-    tag = "latest";
-    copyToRoot = runtimeRoot;
-    config = {
-      Cmd = [
-        "/bin/sh"
-        "-c"
-        "echo fly-app-image-runnable"
-      ];
-      WorkingDir = "/";
-    };
-  };
-  # The pinned importer requires an uncompressed Docker archive with writable
-  # extracted metadata; DockerTools emits a gzip stream with read-only entries.
-  dockerToolsBase =
-    pkgs.runCommand "fly-app-image-base.tar"
-      {
-        nativeBuildInputs = [
-          pkgs.gzip
-          pkgs.gnutar
-        ];
-      }
-      ''
-        mkdir unpack
-        cd unpack
-        gzip -dc ${dockerToolsBaseGzip} | tar -xf -
-        find . -type d -exec chmod u+rwx {} +
-        tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf "$out" .
-      '';
-  image = nixSnapshotter.buildImage {
+  outputs = import ../../lib/fly-app-image.nix {
+    inherit pkgs nixSnapshotter;
     name = "fly-app-image-fixture";
-    tag = "latest";
-    fromImage = dockerToolsBase;
+    contents = [ runtime ];
     config = {
       Cmd = [
         "/bin/sh"
@@ -59,8 +24,10 @@ let
       WorkingDir = "/";
     };
   };
-  publisher = image.copyToRegistry { };
+  inherit (outputs) image archive publisher;
 in
+assert builtins.isAttrs outputs;
+assert archive == image;
 assert builtins.isFunction image.copyToRegistry;
 assert builtins.isAttrs publisher;
 pkgs.runCommand "fly-app-image-test"
