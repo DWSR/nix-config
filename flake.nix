@@ -1323,7 +1323,7 @@
                       roleMatches = role == expectedRole;
                       valid =
                         watchdog.enable == expectedEnabled
-                        && hm.home.deskflow.enable
+                        && (!expectedEnabled || hm.home.deskflow.enable)
                         && role == expectedRole
                         && inspection.valid
                         && baselineInspection.valid
@@ -1352,21 +1352,48 @@
                       "hammerspoon Deskflow watchdog wiring: ${label} failed host validation: enable matches=${pkgs.lib.boolToString validation.enableMatches}; Deskflow enabled=${pkgs.lib.boolToString validation.deskflowEnabled}; role matches=${pkgs.lib.boolToString validation.roleMatches}; watchdog-source definitions=${toString inspection.watchdogDefinitionCount}/${toString inspection.expectedContributionCount}; canonical watchdog-source definitions=${toString inspection.canonicalDefinitionCount}; canonical chunks=${toString inspection.canonicalContributionCount}; sentinels=${toString inspection.sentinelCount}; helper-context definitions=${toString inspection.snapshotContextDefinitionCount}; helper context matches=${pkgs.lib.boolToString inspection.snapshotContextMatches}; disabled baseline valid=${pkgs.lib.boolToString validation.baselineInspection.valid}; other-source definitions match disabled baseline=${pkgs.lib.boolToString validation.otherSourceDefinitionsMatch} (requirements 6.1, 6.2, 6.3, 6.4, 7.5).";
                     "${label}: watchdog enable=${pkgs.lib.boolToString validation.watchdog.enable}; Deskflow enable=${pkgs.lib.boolToString validation.deskflowEnabled}; inherited role=${builtins.toJSON validation.role}; watchdog-source definitions=${toString inspection.watchdogDefinitionCount}; canonical watchdog-source definitions=${toString inspection.canonicalDefinitionCount}; canonical chunks=${toString inspection.canonicalContributionCount}; sentinels=${toString inspection.sentinelCount}; helper-context definitions=${toString inspection.snapshotContextDefinitionCount}; disabled baseline valid=${pkgs.lib.boolToString validation.baselineInspection.valid}; other-source definitions match disabled baseline=${pkgs.lib.boolToString validation.otherSourceDefinitionsMatch}; helper path=${expectedSnapshotCommandText}";
 
+                  enabledFixtureBaseModule = {
+                    home-manager.users.brandonmcnama.home.deskflow.enable = pkgs.lib.mkForce true;
+                  };
                   personal = inspectedHost "Brandons-MacBook-Pro" [ ];
                   personalWithoutWatchdog = inspectedHost "Brandons-MacBook-Pro" [
                     {
                       home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = pkgs.lib.mkForce false;
                     }
                   ];
+                  # The personal host ships Deskflow disabled
+                  # (configurations/personal/home-manager/deskflow.nix), so
+                  # check the real host's wiring against its actual enablement
+                  # and keep enabled-path coverage on a forced-on fixture.
                   personalCheck = checkConfig {
                     baselineHm = personalWithoutWatchdog;
                     label = "Brandons-MacBook-Pro";
                     hm = personal;
+                    expectedEnabled = personal.home.hammerspoon.deskflowWatchdog.enable;
+                    expectedRole = canonicalRole personal.home.deskflow.role;
+                  };
+                  enabledFixture = inspectedHost "Brandons-MacBook-Pro" [
+                    enabledFixtureBaseModule
+                    {
+                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = pkgs.lib.mkForce true;
+                    }
+                  ];
+                  enabledFixtureWithoutWatchdog = inspectedHost "Brandons-MacBook-Pro" [
+                    enabledFixtureBaseModule
+                    {
+                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = pkgs.lib.mkForce false;
+                    }
+                  ];
+                  enabledFixtureCheck = checkConfig {
+                    baselineHm = enabledFixtureWithoutWatchdog;
+                    label = "Brandons-MacBook-Pro (enabled fixture)";
+                    hm = enabledFixture;
                     expectedEnabled = true;
                     expectedRole = "server";
                   };
                   hostReport = pkgs.lib.concatStringsSep "\n" [
                     personalCheck
+                    enabledFixtureCheck
                   ];
 
                   sourceForgedContributionModule = {
@@ -1711,12 +1738,16 @@
                 printf '%s\n' "$report" > $out
               '';
 
-              # Host-wiring eval assertions (personal host) — deskflow-config spec
-              # task 4.2 plus the personal-host server adoption. Pure eval over
-              # each darwin host config plus a trivial runCommand; shares the
-              # aarch64 gate above (it reads self.darwinConfigurations). Forcing
-              # the per-host report forces, per host, assertions each naming the
-              # host and the failing property:
+              # Host-wiring eval assertions (personal host, forced-on fixture) —
+              # deskflow-config spec task 4.2 plus the personal-host server
+              # adoption. The personal host ships Deskflow disabled
+              # (configurations/personal/home-manager/deskflow.nix), so the
+              # fixture forces home.deskflow.enable to keep the enabled server
+              # wiring covered. Pure eval over the darwin host config plus a
+              # trivial runCommand; shares the aarch64 gate above (it reads
+              # self.darwinConfigurations). Forcing the per-host report forces,
+              # per host, assertions each naming the host and the failing
+              # property:
               #   Brandons-MacBook-Pro (server): home.deskflow enabled in the
               #     server role; Deskflow.conf carries coreMode=2 + tlsEnabled=true,
               #     port=24800, keySize=4096 and a pinned certificate path; the
@@ -1724,6 +1755,15 @@
               #     layout (Req 6.1/7.1/8.1/8.2/4.3).
               deskflow-host-wiring =
                 let
+                  enabledHost =
+                    hostName:
+                    self.darwinConfigurations.${hostName}.extendModules {
+                      modules = [
+                        {
+                          home-manager.users.brandonmcnama.home.deskflow.enable = lib.mkForce true;
+                        }
+                      ];
+                    };
                   # Expected role for the remaining personal host.
                   expectedRoles = {
                     "Brandons-MacBook-Pro" = "server";
@@ -1731,7 +1771,7 @@
                   checkHost =
                     hostName: expectedRole:
                     let
-                      hm = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
+                      hm = (enabledHost hostName).config.home-manager.users.brandonmcnama;
                       cfg = hm.home.deskflow;
                       settings = hm.home.file."Library/Deskflow/Deskflow.conf".text;
                       missingModalSuppressionLines = lib.filter (line: !lib.hasInfix line settings) modalSuppressionLines;
