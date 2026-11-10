@@ -339,7 +339,7 @@ test('endpoint classification: open network → compatible, absent network → u
     },
   });
   assert.equal(allowlisted.ok, true);
-  const anthropic = allowlisted.value.find((f) => f.capability.includes('api.anthropic.com'));
+  const anthropic = allowlisted.value.find((f) => f.capability === 'webfetch:https://api.anthropic.com/v1');
   assert.equal(anthropic.classification, 'compatible', 'allow_domain hit → compatible');
   const blocked = allowlisted.value.find((f) => f.capability.includes('blocked.test'));
   assert.equal(blocked.classification, 'blocker', 'allow_domain miss under block → blocker');
