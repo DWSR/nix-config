@@ -2454,7 +2454,7 @@
                 assert pkgs.lib.assertMsg
                   (
                     builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
-                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 3
+                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 4
                     && pkgs.lib.hasInfix "--service=svc:fabro --https=443 http://127.0.0.1:32276" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
@@ -2466,6 +2466,27 @@
                     )
                   )
                   "fabro-vm: tailscale-serve must advertise svc:fabro, svc:litellm, and svc:opencode per the console resource defs (tcp:443 each).";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elemAt vm.systemd.services.tailscale-serve.serviceConfig.ExecStart 3
+                    == "${pkgs.lib.getExe vm.services.tailscale.package} serve --service=svc:total-recall --https=443 http://127.0.0.1:49134"
+                    && builtins.elem "multi-user.target" vm.systemd.services.tailscale-serve.wantedBy
+                    &&
+                      builtins.all
+                        (
+                          unit:
+                          builtins.elem unit vm.systemd.services.tailscale-serve.after
+                          && builtins.elem unit vm.systemd.services.tailscale-serve.wants
+                          && !(builtins.elem unit vm.systemd.services.tailscale-serve.requires)
+                        )
+                        [
+                          "iii.service"
+                          "total-recall-harness-ingestion.service"
+                          "total-recall-harness-event-persistence.service"
+                          "total-recall-session-post-processing.service"
+                        ]
+                  )
+                  "fabro-vm: tailscale-serve must apply svc:total-recall last at boot and softly order after iii and all total-recall workers.";
                 # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services ? opencode
