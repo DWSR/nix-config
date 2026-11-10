@@ -170,7 +170,7 @@
   - Completed when the personal host evaluation exposes the option namespace and the module resolves one endpoint and one connection name
   - _Requirements: 7.3, 7.7, 8.3_
 
-- [ ] 8.2 Install the capture CLI and both harness adapters
+- [x] 8.2 Install the capture CLI and both harness adapters
   - Add `harnessEvents` to `home.packages`, `opencodePlugin` as `xdg.configFile."opencode/plugins/total-recall-harness-events.js"`, and `piExtension`'s package root to `programs.pi.coding-agent.extensions`
   - Default the package options to the task 1.2 attributes so no per-host package override is needed
   - Leave the existing AgentMemory plugin, Pi extension, and launchd entries untouched, and add no local iii, PostgreSQL, or memory-store package or service
