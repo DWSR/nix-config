@@ -50,18 +50,26 @@ let
 
   fixtureModules = [
     {json.dumps(str(MODULE))}
+    # The module writes the Pi environment alongside the extension list, so
+    # the fixture imports the Pi home module that declares both options.
+    flake.inputs.pi.homeModules.default
+    # `home.opencode.wrapperCommands` is declared by the common OpenCode
+    # module on real hosts; stub only that surface here.
+    ({{
+      lib,
+      ...
+    }}: {{
+      options.home.opencode.wrapperCommands = lib.mkOption {{
+        type = lib.types.listOf lib.types.lines;
+        default = [ ];
+      }};
+    }})
     {{
       home.username = "total-recall-test";
       home.homeDirectory = "/Users/total-recall-test";
       home.stateVersion = "26.05";
       home.totalRecall.endpoint = {json.dumps(FIXTURE_ENDPOINT)};
     }}
-    ({{ lib, ... }}: {{
-      options.programs.pi.coding-agent.extensions = lib.mkOption {{
-        type = lib.types.listOf (lib.types.either lib.types.path lib.types.str);
-        default = [ ];
-      }};
-    }})
   ];
 
   mkFixture = extraModules: (flake.inputs.home-manager.lib.homeManagerConfiguration {{
@@ -200,16 +208,19 @@ class TotalRecallWorkstationClientTests(unittest.TestCase):
         self.assertEqual(self.personal["totalRecallLaunchdAgents"], [])
 
     def test_personal_host_adds_only_the_cli_to_home_packages(self):
-        def without_pi_wrapper(paths):
-            # The Pi module rebuilds and installs its wrapper package whenever
-            # the extension list changes, so exclude that expected churn.
+        def without_capture_derivatives(paths):
+            # The Pi wrapper, the OpenCode wrapper, and the generated
+            # session-vars file are rebuilt whenever the capture environment
+            # changes, so exclude that expected churn.
             return {
-                path for path in paths if path.rsplit("-", 1)[-1] != "pi"
+                path
+                for path in paths
+                if not path.endswith(("-pi", "-opencode", "-hm-session-vars.sh"))
             }
 
         self.assertEqual(
-            without_pi_wrapper(self.personal["packagePaths"])
-            - without_pi_wrapper(self.personal_disabled["packagePaths"]),
+            without_capture_derivatives(self.personal["packagePaths"])
+            - without_capture_derivatives(self.personal_disabled["packagePaths"]),
             {self.personal["clientPackages"]["harnessEvents"]},
         )
         self.assertFalse(self.personal_disabled["plugin"]["declared"])
