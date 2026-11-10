@@ -29,9 +29,9 @@ const path = require('node:path');
 const { ingestProfileGrants } = require('../../../scripts/opencode-nono-audit.js');
 
 // Fake `nono` mimicking nono's stdout contract:
-//   - `--silent` in argv → stdout is ONLY the grants JSON.
-//   - otherwise          → a banner line is printed to stdout BEFORE the
-//                          JSON, so the combined stdout is NOT valid JSON.
+//   - `--silent` in argv -> stdout is ONLY the grants JSON.
+//   - otherwise          -> stdout starts with a banner, so it is not JSON.
+// Use the current Node executable directly so this fake works with a minimal PATH.
 function writeFakeNono(dir) {
   const bin = path.join(dir, 'nono');
   // Real `nono profile show --json` shape (verified 0.61.1): top-level
@@ -39,16 +39,10 @@ function writeFakeNono(dir) {
   const json =
     '{"name":"opencode-managed","filesystem":{"allow":["/srv/app"],"read":[],"write":[],"deny":[]},"network":{"block":false,"allow_domain":[],"open_port":[]},"groups":{"include":["node_runtime"],"exclude":[]}}';
   const script = [
-    '#!/usr/bin/env bash',
-    'for a in "$@"; do',
-    '  if [ "$a" = "--silent" ]; then',
-    `    printf '%s' '${json}'`,
-    '    exit 0',
-    '  fi',
-    'done',
-    "printf 'update 9.9.9 available (current: 0.43.1)\\n'",
-    `printf '%s' '${json}'`,
-    'exit 0',
+    `#!${process.execPath}`,
+    `const json = ${JSON.stringify(json)};`,
+    'if (process.argv.includes("--silent")) { process.stdout.write(json); }',
+    'else { process.stdout.write("update 9.9.9 available (current: 0.43.1)\\n" + json); }',
   ].join('\n');
   fs.writeFileSync(bin, script, { mode: 0o755 });
   return bin;

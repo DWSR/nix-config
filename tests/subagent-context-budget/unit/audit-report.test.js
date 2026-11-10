@@ -210,13 +210,13 @@ test('buildAuditReport: host=all leaves hostSpecificAgents empty (R7.3)', () => 
 
 test('buildAuditReport: non-"all" host scope surfaces host-specific agents separately (R7.3)', () => {
   const metadata = loadFixture('budget-metadata.json');
-  metadata.host = 'shopify';
+  metadata.host = 'personal';
   metadata.agents.shopify_helper = {
     name: 'shopify_helper',
     source: 'host-markdown',
-    hostScope: 'shopify',
+    hostScope: 'personal',
     state: { kind: 'enforced', reason: 'default' },
-    instructionProfile: 'shopify-helper',
+    instructionProfile: 'general-research',
     permissionBudget: { read: 'allow', glob: 'allow' },
     capabilityRationale: [],
     smokeClass: 'shopify-helper-task',
@@ -226,7 +226,7 @@ test('buildAuditReport: non-"all" host scope surfaces host-specific agents separ
   const result = buildAuditReport(metadata, diagnostic);
 
   assert.equal(result.ok, true);
-  assert.equal(result.value.host, 'shopify');
+  assert.equal(result.value.host, 'personal');
   assert.deepEqual(result.value.summary.hostSpecificAgents, ['shopify_helper']);
   // Common agents are NOT in the host-specific list.
   for (const name of ['explore', 'general']) {
@@ -236,13 +236,13 @@ test('buildAuditReport: non-"all" host scope surfaces host-specific agents separ
 
 test('buildAuditReport: reports host-specific agents and declared permission surfaces (R7.3)', () => {
   const metadata = loadFixture('budget-metadata.json');
-  metadata.host = 'shopify';
+  metadata.host = 'personal';
   metadata.agents['stack-captain'] = {
     name: 'stack-captain',
     source: 'host-markdown',
-    hostScope: 'shopify',
+    hostScope: 'personal',
     state: { kind: 'enforced', reason: 'host-override' },
-    instructionProfile: 'shopify-stack',
+    instructionProfile: 'general-research',
     permissionBudget: {
       read: 'allow',
       glob: 'allow',
@@ -262,9 +262,9 @@ test('buildAuditReport: reports host-specific agents and declared permission sur
   metadata.agents['yb-sleuth'] = {
     name: 'yb-sleuth',
     source: 'host-markdown',
-    hostScope: 'shopify',
+    hostScope: 'personal',
     state: { kind: 'enforced', reason: 'host-override' },
-    instructionProfile: 'shopify-yugabyte-readonly',
+    instructionProfile: 'readonly-codebase',
     permissionBudget: {
       read: 'allow',
       glob: 'allow',
