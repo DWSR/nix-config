@@ -38,4 +38,17 @@ jobs:
             extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
 
       - name: Run flake checks
-        run: nix flake check --show-trace --keep-going
+        run: |
+          nix flake check --no-build --show-trace --keep-going
+          # Building the opencode package cold takes over two hours, so gate
+          # the remaining checks' builds while still evaluating every check.
+          # shellcheck disable=SC2016
+          attrs=$(nix eval --raw .#checks.aarch64-darwin --apply 'attrs:
+            let
+              names = builtins.filter
+                (name: !(builtins.match "^(opencode|agentmemory-opencode).*" name != null))
+                (builtins.attrNames attrs);
+            in
+            builtins.concatStringsSep " " (map (name: ".#checks.aarch64-darwin.${name}") names)')
+          # shellcheck disable=SC2086
+          nix build --no-link --keep-going $attrs
