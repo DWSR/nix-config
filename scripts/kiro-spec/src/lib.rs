@@ -11,7 +11,7 @@ pub mod validate;
 use std::ffi::OsString;
 use std::io::Write;
 
-use crate::error::AppError;
+use crate::error::{AppError, ErrorCategory};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Outcome {
@@ -68,10 +68,21 @@ impl Outcome {
 }
 
 pub fn execute(args: impl IntoIterator<Item = OsString>) -> Outcome {
-    match cli::parse(args) {
-        Ok(()) => Outcome::success(None),
+    match cli::parse(args.into_iter().skip(1)) {
+        Ok(cli::Parsed::Help) => Outcome::success(Some(cli::help_text().to_owned())),
+        Ok(cli::Parsed::Version) => Outcome::success(Some(cli::version_text())),
+        Ok(cli::Parsed::Run(invocation)) => Outcome::failure(not_yet_wired(invocation.command())),
         Err(error) => Outcome::failure(error),
     }
+}
+
+fn not_yet_wired(command: &cli::Command) -> AppError {
+    let category = if command.is_mutating() {
+        ErrorCategory::MutationWrite
+    } else {
+        ErrorCategory::ArtifactRead
+    };
+    AppError::new(category, command.name(), "not yet wired")
 }
 
 pub fn run(args: impl IntoIterator<Item = OsString>) -> i32 {
@@ -126,5 +137,18 @@ mod tests {
         let outcome = execute([OsString::from("unknown")]);
         assert_eq!(outcome.code(), 2);
         assert_eq!(outcome.stdout(), None);
+    }
+
+    #[test]
+    fn execute_skips_the_program_name() {
+        let outcome = execute([
+            OsString::from("kiro-spec"),
+            OsString::from("--spec"),
+            OsString::from("demo"),
+            OsString::from("next"),
+        ]);
+        assert_eq!(outcome.code(), 1);
+        assert_eq!(outcome.stdout(), None);
+        assert_eq!(outcome.stderr(), Some("kiro-spec: next: not yet wired\n"));
     }
 }

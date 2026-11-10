@@ -13,7 +13,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Implement `run()` so diagnostics are written as `kiro-spec: <context>: <detail>` on stderr, results are fully built before stdout, and a command that produces no result writes no stdout byte.
   - Unit tests prove the 0/1/2 mapping per category and that a failed command emits nothing on stdout.
   - _Requirements: 1.6, 9.3, 9.10, 9.11_
-- [ ] 1.3 Argument grammar, help, and version
+- [x] 1.3 Argument grammar, help, and version
   - Parse the four read subcommands plus `complete`/`block` and the `--root`, `--spec`, `--json`, `--reason` options, accepting `--opt value` and `--opt=value` with last-value-wins.
   - Print the synopsis and all six subcommands for `--help`/`-h` and `kiro-spec <version>` for `--version`/`-V`; reject unknown commands/options, a missing `--spec` or option value, and `--json` on mutations with exit 2 before any filesystem access.
   - Confirm help lists every flag, version matches the Cargo package version, and an invalid argv leaves a fixture spec byte-identical.
