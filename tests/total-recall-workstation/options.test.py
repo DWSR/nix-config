@@ -26,9 +26,21 @@ let
     }};
     modules = [
       {json.dumps(str(MODULE))}
-      # The module wires the Pi extension under `mkIf enable`; import the Pi
-      # module so the option exists even while the wiring is disabled.
+      # The module wires the Pi extension and environment under `mkIf enable`;
+      # import the Pi module so those options exist even while the wiring is
+      # disabled.
       flake.inputs.pi.homeModules.default
+      # `home.opencode.wrapperCommands` is declared by the common OpenCode
+      # module on real hosts; stub only that surface here.
+      ({{
+        lib,
+        ...
+      }}: {{
+        options.home.opencode.wrapperCommands = lib.mkOption {{
+          type = lib.types.listOf lib.types.lines;
+          default = [ ];
+        }};
+      }})
       {{
         home.username = "total-recall-test";
         home.homeDirectory = "/Users/total-recall-test";
