@@ -59,7 +59,7 @@
   - Done when concurrent same-app invocations avoid duplicate/conflicting publication and different apps proceed independently.
   - _Boundary: `scripts/fly-app-publish.nix`_
   - _Requirements: 3.3, 3.4, 4.2_
-- [ ] 3.6 (P) Apply app settings with the Fly CLI
+- [x] 3.6 (P) Apply app settings with the Fly CLI
   - Render secret-free `fly.toml`, select the declared primary deploy container/image, and deploy to the existing app without a Fly remote build; control first-deploy HA and later process-group counts.
   - Done when a stubbed CLI receives the selected app/config/image and Fly rejection yields nonzero status.
   - _Depends: 2.2, 3.2_
