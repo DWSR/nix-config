@@ -19,20 +19,21 @@ let
     inherit config;
   };
   # The pinned importer needs a writable, uncompressed Docker archive.
-  base = pkgs.runCommand "${name}-base.tar"
-    {
-      nativeBuildInputs = [
-        pkgs.gzip
-        pkgs.gnutar
-      ];
-    }
-    ''
-      mkdir unpack
-      cd unpack
-      gzip -dc ${baseGzip} | tar -xf -
-      find . -type d -exec chmod u+rwx {} +
-      tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf "$out" .
-    '';
+  base =
+    pkgs.runCommand "${name}-base.tar"
+      {
+        nativeBuildInputs = [
+          pkgs.gzip
+          pkgs.gnutar
+        ];
+      }
+      ''
+        mkdir unpack
+        cd unpack
+        gzip -dc ${baseGzip} | tar -xf -
+        find . -type d -exec chmod u+rwx {} +
+        tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf "$out" .
+      '';
   image = nixSnapshotter.buildImage {
     inherit name tag config;
     fromImage = base;
