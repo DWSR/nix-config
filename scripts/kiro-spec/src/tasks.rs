@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+
 use crate::error::MutationError;
+use crate::validate::Finding;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Line {
@@ -183,6 +186,7 @@ impl TaskEntry {
 pub struct TaskDocument {
     lines: Vec<Line>,
     entries: Vec<TaskEntry>,
+    findings: Vec<Finding>,
 }
 
 impl TaskDocument {
@@ -192,6 +196,10 @@ impl TaskDocument {
 
     pub fn entries(&self) -> &[TaskEntry] {
         &self.entries
+    }
+
+    pub fn findings(&self) -> &[Finding] {
+        &self.findings
     }
 
     pub fn counts(&self) -> TaskCounts {
@@ -259,6 +267,7 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
     let lines = split_lines(text);
     let kinds = classify_lines(&lines);
     let mut entries = Vec::new();
+    let mut findings = Vec::new();
 
     for index in 0..lines.len() {
         if kinds[index] != LineKind::Candidate {
@@ -268,6 +277,7 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
             continue;
         };
         let Some(parsed) = parse_identifier(rest) else {
+            findings.push(defect_finding(rest, index + 1));
             continue;
         };
         let end = block_end(&kinds, index);
@@ -310,7 +320,98 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
         entries[index].has_children = has_children;
     }
 
-    TaskDocument { lines, entries }
+    findings.extend(duplicate_findings(&entries));
+    if entries.len() > 49 {
+        findings.push(Finding::error(
+            "tasks.limit.exceeded",
+            format!("{} task entries exceed the limit of 49", entries.len()),
+            "tasks.md",
+            Some(entries[49].line()),
+        ));
+    }
+    findings.sort_by(|left, right| {
+        left.line
+            .cmp(&right.line)
+            .then_with(|| left.code.cmp(right.code))
+            .then_with(|| left.message.cmp(&right.message))
+    });
+
+    TaskDocument {
+        lines,
+        entries,
+        findings,
+    }
+}
+
+fn defect_finding(rest: &str, line: usize) -> Finding {
+    if !rest.starts_with(|character: char| character.is_ascii_digit()) {
+        return Finding::warning(
+            "tasks.line.unnumbered",
+            "checkbox line has no numeric task identifier",
+            "tasks.md",
+            Some(line),
+        );
+    }
+
+    let token = rest.split_whitespace().next().unwrap_or(rest);
+    let boundary = token
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit() || *byte == b'.')
+        .count();
+    let levels: Vec<&str> = token[..boundary].split('.').collect();
+    let suffix = &token[boundary..];
+    let all_numeric = levels
+        .iter()
+        .all(|level| !level.is_empty() && level.bytes().all(|byte| byte.is_ascii_digit()));
+
+    if all_numeric && levels.len() > 2 && suffix.is_empty() {
+        return Finding::error(
+            "tasks.id.depth",
+            format!("task identifier `{token}` has more than two numeric levels"),
+            "tasks.md",
+            Some(line),
+        );
+    }
+
+    if suffix.starts_with(|character: char| character.is_ascii_alphabetic()) {
+        return Finding::error(
+            "tasks.id.non-numeric",
+            format!("task identifier `{token}` is not numeric"),
+            "tasks.md",
+            Some(line),
+        );
+    }
+
+    Finding::error(
+        "tasks.line.malformed",
+        format!("task line `{token}` does not match the supported numbered-entry grammar"),
+        "tasks.md",
+        Some(line),
+    )
+}
+
+fn duplicate_findings(entries: &[TaskEntry]) -> Vec<Finding> {
+    let mut first_lines: HashMap<&str, usize> = HashMap::new();
+    let mut findings = Vec::new();
+
+    for entry in entries {
+        match first_lines.get(entry.id()) {
+            Some(first) => findings.push(Finding::error(
+                "tasks.id.duplicate",
+                format!(
+                    "duplicate task identifier `{}` (first occurrence at line {first})",
+                    entry.id()
+                ),
+                "tasks.md",
+                Some(entry.line()),
+            )),
+            None => {
+                first_lines.insert(entry.id(), entry.line());
+            }
+        }
+    }
+
+    findings
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -568,6 +669,7 @@ fn normalize_body(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validate::Severity;
 
     fn parse(text: &str) -> TaskDocument {
         parse_tasks(text)
@@ -1048,5 +1150,192 @@ mod tests {
             assert!(error.detail().contains(id), "{id:?}: {}", error.detail());
         }
         assert_eq!(document.find_unique("2.1").unwrap().id(), "2.1");
+    }
+
+    fn numbered_entries(count: usize) -> String {
+        let mut text = String::new();
+        for index in 0..count {
+            let number = index + 1;
+            let major = index / 2 + 1;
+            if index % 2 == 0 {
+                text.push_str(&format!("- [ ] {major}. Task {number}\n"));
+            } else {
+                text.push_str(&format!("- [ ] {major}.1 Subtask {number}\n"));
+            }
+        }
+        text
+    }
+
+    fn finding_locations(document: &TaskDocument) -> Vec<(&'static str, usize)> {
+        document
+            .findings()
+            .iter()
+            .map(|finding| {
+                assert_eq!(finding.file, "tasks.md");
+                (finding.code, finding.line.expect("line finding"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unnumbered_checkboxes_are_warnings_and_not_entries() {
+        let document = parse("- [ ] 1. Numbered\n- [ ] Has no identifier\n");
+
+        assert_eq!(document.entries().len(), 1);
+        assert_eq!(document.entries()[0].id(), "1");
+        assert_eq!(document.counts().total, 1);
+        assert_eq!(document.findings().len(), 1);
+        let finding = &document.findings()[0];
+        assert_eq!(finding.severity, Severity::Warning);
+        assert_eq!(finding.code, "tasks.line.unnumbered");
+        assert_eq!(finding.file, "tasks.md");
+        assert_eq!(finding.line, Some(2));
+    }
+
+    #[test]
+    fn depth_identifiers_are_errors_naming_the_identifier() {
+        let document = parse("- [ ] 1.2.3 Too deep\n- [ ] 1.2.3.4 Deeper\n");
+
+        assert!(document.entries().is_empty());
+        let findings = document.findings();
+        assert_eq!(findings.len(), 2);
+        for (finding, (line, token)) in findings.iter().zip([(1, "1.2.3"), (2, "1.2.3.4")]) {
+            assert_eq!(finding.severity, Severity::Error);
+            assert_eq!(finding.code, "tasks.id.depth");
+            assert_eq!(finding.line, Some(line));
+            assert!(finding.message.contains(token), "{}", finding.message);
+        }
+    }
+
+    #[test]
+    fn non_numeric_identifiers_are_errors_naming_the_identifier() {
+        let document = parse(
+            "- [ ] 1.a Bad\n- [ ] 1.2a Bad\n- [ ] 12abc Bad\n- [ ] 1.x Bad\n- [ ] 1.2text Bad\n",
+        );
+
+        assert!(document.entries().is_empty());
+        let findings = document.findings();
+        assert_eq!(findings.len(), 5);
+        for (finding, (line, token)) in findings
+            .iter()
+            .zip([(1, "1.a"), (2, "1.2a"), (3, "12abc"), (4, "1.x"), (5, "1.2text")])
+        {
+            assert_eq!(finding.severity, Severity::Error);
+            assert_eq!(finding.code, "tasks.id.non-numeric");
+            assert_eq!(finding.line, Some(line));
+            assert!(finding.message.contains(token), "{}", finding.message);
+        }
+    }
+
+    #[test]
+    fn malformed_numbered_lines_are_errors_and_later_entries_still_parse() {
+        let document =
+            parse("- [x] 8.2* (P) Synthetic\n- [ ] 1.2\n- [ ] 1..2\n- [ ] 2. Later valid\n");
+
+        assert_eq!(document.entries().len(), 1);
+        assert_eq!(document.entries()[0].id(), "2");
+        assert_eq!(document.entries()[0].line(), 4);
+        let findings = document.findings();
+        assert_eq!(findings.len(), 3);
+        for (finding, (line, token)) in findings
+            .iter()
+            .zip([(1, "8.2*"), (2, "1.2"), (3, "1..2")])
+        {
+            assert_eq!(finding.severity, Severity::Error);
+            assert_eq!(finding.code, "tasks.line.malformed");
+            assert_eq!(finding.line, Some(line));
+            assert!(finding.message.contains(token), "{}", finding.message);
+        }
+    }
+
+    #[test]
+    fn duplicate_identifiers_are_reported_at_each_repeat_naming_the_first_line() {
+        let document = parse("- [ ] 1. First\n- [ ] 1.2 Child\n- [ ] 1. Second\n- [ ] 1. Third\n");
+
+        assert_eq!(document.entries().len(), 4);
+        let duplicates: Vec<_> = document
+            .findings()
+            .iter()
+            .filter(|finding| finding.code == "tasks.id.duplicate")
+            .collect();
+        assert_eq!(duplicates.len(), 2);
+        for (finding, line) in duplicates.iter().zip([3, 4]) {
+            assert_eq!(finding.severity, Severity::Error);
+            assert_eq!(finding.file, "tasks.md");
+            assert_eq!(finding.line, Some(line));
+            assert!(finding.message.contains("`1`"), "{}", finding.message);
+            assert!(finding.message.contains("line 1"), "{}", finding.message);
+        }
+    }
+
+    #[test]
+    fn forty_nine_entries_are_allowed_and_the_fiftieth_is_reported_at_its_line() {
+        let document = parse(&numbered_entries(49));
+        assert_eq!(document.entries().len(), 49);
+        assert_eq!(document.counts().total, 49);
+        assert!(document.findings().is_empty());
+
+        let document = parse(&numbered_entries(50));
+        assert_eq!(document.entries().len(), 50);
+        assert_eq!(document.findings().len(), 1);
+        let finding = &document.findings()[0];
+        assert_eq!(finding.severity, Severity::Error);
+        assert_eq!(finding.code, "tasks.limit.exceeded");
+        assert_eq!(finding.file, "tasks.md");
+        assert_eq!(finding.line, Some(50));
+        assert_eq!(finding.message, "50 task entries exceed the limit of 49");
+    }
+
+    #[test]
+    fn the_limit_finding_reports_the_observed_count_at_the_fiftieth_entry() {
+        let document = parse(&numbered_entries(55));
+
+        assert_eq!(document.entries().len(), 55);
+        assert_eq!(document.findings().len(), 1);
+        assert_eq!(document.findings()[0].line, Some(50));
+        assert_eq!(
+            document.findings()[0].message,
+            "55 task entries exceed the limit of 49"
+        );
+    }
+
+    #[test]
+    fn a_mixed_document_keeps_valid_entries_and_reports_each_defect() {
+        let document = parse(
+            "# Plan\n\
+             - [ ] 1. Valid major\n\
+             - [ ] Unnumbered note\n\
+             - [ ] 1.2 Valid subtask\n\
+             - [ ] 1.2.3 Too deep\n\
+             - [ ] 1.a Not numeric\n\
+             - [ ] 8.2* Glued star\n\
+             - [ ] 1. Duplicate\n",
+        );
+
+        let ids: Vec<&str> = document.entries().iter().map(|entry| entry.id()).collect();
+        assert_eq!(ids, vec!["1", "1.2", "1"]);
+        assert_eq!(document.counts().total, 3);
+        assert_eq!(
+            finding_locations(&document),
+            vec![
+                ("tasks.line.unnumbered", 3),
+                ("tasks.id.depth", 5),
+                ("tasks.id.non-numeric", 6),
+                ("tasks.line.malformed", 7),
+                ("tasks.id.duplicate", 8),
+            ]
+        );
+        assert!(document.find_unique("1").is_err());
+        assert_eq!(document.find_unique("1.2").unwrap().line(), 4);
+    }
+
+    #[test]
+    fn fenced_and_indented_checkbox_lines_produce_no_findings() {
+        let document = parse(
+            "- [ ] 1. Real\n```\n- [ ] 9.9.9 Fenced\n```\n  - [ ] 1.2.3 Indented\n",
+        );
+
+        assert_eq!(document.entries().len(), 1);
+        assert!(document.findings().is_empty());
     }
 }
