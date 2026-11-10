@@ -61,12 +61,12 @@ function completeMetadata(overrides = {}) {
       'yb-sleuth': {
         name: 'yb-sleuth',
         source: 'host-markdown',
-        hostScope: 'shopify',
+        hostScope: 'personal',
         state: { kind: 'enforced', reason: 'host-override' },
-        instructionProfile: 'shopify-yugabyte-readonly',
+        instructionProfile: 'readonly-codebase',
         permissionBudget: { read: 'allow', grep: 'allow', glob: 'allow', bash: { git: 'allow' } },
         capabilityRationale: ['repository history inspection'],
-        smokeClass: 'shopify-source-trace',
+        smokeClass: 'personal-source-trace',
       },
     },
     ...overrides,
@@ -118,7 +118,7 @@ test('validateBudgetMetadata rejects host-specific and project-specific baseline
   metadata.minimalBaseline.instructionCategories = [
     'universal',
     'memory-mcpproxy',
-    'shopify',
+    'host-specific',
     'nix-config',
     'project-specific',
   ];
@@ -129,7 +129,7 @@ test('validateBudgetMetadata rejects host-specific and project-specific baseline
   assert.deepEqual(result.errors, [
     {
       agent: '<minimalBaseline>',
-      field: 'instructionCategories.shopify',
+      field: 'instructionCategories.host-specific',
       message: 'minimal read-only baseline must not include host-specific or project-specific instruction categories',
     },
     {

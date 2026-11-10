@@ -204,6 +204,7 @@ test('ast-grep host declarations add no required secrets or direct opencode MCP 
       enabled: true,
       type: 'remote',
       url: 'http://127.0.0.1:8080/mcp',
+      timeout: 930000,
     });
   }
 });

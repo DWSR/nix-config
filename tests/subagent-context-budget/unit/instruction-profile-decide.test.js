@@ -20,8 +20,6 @@ const profileMap = Object.freeze({
   'nix-pkg': 'nix-package',
   'nvim-tailor': 'nvim-config',
   'security-auditor': 'security-readonly',
-  'stack-captain': 'shopify-stack',
-  'yb-sleuth': 'shopify-yugabyte-readonly',
 });
 
 test('decideProfile returns apply for known subagent with mapped profile', async () => {

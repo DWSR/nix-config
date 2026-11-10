@@ -24,6 +24,13 @@ jobs:
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31.11.3
+        with:
+          # Several checks evaluate the flake again from inside their build
+          # (for example tests/ast-grep-mcp). Builds run as the untrusted
+          # nixbld users, and the daemon drops their store-copy requests, so
+          # trust the build group for this disposable runner.
+          extra_nix_config: |
+            extra-trusted-users = @nixbld
 
       - name: Run flake checks
-        run: nix flake check --show-trace
+        run: nix flake check --show-trace --keep-going
