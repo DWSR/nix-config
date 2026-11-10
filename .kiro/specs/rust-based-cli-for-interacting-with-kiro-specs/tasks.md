@@ -47,7 +47,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - End a block at a blank line, the next candidate, or an ATX heading; skip fenced code blocks; keep source lines and `to_bytes()` byte-faithful.
   - Unit tests cover adjacent entries with no blank line, multi-line metadata, fenced code, headings, optional markers, and byte round-tripping.
   - _Requirements: 3.1, 3.5, 3.7, 11.1_
-- [ ] 3.2 Derive state, counts, next task, and unique lookup
+- [x] 3.2 Derive state, counts, next task, and unique lookup
   - Derive `TaskState` from the checkbox character only (`[x]`/`[x]*` completed, `[!]`/`[!]*` blocked, `[ ]`/`[ ]*` pending), join a `_Blocked:` bullet and its continuations into `blocked_reason` for `[!]` entries, and keep `optional` in every state.
   - Implement `TaskCounts { total, completed, pending, blocked, optional_pending }` with state counts summing to `total`, and `next_actionable()` returning the first non-completed childless entry while leaving unchecked groupings unselected.
   - Implement `find_unique(id)` over canonical `N`/`N.M` identifiers, accepting one trailing `.` and refusing malformed, unknown, or duplicated identifiers.

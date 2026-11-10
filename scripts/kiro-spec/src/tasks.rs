@@ -1,3 +1,5 @@
+use crate::error::MutationError;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Line {
     text: String,
@@ -91,6 +93,32 @@ impl TaskBlock {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskState {
+    Pending,
+    Completed,
+    Blocked,
+}
+
+impl TaskState {
+    fn from_marker(marker: char) -> Self {
+        match marker {
+            'x' => Self::Completed,
+            '!' => Self::Blocked,
+            _ => Self::Pending,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TaskCounts {
+    pub total: usize,
+    pub completed: usize,
+    pub pending: usize,
+    pub blocked: usize,
+    pub optional_pending: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskEntry {
     id: String,
@@ -102,6 +130,7 @@ pub struct TaskEntry {
     line: usize,
     block: TaskBlock,
     has_children: bool,
+    blocked_reason: Option<String>,
 }
 
 impl TaskEntry {
@@ -123,6 +152,14 @@ impl TaskEntry {
 
     pub fn marker(&self) -> char {
         self.marker
+    }
+
+    pub fn state(&self) -> TaskState {
+        TaskState::from_marker(self.marker)
+    }
+
+    pub fn blocked_reason(&self) -> Option<&str> {
+        self.blocked_reason.as_deref()
     }
 
     pub fn optional(&self) -> bool {
@@ -157,6 +194,57 @@ impl TaskDocument {
         &self.entries
     }
 
+    pub fn counts(&self) -> TaskCounts {
+        let mut counts = TaskCounts {
+            total: self.entries.len(),
+            ..TaskCounts::default()
+        };
+        for entry in &self.entries {
+            match entry.state() {
+                TaskState::Completed => counts.completed += 1,
+                TaskState::Pending => {
+                    counts.pending += 1;
+                    if entry.optional() {
+                        counts.optional_pending += 1;
+                    }
+                }
+                TaskState::Blocked => counts.blocked += 1,
+            }
+        }
+        counts
+    }
+
+    pub fn next_actionable(&self) -> Option<&TaskEntry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.state() != TaskState::Completed && !entry.has_children)
+    }
+
+    pub fn find_unique(&self, id: &str) -> Result<&TaskEntry, MutationError> {
+        let canonical = normalize_lookup_id(id).ok_or_else(|| {
+            MutationError::conflict(
+                "tasks.md",
+                format!("malformed task identifier `{id}`"),
+            )
+        })?;
+        let matches: Vec<&TaskEntry> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.id == canonical)
+            .collect();
+        match matches.len() {
+            0 => Err(MutationError::conflict(
+                "tasks.md",
+                format!("unknown task identifier `{id}`"),
+            )),
+            1 => Ok(matches[0]),
+            count => Err(MutationError::conflict(
+                "tasks.md",
+                format!("ambiguous task identifier `{id}` (matches {count} entries)"),
+            )),
+        }
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         for line in &self.lines {
@@ -184,6 +272,19 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
         };
         let end = block_end(&kinds, index);
         let metadata = collect_metadata(&lines, &kinds, index, end);
+        let block = TaskBlock {
+            start: index + 1,
+            end: end + 1,
+            metadata,
+        };
+        let blocked_reason = if marker == '!' {
+            block
+                .metadata_for(MetadataKind::Blocked)
+                .next()
+                .map(|bullet| bullet.body.clone())
+        } else {
+            None
+        };
         entries.push(TaskEntry {
             id: parsed.id,
             level: parsed.level,
@@ -192,12 +293,9 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
             marker,
             optional,
             line: index + 1,
-            block: TaskBlock {
-                start: index + 1,
-                end: end + 1,
-                metadata,
-            },
+            block,
             has_children: false,
+            blocked_reason,
         });
     }
 
@@ -206,7 +304,7 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
             continue;
         }
         let id = entries[index].id.clone();
-        let has_children = entries[index + 1..]
+        let has_children = entries
             .iter()
             .any(|entry| entry.parent.as_deref() == Some(id.as_str()));
         entries[index].has_children = has_children;
@@ -360,6 +458,21 @@ fn leading_digits(value: &str) -> Option<(&str, &str)> {
     } else {
         Some((&value[..count], &value[count..]))
     }
+}
+
+fn normalize_lookup_id(input: &str) -> Option<String> {
+    let canonical = input.strip_suffix('.').unwrap_or(input);
+    let parts: Vec<&str> = canonical.split('.').collect();
+    if parts.is_empty() || parts.len() > 2 {
+        return None;
+    }
+    let valid = parts
+        .iter()
+        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    if !valid {
+        return None;
+    }
+    Some(canonical.to_owned())
 }
 
 fn whitespace_prefix(value: &str) -> Option<&str> {
@@ -751,5 +864,189 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id(), "1");
         assert_eq!(entries[0].description(), "Still fine");
+    }
+
+    #[test]
+    fn state_matrix_follows_the_checkbox_character_and_keeps_optional() {
+        let document = parse(
+            "- [ ] 1. Pending\n- [ ]* 2. Optional pending\n- [x] 3. Completed\n- [x]* 4. Optional completed\n- [!] 5. Blocked\n- [!]* 6. Optional blocked\n",
+        );
+        let entries = document.entries();
+
+        assert_eq!(entries.len(), 6);
+        assert_eq!(entries[0].state(), TaskState::Pending);
+        assert!(!entries[0].optional());
+        assert_eq!(entries[1].state(), TaskState::Pending);
+        assert!(entries[1].optional());
+        assert_eq!(entries[2].state(), TaskState::Completed);
+        assert!(!entries[2].optional());
+        assert_eq!(entries[3].state(), TaskState::Completed);
+        assert!(entries[3].optional());
+        assert_eq!(entries[4].state(), TaskState::Blocked);
+        assert!(!entries[4].optional());
+        assert_eq!(entries[5].state(), TaskState::Blocked);
+        assert!(entries[5].optional());
+    }
+
+    #[test]
+    fn blocked_reason_joins_continuations_and_removes_one_trailing_underscore() {
+        let document = parse(
+            "- [!] 1. Blocked\n  - _Blocked: waiting on credentials,\n    then rerun the suite_\n- [!] 2. Still blocked\n  - _Blocked: ends with two underscores__\n- [!] 3. No note\n- [ ] 4. Pending\n  - _Blocked: not a blocked entry_\n",
+        );
+        let entries = document.entries();
+
+        assert_eq!(
+            entries[0].blocked_reason(),
+            Some("waiting on credentials, then rerun the suite")
+        );
+        assert_eq!(
+            entries[1].blocked_reason(),
+            Some("ends with two underscores_")
+        );
+        assert_eq!(entries[2].blocked_reason(), None);
+        assert_eq!(entries[3].blocked_reason(), None);
+        assert_eq!(entries[3].state(), TaskState::Pending);
+    }
+
+    #[test]
+    fn counts_sum_to_total_and_track_optional_pending() {
+        let document = parse(
+            "- [ ] 1. Pending\n- [ ]* 2. Optional pending\n- [x] 3. Completed\n- [x]* 4. Optional completed\n- [!] 5. Blocked\n- [!]* 6. Optional blocked\n",
+        );
+        let counts = document.counts();
+
+        assert_eq!(counts.total, 6);
+        assert_eq!(counts.completed, 2);
+        assert_eq!(counts.pending, 2);
+        assert_eq!(counts.blocked, 2);
+        assert_eq!(counts.optional_pending, 1);
+        assert_eq!(
+            counts.completed + counts.pending + counts.blocked,
+            counts.total
+        );
+    }
+
+    #[test]
+    fn counts_are_zero_for_an_empty_document() {
+        let counts = parse("").counts();
+
+        assert_eq!(counts, TaskCounts::default());
+        assert_eq!(counts.total, 0);
+    }
+
+    #[test]
+    fn next_actionable_skips_groupings_and_completed_entries() {
+        let document = parse(
+            "- [ ] 1. Group\n- [x] 1.1 Done child\n- [x] 2. Completed\n- [ ] 3. Next work\n",
+        );
+
+        assert_eq!(document.next_actionable().map(|entry| entry.id()), Some("3"));
+    }
+
+    #[test]
+    fn next_actionable_selects_a_major_entry_when_it_has_no_children() {
+        let document = parse("- [ ] 1. Only major\n- [x] 2. Done\n");
+
+        assert_eq!(document.next_actionable().map(|entry| entry.id()), Some("1"));
+    }
+
+    #[test]
+    fn next_actionable_reports_a_blocked_entry_with_its_reason() {
+        let document = parse(
+            "- [x] 1. Done\n- [!] 2. Blocked work\n  - _Blocked: waiting on review_\n",
+        );
+        let entry = document.next_actionable().expect("blocked candidate");
+
+        assert_eq!(entry.id(), "2");
+        assert_eq!(entry.state(), TaskState::Blocked);
+        assert_eq!(entry.blocked_reason(), Some("waiting on review"));
+    }
+
+    #[test]
+    fn next_actionable_is_none_for_a_fully_completed_spec() {
+        let document = parse(
+            "- [x] 1. Group\n- [x] 1.1 Child\n- [x]* 2. Optional done\n",
+        );
+
+        assert!(document.next_actionable().is_none());
+    }
+
+    #[test]
+    fn unchecked_groupings_stay_unselected_when_children_are_complete() {
+        let document = parse("- [ ] 1. Group\n- [x] 1.1 Child\n");
+
+        assert!(document.next_actionable().is_none());
+    }
+
+    #[test]
+    fn find_unique_accepts_canonical_and_single_trailing_dot_forms() {
+        let document = parse("- [ ] 1. Major\n- [ ] 1.2 Child\n- [ ] 2. Other\n");
+
+        assert_eq!(document.find_unique("1").unwrap().id(), "1");
+        assert_eq!(document.find_unique("1.").unwrap().id(), "1");
+        assert_eq!(document.find_unique("1.2").unwrap().id(), "1.2");
+        assert_eq!(document.find_unique("1.2.").unwrap().id(), "1.2");
+        assert_eq!(document.find_unique("2").unwrap().id(), "2");
+    }
+
+    #[test]
+    fn find_unique_rejects_malformed_identifiers() {
+        let document = parse("- [ ] 1. Major\n- [ ] 1.2 Child\n");
+
+        for id in ["", ".", "a", "1.2.3", "1..2", "1..", "1.a", "1.2.a", " 1", "1 "] {
+            let error = document.find_unique(id).expect_err(id);
+            assert_eq!(
+                error.category(),
+                crate::error::ErrorCategory::MutationConflict,
+                "{id:?}"
+            );
+            assert!(
+                error.detail().contains("malformed"),
+                "{id:?}: {}",
+                error.detail()
+            );
+            assert!(error.detail().contains(id), "{id:?}: {}", error.detail());
+        }
+    }
+
+    #[test]
+    fn find_unique_rejects_unknown_identifiers() {
+        let document = parse("- [ ] 1. Major\n- [ ] 1.2 Child\n");
+
+        for id in ["2", "1.3", "3."] {
+            let error = document.find_unique(id).expect_err(id);
+            assert_eq!(
+                error.category(),
+                crate::error::ErrorCategory::MutationConflict,
+                "{id:?}"
+            );
+            assert!(
+                error.detail().contains("unknown"),
+                "{id:?}: {}",
+                error.detail()
+            );
+            assert!(error.detail().contains(id), "{id:?}: {}", error.detail());
+        }
+    }
+
+    #[test]
+    fn find_unique_refuses_duplicated_identifiers() {
+        let document = parse("- [ ] 1. First\n- [ ] 1. Second\n- [ ] 2. Child holder\n- [ ] 2.1 Child\n");
+
+        for id in ["1", "1."] {
+            let error = document.find_unique(id).expect_err(id);
+            assert_eq!(
+                error.category(),
+                crate::error::ErrorCategory::MutationConflict,
+                "{id:?}"
+            );
+            assert!(
+                error.detail().contains("ambiguous") || error.detail().contains("duplicate"),
+                "{id:?}: {}",
+                error.detail()
+            );
+            assert!(error.detail().contains(id), "{id:?}: {}", error.detail());
+        }
+        assert_eq!(document.find_unique("2.1").unwrap().id(), "2.1");
     }
 }
