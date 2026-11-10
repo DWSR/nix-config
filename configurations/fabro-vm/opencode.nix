@@ -214,6 +214,10 @@ let
     cp -r ${processFlowDiagramSkill}/process-flow-diagram $out/opencode/skills/process-flow-diagram
     cp -r ${architectureDiagramSkill}/architecture-diagram $out/opencode/skills/architecture-diagram
     cp -r ${pkgs.cc-sdd-skills}/skills/* $out/opencode/skills/
+    ${lib.optionalString config.fabro.totalRecall.enable ''
+      mkdir -p $out/opencode/plugins
+      cp ${pkgs.total-recall-opencode-plugin}/dist/index.js $out/opencode/plugins/total-recall-harness-events.js
+    ''}
   '';
 
   # ExecStartPost health gate (same contract as fabro.nix's/
@@ -250,8 +254,14 @@ in
     # Soft dependency: a stopped litellm should not take opencode down
     # (unlike fabro's hard requires); unbounded retries surface the
     # downgraded provider as per-request failures until litellm returns.
-    after = [ "litellm.service" ];
-    wants = [ "litellm.service" ];
+    after = [
+      "litellm.service"
+    ]
+    ++ lib.optional config.fabro.totalRecall.enable "total-recall-harness-ingestion.service";
+    wants = [
+      "litellm.service"
+    ]
+    ++ lib.optional config.fabro.totalRecall.enable "total-recall-harness-ingestion.service";
 
     environment = {
       HOME = opencodeHome;
@@ -265,6 +275,10 @@ in
       OPENCODE_EXPERIMENTAL_LSP_TOOL = "true";
       OPENCODE_DISABLE_LSP_DOWNLOAD = "true";
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "true";
+    }
+    // lib.optionalAttrs config.fabro.totalRecall.enable {
+      III_URL = "ws://127.0.0.1:49134";
+      HARNESS_EVENTS_BIN = "${pkgs.total-recall-harness-events}/bin/harness-events";
     };
 
     # PATH for the service and everything it spawns (systemd applies it
@@ -279,6 +293,11 @@ in
       pkgs.nix
       pkgs.ripgrep
       pkgs.openssh
+    ]
+    ++ lib.optionals config.fabro.totalRecall.enable [
+      pkgs.total-recall-harness-events
+    ]
+    ++ [
       pkgs.unstable.gh-stack
       pkgs.cc-sdd
       ccSddInit

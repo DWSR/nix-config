@@ -176,6 +176,15 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # total-recall: the pinned memory workers, harness adapters, and
+    # migrations installed on the fabro guest and wired into the hosts.
+    # Deliberately no `nixpkgs.follows`: upstream's workspace needs Rust
+    # 1.98.1 and edition 2024, which the repository's 26.05 nixpkgs does
+    # not provide, so it keeps its own locked nixpkgs (see flake.lock's
+    # `total-recall` node). Bumps: change nothing here and run
+    # `nix flake update total-recall`, then review the recorded rev.
+    total-recall.url = "github:DWSR/total-recall";
+
     # The nix-darwin module also manages feature policy and performs model
     # cleanup during activation. Keep the CLI package available system-wide;
     # configure Apple Intelligence policy manually with `pared wizard`.
@@ -2445,7 +2454,7 @@
                 assert pkgs.lib.assertMsg
                   (
                     builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
-                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 3
+                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 4
                     && pkgs.lib.hasInfix "--service=svc:fabro --https=443 http://127.0.0.1:32276" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
@@ -2457,6 +2466,27 @@
                     )
                   )
                   "fabro-vm: tailscale-serve must advertise svc:fabro, svc:litellm, and svc:opencode per the console resource defs (tcp:443 each).";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elemAt vm.systemd.services.tailscale-serve.serviceConfig.ExecStart 3
+                    == "${pkgs.lib.getExe vm.services.tailscale.package} serve --service=svc:total-recall --https=443 http://127.0.0.1:49134"
+                    && builtins.elem "multi-user.target" vm.systemd.services.tailscale-serve.wantedBy
+                    &&
+                      builtins.all
+                        (
+                          unit:
+                          builtins.elem unit vm.systemd.services.tailscale-serve.after
+                          && builtins.elem unit vm.systemd.services.tailscale-serve.wants
+                          && !(builtins.elem unit vm.systemd.services.tailscale-serve.requires)
+                        )
+                        [
+                          "iii.service"
+                          "total-recall-harness-ingestion.service"
+                          "total-recall-harness-event-persistence.service"
+                          "total-recall-session-post-processing.service"
+                        ]
+                  )
+                  "fabro-vm: tailscale-serve must apply svc:total-recall last at boot and softly order after iii and all total-recall workers.";
                 # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services ? opencode
@@ -3347,6 +3377,10 @@
           # without re-deriving them from nixpkgs (configurations/fabro-vm
           # imports its overlay above).
           nixSnapshotter = inputs.nix-snapshotter;
+          # The pinned total-recall flake (workers, harness adapters, and
+          # migration sources). Threaded through so the guest modules read
+          # one locked revision instead of resolving an unpinned URL.
+          totalRecall = inputs.total-recall;
           # Stationary kernel: imported (overlays-free) from the nixpkgs rev
           # the booted release image was built from, so the eval's kernel drv
           # hash equals the one baked into the image. See the boot comment in
