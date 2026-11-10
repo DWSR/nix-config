@@ -140,7 +140,7 @@
   - _Requirements: 5.1, 5.2, 5.3, 5.5, 5.6, 5.7_
   - _Depends: 4.4, 5.1_
 
-- [ ] 6. (P) Install the guest OpenCode capture plugin and capture environment
+- [x] 6. (P) Install the guest OpenCode capture plugin and capture environment
   - Copy `total-recall-opencode-plugin/dist/index.js` from task 1.2 into the declarative tree as `opencode/plugins/total-recall-harness-events.js` inside `configurations/fabro-vm/opencode.nix`'s `opencodeConfig` derivation
   - Add `III_URL=ws://127.0.0.1:49134` and `HARNESS_EVENTS_BIN=${total-recall-harness-events}/bin/harness-events` to the OpenCode unit environment and add the CLI to the unit `path`
   - Order `opencode.service` `after` and `wants` `total-recall-harness-ingestion.service` (never `requires`) so a memory outage cannot fail the console
