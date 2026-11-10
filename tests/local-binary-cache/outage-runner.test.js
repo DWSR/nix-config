@@ -328,9 +328,15 @@ test('bounded runner kills the complete process group when capture writes fail',
     '--',
     ...command,
   ];
+  const wrapperPath = path.join(directory, 'capture-limit.sh');
+  fs.writeFileSync(
+    wrapperPath,
+    '#!/bin/bash\ntrap \'\' XFSZ\nulimit -f 0\nexec "$@"\n',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
   const result = childProcess.spawnSync(
-    '/bin/bash',
-    ['-c', "trap '' XFSZ; ulimit -f 0; exec \"$@\"", 'capture-limit', '/usr/bin/perl', ...args],
+    wrapperPath,
+    ['/usr/bin/perl', ...args],
     {
       cwd: directory,
       encoding: 'utf8',
