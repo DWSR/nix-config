@@ -53,7 +53,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Implement `find_unique(id)` over canonical `N`/`N.M` identifiers, accepting one trailing `.` and refusing malformed, unknown, or duplicated identifiers.
   - Unit tests cover the six-marker matrix, counts, grouping selection, a fully completed spec, and duplicate lookup ambiguity.
   - _Requirements: 3.2, 3.3, 3.4, 3.5, 3.7, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.6, 8.9, 11.1_
-- [ ] 3.3 Classify grammar defects as findings
+- [x] 3.3 Classify grammar defects as findings
   - Classify a checkbox line without a numeric identifier as `tasks.line.unnumbered` (warning) and exclude it from entries; classify numbered lines outside the two supported forms as `tasks.id.depth`, `tasks.id.non-numeric`, or `tasks.line.malformed`.
   - Emit `tasks.id.duplicate` at each repeated identifier line and `tasks.limit.exceeded` at the 50th entry, stating the observed count and the 49 limit.
   - Keep parsing total: defects become findings while valid entries in the same document still parse.
