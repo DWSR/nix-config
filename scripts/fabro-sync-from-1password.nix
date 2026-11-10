@@ -7,7 +7,10 @@
 #
 #   1. The source manifest is the guest config's
 #      `fabro.onePasswordSecrets` map (configurations/fabro-vm/default.nix:
-#      sops secret name -> `op://…` URI), read from
+#      sops secret name -> `op://…` URI), including the distinct Darwin and
+#      Linux builder client keys. Fabro's Linux client key is mirrored from
+#      `op://Infrastructure/Fabro Linux nix remote builder key/private key`.
+#      The manifest is read from
 #      `.#nixosConfigurations.fabro-vm` instead of a darwinConfiguration's
 #      `home.mcp` namespace (the guest runs no home-manager).
 #   2. The guest's age PRIVATE key is not on the mac: /var/lib/sops-nix/
@@ -66,6 +69,7 @@ pkgs.writeShellApplication {
     jq
     gnugrep
     git
+    openssh
   ];
   text = ''
     case "''${1:-}" in
@@ -175,6 +179,26 @@ pkgs.writeShellApplication {
       VALUES["$key"]="$value"
     done
 
+    # Multi-line manifest values are SSH private keys. Restore the final
+    # newline that command substitution strips, then reject values that
+    # OpenSSH cannot load before anything is written.
+    for key in "''${SECRET_KEYS[@]}"; do
+      value="''${VALUES[$key]}"
+      [[ "$value" == *$'\n'* ]] || continue
+      value="''${value//$'\r'/}"
+      VALUES["$key"]="$value"
+      key_file="$tmpdir/$key.key"
+      printf '%s\n' "$value" > "$key_file"
+      chmod 0600 "$key_file"
+      if [[ "$(head -n 1 "$key_file")" != "-----BEGIN OPENSSH PRIVATE KEY-----" ]] \
+        || ! ssh-keygen -y -f "$key_file" >/dev/null 2>&1; then
+        echo "fabro-sync-from-1password: error: $key is not a valid OpenSSH private key" >&2
+        echo "  Ensure its 1Password reference includes ?ssh-format=openssh" >&2
+        exit 3
+      fi
+      rm -f "$key_file"
+    done
+
     # Carry-forward set: sops-declared keys in this store that the
     # manifest does not manage. Matched by sopsFile BASENAME (the store
     # is the guest's single sops file via sops.defaultSopsFile); nothing
@@ -272,7 +296,7 @@ pkgs.writeShellApplication {
         if [[ "$v" == *$'\n'* ]]; then
           v_escaped="''${v//\\/\\\\}"
           v_escaped="''${v_escaped//\"/\\\"}"
-          v_escaped="''${v_escaped//$'\n'/\\n}"
+          v_escaped="''${v_escaped//$'\n'/\\n}\\n"
           printf '%s: "%s"\n' "$key" "$v_escaped"
         else
           v_escaped="''${v//\'/\'\'}"

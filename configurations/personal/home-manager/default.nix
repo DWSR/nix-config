@@ -182,6 +182,13 @@ in
     bearerReference = "agentmemory-bearer";
   };
 
+  virtualisation.limaLinuxBuilder = {
+    enable = true;
+    cpus = 4;
+    memory = "8GiB";
+    disk = "128GiB";
+  };
+
   # NixOS Lima VM that hosts fabro. The launchd agent (dev.dwsr.lima-fabro)
   # keeps the instance up via limactl hostagent commands; the guest boots
   # the pinned upstream nixos-lima release image until a Linux builder
@@ -257,7 +264,7 @@ in
     };
     cpus = 4;
     memory = "8GiB";
-    disk = "64GiB";
+    disk = "128GiB";
     suppressFirstLoginSetup = true;
     forward = {
       enable = true;

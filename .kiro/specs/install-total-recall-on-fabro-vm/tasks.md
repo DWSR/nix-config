@@ -155,9 +155,10 @@
   - Keep the oneshot `wantedBy = [ "multi-user.target" ]` so the same handler is re-applied on every boot and converges when already applied; a failing fourth line must leave the earlier three applied while the unit reports failed and journals the service name
   - Add `wants` (not `requires`) and `after` entries for `iii.service` and the three total-recall worker units, keeping `tailscaled.service` and `tailscaled-autoconnect.service` required and the existing three lines byte-for-byte unchanged
   - Add no firewall opening, no PostgreSQL target, no iii stream target, and no fallback that binds the memory endpoint elsewhere while the Service is absent
-  - Completed when evaluation shows four `serve` entries with the new service last, the memory units wanted but not required, the existing advertisements unchanged, and the unit still enabled for boot re-application
+  - Update the existing `tailscale-serve` assertion in `flake.nix`'s `fabro-vm-guest-eval` check to require four `ExecStart` entries for the enabled guest, assert the new `svc:total-recall` entry targets `http://127.0.0.1:49134`, and keep the three existing advertisement assertions unchanged
+  - Completed when evaluation shows four `serve` entries with the new service last, the memory units wanted but not required, the existing advertisements unchanged, the unit still enabled for boot re-application, and `nix flake check` passes
   - _Requirements: 6.1, 6.2, 6.3, 6.5, 6.6, 6.7, 6.8, 6.9_
-  - _Boundary: configurations/fabro-vm/tailscale.nix_
+  - _Boundary: configurations/fabro-vm/tailscale.nix, flake.nix_
   - _Depends: 4.4, 5.2_
 
 - [ ] 8. Workstation capture and MCP clients
@@ -205,7 +206,7 @@
 
 - [ ] 9.2 Assert loopback bindings and the single tailnet exposure
   - Assert PostgreSQL `listen_addresses` is exactly `127.0.0.1`, the iii worker-manager and stream hosts are `127.0.0.1`, and no configuration-worker file names another host
-  - Assert `tailscale-serve` has exactly four `serve` entries, the memory one targets `http://127.0.0.1:49134` under `svc:total-recall`, and the three existing entries are unchanged
+  - Assert `tailscale-serve` has exactly four `serve` entries when `fabro.totalRecall.enable` is true, the memory one targets `http://127.0.0.1:49134` under `svc:total-recall`, the three existing entries are unchanged, and exactly the original three entries remain when the option is false
   - Assert the guest declares no firewall opening and no unit for a memory port other than the Serve target
   - Completed when a widened bind, an added or reordered Serve entry, or a changed existing advertisement fails with a message naming the port or service
   - _Requirements: 6.4, 9.2, 9.5_
