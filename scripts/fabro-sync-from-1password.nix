@@ -179,13 +179,29 @@ pkgs.writeShellApplication {
       VALUES["$key"]="$value"
     done
 
-    # Multi-line manifest values are SSH private keys. Restore the final
-    # newline that command substitution strips, then reject values that
-    # OpenSSH cannot load before anything is written.
+    # Multi-line manifest values are SSH private keys, including the
+    # dedicated `linux-builder-client-key`. Restore the final newline that
+    # command substitution strips, then reject values that OpenSSH cannot
+    # load before anything is written. 1Password returns PKCS#8 for some SSH
+    # Key items unless the reference asks for OpenSSH; retry once with
+    # `?ssh-format=openssh` rather than requiring a manifest edit for the
+    # Linux client key.
     for key in "''${SECRET_KEYS[@]}"; do
       value="''${VALUES[$key]}"
       [[ "$value" == *$'\n'* ]] || continue
       value="''${value//$'\r'/}"
+      if [[ "$value" != *"-----BEGIN OPENSSH PRIVATE KEY-----"* ]]; then
+        uri="$(printf '%s\n' "$MANIFEST_JSON" | jq -r --arg k "$key" '.[$k]')"
+        if [[ "$uri" == *\?* ]]; then
+          separator='&'
+        else
+          separator='?'
+        fi
+        if converted="$(op read --no-newline "$uri''${separator}ssh-format=openssh" 2>/dev/null)" \
+          && [[ "$converted" == *"-----BEGIN OPENSSH PRIVATE KEY-----"* ]]; then
+          value="''${converted//$'\r'/}"
+        fi
+      fi
       VALUES["$key"]="$value"
       key_file="$tmpdir/$key.key"
       printf '%s\n' "$value" > "$key_file"
