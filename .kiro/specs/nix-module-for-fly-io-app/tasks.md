@@ -37,7 +37,7 @@
   - _Depends: 2.2_
   - _Boundary: `lib/fly-apps.nix`, `tests/fly-app/fixture/flake.nix`_
   - _Requirements: 4.1, 4.2_
-- [ ] 3.2 Supply runtime-only Fly credentials
+- [x] 3.2 Supply runtime-only Fly credentials
   - Read `FLY_API_TOKEN` after evaluation; reject missing/empty values and provide private temporary Docker-compatible credentials to the publisher with cleanup and redacted errors.
   - Done when a fixture token authenticates the runtime without appearing in derivations, persistent files, arguments, or diagnostics.
   - _Depends: 2.2_
