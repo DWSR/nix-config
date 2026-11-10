@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
@@ -83,23 +84,39 @@ in
   # declared by the Pi module, which every wired host imports alongside this
   # one.
   config = lib.mkIf cfg.enable {
-    home.packages = [ cfg.harnessEvents ];
+    home = {
+      packages = [ cfg.harnessEvents ];
 
-    # Both harness adapters and interactive shells read the same capture
-    # endpoint and CLI path from the module's option values. The shell
-    # export is unconditional and fail-open: an unreachable guest endpoint
-    # never blocks a session, it only loses capture.
-    home.sessionVariables = {
-      III_URL = cfg.endpoint;
-      HARNESS_EVENTS_BIN = harnessEventsBin;
+      # Both harness adapters and interactive shells read the same capture
+      # endpoint and CLI path from the module's option values. The shell
+      # export is unconditional and fail-open: an unreachable guest endpoint
+      # never blocks a session, it only loses capture.
+      sessionVariables = {
+        III_URL = cfg.endpoint;
+        HARNESS_EVENTS_BIN = harnessEventsBin;
+      };
+
+      opencode.wrapperCommands = [
+        ''
+          export III_URL="${cfg.endpoint}"
+          export HARNESS_EVENTS_BIN="${harnessEventsBin}"
+        ''
+      ];
+    }
+    // lib.optionalAttrs (options ? home && options.home ? mcp) {
+      # mcpproxy is the host's only MCP listener; register the pinned
+      # `mcp-worker` as a stdio upstream so mcpproxy spawns it locally and
+      # namespaces its memory tools like every other upstream. Both values
+      # come from this module's options, so the entry repeats neither the
+      # endpoint nor the connection name.
+      mcp.extraServers.total-recall = {
+        command = "${cfg.mcpWorker}/bin/mcp-worker";
+        env = {
+          III_URL = cfg.endpoint;
+          TOTAL_RECALL_MEMORY_DATABASE = cfg.databaseConnection;
+        };
+      };
     };
-
-    home.opencode.wrapperCommands = [
-      ''
-        export III_URL="${cfg.endpoint}"
-        export HARNESS_EVENTS_BIN="${harnessEventsBin}"
-      ''
-    ];
 
     programs.pi.coding-agent.environment = {
       III_URL.value = cfg.endpoint;
