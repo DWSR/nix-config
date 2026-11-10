@@ -779,7 +779,12 @@ test('live personal host renders consumer and root publisher ready mode', () => 
   assert.equal(rendered.consumerSurfaces.settings['narinfo-cache-negative-ttl'], 60);
   assert.equal(rendered.consumerSurfaces.settings['require-sigs'], true);
   assert.equal(rendered.consumerSurfaces.settings['ssl-cert-file'], combinedCaBundle);
-  assert.equal(rendered.consumerSurfaces.nixSettings.includes(localSubstituter), true);
+  assert.equal(
+    new Set(JSON.parse(rendered.consumerSurfaces.nixSettings)['extra-substituters']).has(
+      localSubstituter,
+    ),
+    true,
+  );
   assert.equal(rendered.consumerSurfaces.nixSettings.includes(personalCachePublicKey), true);
   const hookLines = rendered.artifacts.nixConfig.match(/^post-build-hook = .*$/gm) ?? [];
   assert.deepEqual(hookLines, [
