@@ -102,7 +102,7 @@ function evaluateGuestWithDispatchDisabled() {
 }
 
 function assertBuilderSecretMappings(secrets) {
-  assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key');
+  assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh');
   assert.equal(secrets['build-host-key'], 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key');
   assert.equal(secrets['linux-builder-client-key'], 'op://Infrastructure/Fabro Linux nix remote builder key/private key');
 }
