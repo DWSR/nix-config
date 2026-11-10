@@ -27,7 +27,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Unit tests cover default and explicit roots, each rejected name, and the missing-directory diagnostic.
   - _Requirements: 2.1, 2.2, 2.3, 2.5, 2.6_
   - _Boundary: spec resolution (`scripts/kiro-spec/src/paths.rs`)_
-- [ ] 2.2 (P) Read spec.json and encode the phase ladder
+- [x] 2.2 (P) Read spec.json and encode the phase ladder
   - Implement `read_value(path)` and `phase_of(value)` in `spec_json.rs`; `phase_of` fails naming the file when the value is not an object or `phase` is not a string.
   - Implement `Phase::parse` over exactly the six documented phase strings and `Phase::rank` for ordering, and keep every other module free of phase-string comparisons.
   - Unit tests cover phase parsing and ranking, both strict `phase_of` failures, and raw access to missing and wrongly typed fields.
