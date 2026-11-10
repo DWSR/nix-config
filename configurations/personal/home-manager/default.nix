@@ -34,6 +34,11 @@ in
     stateVersion = "26.05";
 
     omlx.enable = true;
+    totalRecall = {
+      enable = true;
+      endpoint = "wss://total-recall.tuxedo-musical.ts.net";
+      databaseConnection = "memory";
+    };
 
     packages = with pkgs; [
       butane
