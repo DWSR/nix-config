@@ -167,18 +167,19 @@ class FixPromptReportingTests(unittest.TestCase):
         self.assertIn("stage_failure", context)
         self.assertIn("fix_blocker", context)
 
-    def test_stage_settings_match_the_dependabot_agent(self):
+    def test_stage_settings_inherit_the_deepseek_runner_default(self):
         text = normalized(FIX_PROMPT.read_text())
         for setting in (
-            'model="gpt-6-luna"',
-            'provider="litellm"',
-            'reasoning_effort="xhigh"',
+            "DeepSeek V4.1 Flash",
+            "OpenCode Go",
+            "max thinking",
             'retry_policy="patient"',
             "max_retries=2",
             "max_visits=5",
         ):
             with self.subTest(setting=setting):
                 self.assertIn(setting, text)
+        self.assertNotIn('model="gpt-6-luna"', text)
 
     def test_rate_limit_reports_failure_class_for_the_wait_node(self):
         text = normalized(FIX_PROMPT.read_text())

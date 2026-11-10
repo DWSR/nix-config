@@ -1,4 +1,5 @@
 import pathlib
+import re
 import tomllib
 import unittest
 
@@ -38,6 +39,19 @@ class ModelFallbackTests(unittest.TestCase):
 
         run = text.split("run = {", 1)[1].split("run_branch = {", 1)[0]
         self.assertIn('model.name = "deepseek-v4.1-flash";', run)
+
+    def test_deepseek_default_routes_through_opencode_go(self):
+        text = FABRO_NIX.read_text()
+        _, _, tail = text.partition('"deepseek-v4.1-flash" = {')
+        self.assertTrue(tail, "deepseek-v4.1-flash fabro model is missing")
+        block = tail.split('"glm-5.3-flash" = {', 1)[0]
+        self.assertIn('api_model = "opencode-go/deepseek-v4.1-flash";', block)
+
+    def test_workflow_nodes_inherit_the_deepseek_default(self):
+        for path in sorted(WORKFLOW_DIR.glob("*/workflow.fabro")):
+            with self.subTest(workflow=path.parent.name):
+                models = re.findall(r'\bmodel="([^"]+)"', path.read_text())
+                self.assertEqual(models, [])
 
     def test_deepseek_falls_back_to_gpt_6_luna(self):
         for name in AGENT_WORKFLOWS:
