@@ -33,7 +33,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Unit tests cover phase parsing and ranking, both strict `phase_of` failures, and raw access to missing and wrongly typed fields.
   - _Requirements: 5.4, 5.5, 6.6, 6.14_
   - _Boundary: spec.json access (`scripts/kiro-spec/src/spec_json.rs`)_
-- [ ] 2.3 (P) Index requirements.md and resolve reference tokens
+- [x] 2.3 (P) Index requirements.md and resolve reference tokens
   - Build the index from `### Requirement N:` headings and the numbered acceptance-criterion items beneath them, ignoring content outside those sections.
   - Tokenise `_Requirements:_` payloads into references, separating well-formed `N`/`N.M` tokens from malformed ones, and expose resolved and unresolved lookup.
   - Unit tests cover index building, resolved `N` and `N.M`, malformed tokens, unresolved references, and a requirements.md without criteria.
