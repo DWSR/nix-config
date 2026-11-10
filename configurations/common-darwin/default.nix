@@ -3,9 +3,106 @@
   outputs,
   config,
   lib,
+  pkgs,
   username,
   ...
 }:
+let
+  # Public trust material only: the Linux builder's pinned Ed25519 host key.
+  # Both clients consume the checked-in pin; Fabro reaches it through
+  # `fabro.darwinBuilder.linuxHostKeyPath`, while this host embeds it in the
+  # generated builders file because Nix's machine-line format carries the
+  # base64 of the public key line rather than a path.
+  linuxBuilderHostKeyPin = config.nix-config.linuxBuilderHostKeyPin;
+  linuxBuilderHostKeyAvailable = builtins.pathExists linuxBuilderHostKeyPin;
+
+  linuxBuilderHostKeyContents =
+    if linuxBuilderHostKeyAvailable then builtins.readFile linuxBuilderHostKeyPin else "";
+
+  linuxBuilderHostKeyIsValid =
+    let
+      matches = builtins.match "ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [^\n]*)?\n" linuxBuilderHostKeyContents;
+    in
+    linuxBuilderHostKeyAvailable && matches != null;
+
+  linuxBuilderHostKeyBase64 =
+    if linuxBuilderHostKeyIsValid then
+      base64Encode linuxBuilderHostKeyContents
+    else if linuxBuilderHostKeyAvailable then
+      throw "nix-config: ${toString linuxBuilderHostKeyPin} is not a single ssh-ed25519 public key line; expected the provisioned guest's /var/lib/ssh/ssh_host_ed25519_key.pub"
+    else
+      "";
+
+  # Nix has no built-in base64 encoder and the machine line must carry
+  # `base64` of the whole public key line (type, blob, and comment). The
+  # alphabet below is the standard RFC 4648 one and the encoder is
+  # byte-oriented; pinned host keys are printable ASCII plus a trailing
+  # newline.
+  base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  printableAscii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+  asciiCodes =
+    builtins.listToAttrs (
+      builtins.genList (index: {
+        name = builtins.substring index 1 printableAscii;
+        value = 32 + index;
+      }) (builtins.stringLength printableAscii)
+    )
+    // {
+      "\n" = 10;
+    };
+  asciiCode =
+    character:
+    asciiCodes.${character}
+      or (throw "nix-config: the pinned linux-builder SSH host key contains an unsupported byte");
+  base64Encode =
+    value:
+    let
+      length = builtins.stringLength value;
+      byteAt = index: asciiCode (builtins.substring index 1 value);
+      encodeGroup =
+        start:
+        let
+          remaining = length - start;
+          first = byteAt start;
+          second = if remaining > 1 then byteAt (start + 1) else 0;
+          third = if remaining > 2 then byteAt (start + 2) else 0;
+          triple = first * 65536 + second * 256 + third;
+          firstSextet = builtins.div triple 262144;
+          secondSextet = builtins.div (triple - firstSextet * 262144) 4096;
+          thirdSextet = builtins.div (triple - firstSextet * 262144 - secondSextet * 4096) 64;
+          fourthSextet = triple - firstSextet * 262144 - secondSextet * 4096 - thirdSextet * 64;
+        in
+        builtins.substring firstSextet 1 base64Alphabet
+        + builtins.substring secondSextet 1 base64Alphabet
+        + (if remaining > 1 then builtins.substring thirdSextet 1 base64Alphabet else "=")
+        + (if remaining > 2 then builtins.substring fourthSextet 1 base64Alphabet else "=");
+    in
+    builtins.concatStringsSep "" (
+      builtins.genList (index: encodeGroup (index * 3)) (builtins.div (length + 2) 3)
+    );
+
+  # `base64` of the existing mac-builder host key line. Keep this literal so
+  # the Darwin record stays byte-for-byte equivalent to its previous form.
+  darwinHostKeyBase64 = "c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1XOEpoU2lLaXA3aVlHc3AyY08zVTBJTmNYeTliZkNRU0lPVEdvejRPcUkK";
+
+  # One `@file` source for the local Nix daemon: the existing Darwin record
+  # followed by the Linux builder record. The file holds public host identity
+  # and the root-only runtime key paths only; secret values never enter it.
+  # The Linux record is omitted (with an assertion below blocking activation)
+  # while the operator-provisioned host-key pin is absent, so evaluation of the
+  # rest of the host does not depend on operator secret/trust material.
+  buildersFile = pkgs.writeText "nix-builders.conf" (
+    lib.concatStrings [
+      "ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net aarch64-darwin ${config.sops.secrets.mac-builder-ssh-private-key.path} 8 1 - - ${darwinHostKeyBase64}\n"
+      (
+        if linuxBuilderHostKeyAvailable then
+          "ssh-ng://builder@linux-builder.tuxedo-musical.ts.net aarch64-linux ${config.sops.secrets.linux-builder-client-key.path} 4 1 - - ${linuxBuilderHostKeyBase64}\n"
+        else
+          "# linux-builder record omitted: pinned host key missing at ${toString linuxBuilderHostKeyPin}\n"
+      )
+    ]
+  );
+in
 {
   imports = [
     inputs.home-manager.darwinModules.home-manager
@@ -25,7 +122,29 @@
     description = "Absolute path to the nix-config repository checkout on this machine";
   };
 
+  options.nix-config.linuxBuilderHostKeyPin = lib.mkOption {
+    type = lib.types.path;
+    default = ../../certificates/linux-builder/ssh_host_ed25519_key.pub;
+    description = ''
+      Checked-in public Ed25519 SSH host key pinned for the Linux builder. The
+      generated builders file embeds its base64 form so the root Nix daemon
+      verifies the remote endpoint instead of consulting a known_hosts file.
+    '';
+  };
+
   config = {
+
+    # The personal Nix daemon must not switch with only the Darwin builder
+    # configured: the Linux record can only be rendered from the checked-in
+    # public pin, so a missing pin blocks activation instead of silently
+    # dropping Linux dispatch. This is operator-supplied trust material, not a
+    # secret; never substitute a generated key.
+    assertions = [
+      {
+        assertion = linuxBuilderHostKeyAvailable;
+        message = "nix-config: the pinned linux-builder SSH host key is missing at ${toString linuxBuilderHostKeyPin}; copy the provisioned guest's /var/lib/ssh/ssh_host_ed25519_key.pub there (never substitute a key)";
+      }
+    ];
 
     # Disable nix-darwin's documentation module. It defaults to enabled, which
     # forces eval-time instantiation of `system.build.manual` (and its
@@ -60,11 +179,12 @@
         # `darwin-rebuild switch` when many derivations are pulled from
         max-substitution-jobs = 32;
         max-jobs = 0;
-        # Pin mac-builder's sshd host key (base64 of
-        # `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMW8JhSiKip7iYGsp2cO3U0INcXy9bfCQSIOTGoz4OqI`)
-        # so the root nix-daemon verifies the builder instead of consulting
-        # the missing /var/root/.ssh/known_hosts.
-        builders = lib.mkForce "ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net aarch64-darwin ${config.sops.secrets.mac-builder-ssh-private-key.path} 8 1 - - c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1XOEpoU2lLaXA3aVlHc3AyY08zVTBJTmNYeTliZkNRU0lPVEdvejRPcUkK";
+        # Builders come from a Nix-generated `@file`: the existing Darwin
+        # record (whose literal key pin is in `buildersFile` above) plus the
+        # Linux builder record. Nix machine records are whitespace-delimited,
+        # so both records live in one generated file; only public host
+        # identity and the root-only runtime key paths are in the store.
+        builders = lib.mkForce "@${buildersFile}";
         builders-use-substitutes = true;
         # Append nix-community via extra-* so the nix-darwin defaults
         # (cache.nixos.org + its public key) aren't re-declared and duplicated
