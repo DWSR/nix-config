@@ -37,10 +37,7 @@ digraph KiroFeedback {
         output_schema="routing",
         max_visits=6,
         max_retries=2,
-        retry_policy="patient",
-        model="gpt-6-luna",
-        provider="litellm",
-        reasoning_effort="xhigh"
+        retry_policy="patient"
     ]
 
     wait_fix_rate_limit [

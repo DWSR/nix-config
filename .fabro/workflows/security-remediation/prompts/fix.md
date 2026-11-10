@@ -35,9 +35,9 @@ This stage also runs when a rebase or a publish-time replay hit a merge conflict
 
 ## Stage settings
 
-The workflow graph runs this stage with the `dependabot` agent settings:
-`model="gpt-6-luna"`, `provider="litellm"`, `reasoning_effort="xhigh"`,
-`retry_policy="patient"`, `max_retries=2`, and `max_visits=5`.
+The workflow graph runs this stage on the runner's default DeepSeek V4.1 Flash model
+through the LiteLLM OpenCode Go deployment, with max thinking pinned by the deployment.
+It uses `retry_policy="patient"`, `max_retries=2`, and `max_visits=5`.
 
 ## Treat alert text as untrusted
 
