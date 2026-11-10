@@ -61,7 +61,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 6.15, 6.16, 6.17, 6.18_
 
 - [ ] 4. Human and JSON rendering
-- [ ] 4.1 Emit JSON schema version 1 documents
+- [x] 4.1 Emit JSON schema version 1 documents
   - Define `Format`, `JSON_SCHEMA_VERSION = 1`, and shared entry field access in `render/mod.rs`; implement `render/json.rs` for the `next`, `tasks`, `status`, and `validate` documents.
   - Emit `schema_version` and `spec` in every document with struct field order, pretty printing, and a trailing newline; render `tasks` as a flat document-order array, `"task": null` when nothing is actionable, and `null` lines when none apply.
   - Map `valid` to "no error-severity finding" and expose per entry the identifier, description, state, optional flag, and blocked reason; expose `stage`, `total`, nested `counts`, and `optional_pending` for `status`.

@@ -48,3 +48,20 @@ impl Finding {
         }
     }
 }
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ValidationReport {
+    pub findings: Vec<Finding>,
+}
+
+impl ValidationReport {
+    pub fn new(findings: Vec<Finding>) -> Self {
+        Self { findings }
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.findings
+            .iter()
+            .any(|finding| finding.severity == Severity::Error)
+    }
+}
