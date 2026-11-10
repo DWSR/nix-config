@@ -299,6 +299,13 @@ in
             OPENCODE_SERVER_PASSWORD=${config.sops.placeholder."opencode-server-password"}
           '';
         };
+
+        "total-recall-env" = {
+          restartUnits = [ "total-recall-session-post-processing.service" ];
+          content = ''
+            TOTAL_RECALL_POST_PROCESSING_OPENAI_API_TOKEN=${config.sops.placeholder."litellm-master-key"}
+          '';
+        };
       };
     };
 
