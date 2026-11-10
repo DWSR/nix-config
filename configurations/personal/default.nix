@@ -33,17 +33,6 @@ in
       mode = "0400";
     };
 
-    # Dedicated Linux builder client identity for the personal Nix daemon. The
-    # generated builders file references only this runtime path; the private
-    # value stays in its own root-only encrypted store and never enters the
-    # Nix store or the machine record.
-    secrets.linux-builder-client-key = {
-      sopsFile = ../../secrets/linux-builder-client.personal.yaml;
-      key = "linux-builder-client-key";
-      owner = "root";
-      mode = "0400";
-    };
-
     # Deskflow server TLS identity (cert + private key, PEM). Decrypted to an
     # owner-only path under /run/secrets and referenced by path from the
     # personal host's home.deskflow.tls.certificateFile -- the key never enters
