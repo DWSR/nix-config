@@ -31,7 +31,7 @@
   - _Requirements: 3.2, 6.1_
 
 - [ ] 3. Build per-app commands and deployment components
-- [ ] 3.1 Expose named Linux flake-app commands from the module
+- [x] 3.1 Expose named Linux flake-app commands from the module
   - Evaluate a named app map into `deploy-<app>` commands and create a two-app consumer flake fixture; reject name collisions and fix each command's app target.
   - Done when two independent apps are addressable through their own `nix run` outputs on Linux.
   - _Depends: 2.2_
