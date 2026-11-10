@@ -183,9 +183,11 @@ let
     unittest.main(argv=[sys.argv[0]], verbosity=2)
   '';
 in
-pkgs.runCommand "fly-app-deploy-runtime-test" {
-  nativeBuildInputs = [ pkgs.python3 ];
-} ''
-  python3 ${testScript} ${deployProgram}/bin/fly-app-deploy
-  touch "$out"
-''
+pkgs.runCommand "fly-app-deploy-runtime-test"
+  {
+    nativeBuildInputs = [ pkgs.python3 ];
+  }
+  ''
+    python3 ${testScript} ${deployProgram}/bin/fly-app-deploy
+    touch "$out"
+  ''
