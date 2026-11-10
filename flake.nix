@@ -2365,6 +2365,12 @@
                   vm.systemd.services.litellm.serviceConfig.EnvironmentFile
                   == [ vm.sops.templates."litellm-env".path ]
                 ) "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template.";
+                # The litellm module runs as a DynamicUser, so systemd does
+                # not export $HOME; litellm 1.86 imports prisma eagerly and
+                # Path.home() would abort startup.
+                assert pkgs.lib.assertMsg
+                  ((vm.systemd.services.litellm.environment.HOME or null) == vm.services.litellm.stateDir)
+                  "fabro-vm: the litellm service must export HOME (its DynamicUser unit gets none, and litellm's eager prisma import calls Path.home()).";
                 assert pkgs.lib.assertMsg (builtins.hasAttr "opencode-api-key" vm.sops.secrets)
                   "fabro-vm: sops.secrets must declare the opencode provider key.";
                 assert pkgs.lib.assertMsg (

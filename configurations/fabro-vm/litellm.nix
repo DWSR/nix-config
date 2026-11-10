@@ -116,7 +116,16 @@ in
     # LITELLM_MASTER_KEY from the sops template (see default.nix).
     environmentFile = config.sops.templates."litellm-env".path;
 
-    environment.CHATGPT_TOKEN_DIR = litellmTokenDir;
+    environment = {
+      CHATGPT_TOKEN_DIR = litellmTokenDir;
+
+      # A DynamicUser unit gets no $HOME from systemd. litellm 1.86's
+      # proxy_server imports prisma eagerly, and prisma's DefaultConfig
+      # evaluates Path.home() at import time, so startup aborts without
+      # one. The state dir is already WorkingDirectory, exists via
+      # StateDirectory, and is untouched by ProtectHome.
+      HOME = config.services.litellm.stateDir;
+    };
 
     settings =
       let
