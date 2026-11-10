@@ -18,7 +18,7 @@
   - Done when a standalone module evaluation represents a single- and multi-container app without requiring a NixOS host.
   - _Boundary: `modules/fly-app.nix`_
   - _Requirements: 1.1, 1.2, 2.1, 2.2_
-- [ ] 2.2 Validate and serialize secret-free declarations
+- [x] 2.2 Validate and serialize secret-free declarations
   - Reject both or neither image sources where an image is required; preserve arbitrary supported Machine fields and keep the Fly token out of evaluation and generated specs.
   - Done when invalid choices fail evaluation and a valid declaration emits a store-safe app/Machine specification.
   - _Boundary: `modules/fly-app.nix`_

@@ -1,4 +1,9 @@
-{ lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   imageSourceType = lib.types.submodule {
@@ -60,6 +65,65 @@ let
       };
     };
   };
+
+  hasExactlyOneImageSource =
+    source:
+    (source.existingImage != null) != (source.derivation != null)
+    && (source.existingImage == null || source.existingImage != "");
+
+  serializeImageSource =
+    source:
+    if source.existingImage != null then
+      { inherit (source) existingImage; }
+    else
+      { derivation = toString source.derivation; };
+
+  serializeMachine =
+    name: machine:
+    let
+      containerNames = builtins.attrNames machine.containers;
+      hasContainers = containerNames != [ ];
+      deployContainerIsValid =
+        if machine.deployContainer == null then
+          builtins.length containerNames <= 1
+        else
+          hasContainers
+          && builtins.hasAttr machine.deployContainer machine.containers
+          && machine.deployContainer != ""
+          && hasExactlyOneImageSource machine.containers.${machine.deployContainer}.image;
+      serializedContainers = builtins.mapAttrs (_: container: {
+        inherit (container) config;
+        image = serializeImageSource container.image;
+      }) machine.containers;
+      serializedImage = serializeImageSource machine.image;
+    in
+    assert lib.asserts.assertMsg
+      (
+        if hasContainers then
+          !hasExactlyOneImageSource machine.image
+          && machine.image.existingImage == null
+          && machine.image.derivation == null
+          && lib.all (container: hasExactlyOneImageSource container.image) (
+            builtins.attrValues machine.containers
+          )
+        else
+          hasExactlyOneImageSource machine.image
+      )
+      "Fly Machine '${name}' must use exactly one image source for each required image, and cannot mix Machine and container image declarations.";
+    assert lib.asserts.assertMsg deployContainerIsValid
+      "Fly Machine '${name}' must select an existing deployContainer when it has multiple containers.";
+    {
+      inherit (machine) config;
+      containers = serializedContainers;
+    }
+    // (if hasContainers then { } else { image = serializedImage; })
+    // (if machine.deployContainer == null then { } else { inherit (machine) deployContainer; });
+
+  spec = {
+    name = config.flyApp.name;
+    settings = config.flyApp.settings;
+    machines = builtins.mapAttrs serializeMachine config.flyApp.machines;
+  };
 in
 {
   options.flyApp = {
@@ -79,5 +143,13 @@ in
       default = { };
       description = "Machines keyed by stable logical identity.";
     };
+
+    spec = lib.mkOption {
+      type = lib.types.path;
+      readOnly = true;
+      description = "Store-safe, secret-free JSON specification for the declared app.";
+    };
   };
+
+  config.flyApp.spec = pkgs.writeText "fly-app-spec.json" (builtins.toJSON spec + "\n");
 }
