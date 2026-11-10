@@ -112,7 +112,7 @@
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.7_
   - _Depends: 4.2_
 
-- [ ] 4.4 Add the harness ingestion and persistence worker units
+- [x] 4.4 Add the harness ingestion and persistence worker units
   - Add `total-recall-harness-ingestion` and `total-recall-harness-event-persistence` with `III_URL = "ws://${iiiHost}:${toString iiiPort}"`, `TOTAL_RECALL_QUEUE_TOPIC` on both, and `TOTAL_RECALL_DATABASE` on persistence, all read from the module options
   - Order both `after` and `requires` `iii.service`, `total-recall-migrate.service`, `iii-database`, `iii-queue`, and `iii-cron` so the observers and the topic exist before registration; use the shared `Restart=always`, `RestartSec=2`, and `wantedBy`
   - Run the pinned ingestion worker unchanged so it validates events against the pinned protobuf contract and rejects an invalid event with a bounded, payload-free error while staying registered
