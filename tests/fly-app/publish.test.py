@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Image publication and registry inspection tests for the Fly app publisher."""
+"""Image publication, registry inspection, and publication-state tests for the Fly app publisher."""
 
 import base64
 import hashlib
@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -256,6 +257,7 @@ class FlyPublishTests(unittest.TestCase):
                 "TMPDIR": str(self.root),
                 "FLY_TEST_REGISTRY_DIR": str(self.state.manifests),
                 "FLY_TEST_PUSH_LOG": str(self.push_log),
+                "FLY_APP_STATE_DIR": str(self.root / "state"),
             }
         )
         if token is not None:
@@ -285,6 +287,18 @@ class FlyPublishTests(unittest.TestCase):
                 "web": {"image": {"derivation": str(archive or self.archive)}}
             },
         }
+
+    def _identity(self, archive=None):
+        return STORE_PATH.match(str(archive or self.archive)).group(1)
+
+    def _tag(self, archive=None):
+        return "nix-" + self._identity(archive)
+
+    def _state_file(self, app="fly-alpha"):
+        return self.root / "state" / (app + ".json")
+
+    def _state(self, app="fly-alpha"):
+        return json.loads(self._state_file(app).read_text(encoding="utf-8"))
 
     def _result(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -318,6 +332,7 @@ class FlyPublishTests(unittest.TestCase):
         )
         self.assertEqual(self._pushes(), [])
         self.assertEqual(self.state.requests(), [])
+        self.assertFalse((self.root / "state").exists())
         self.assertEqual(list(self.root.glob("fly-app-publish.*")), [])
 
     def test_first_publication_confirms_app_scoped_reference_and_digest(self):
@@ -361,6 +376,10 @@ class FlyPublishTests(unittest.TestCase):
         self.assertFalse(second["images"][0]["published"])
         self.assertEqual(first["images"][0]["digest"], second["images"][0]["digest"])
         self.assertEqual(len(self._pushes()), 1)
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            first["images"][0]["digest"],
+        )
 
         changed = self._result(
             self._invoke(spec=self._derivation_spec(self.other_archive))
@@ -369,6 +388,134 @@ class FlyPublishTests(unittest.TestCase):
         self.assertNotEqual(
             changed["images"][0]["reference"], first["images"][0]["reference"]
         )
+        self.assertEqual(len(self._pushes()), 2)
+        state = self._state()
+        self.assertEqual(
+            state["images"][self._identity(self.other_archive)]["reference"],
+            changed["images"][0]["reference"],
+        )
+        self.assertEqual(
+            state["images"][self._identity()]["digest"],
+            first["images"][0]["digest"],
+        )
+
+    def test_publication_persists_identity_reference_and_digest_without_secrets(self):
+        payload = self._result(self._invoke(spec=self._derivation_spec()))
+        state_file = self._state_file()
+        self.assertTrue(state_file.is_file())
+        self.assertEqual(stat.S_IMODE(state_file.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(state_file.parent.stat().st_mode), 0o700)
+        raw = state_file.read_bytes()
+        self.assertNotIn(TOKEN.encode("utf-8"), raw)
+        state = json.loads(raw)
+        self.assertEqual(state["app"], "fly-alpha")
+        record = state["images"][self._identity()]
+        self.assertEqual(record["identity"], self._identity())
+        self.assertEqual(record["reference"], payload["images"][0]["reference"])
+        self.assertEqual(record["digest"], payload["images"][0]["digest"])
+        self.assertRegex(record["digest"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_default_state_location_uses_xdg_state_home(self):
+        xdg_state = self.root / "xdg-state"
+        result = self._invoke(
+            spec=self._derivation_spec(),
+            extra_env={
+                "FLY_APP_STATE_DIR": "",
+                "XDG_STATE_HOME": str(xdg_state),
+            },
+        )
+        self._result(result)
+        self.assertTrue((xdg_state / "fly-app" / "fly-alpha.json").is_file())
+
+    def test_intact_state_missing_remote_image_fails_without_republishing(self):
+        spec = self._derivation_spec()
+        first = self._result(self._invoke(spec=spec))
+        self.state.manifest_file("fly-alpha", self._tag()).unlink()
+
+        result = self._invoke(spec=spec)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("missing from the Fly registry", result.stderr)
+        self.assertIn("refusing to republish", result.stderr)
+        self.assertEqual(result.stderr.count(TOKEN), 0)
+        self.assertEqual(len(self._pushes()), 1)
+        self.assertIsNone(self.state.read_manifest("fly-alpha", self._tag()))
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            first["images"][0]["digest"],
+        )
+
+    def test_intact_state_wrong_remote_digest_fails_without_republishing(self):
+        spec = self._derivation_spec()
+        first = self._result(self._invoke(spec=spec))
+        self.state.manifest_file("fly-alpha", self._tag()).write_bytes(
+            b'{"schemaVersion":2,"tampered":true}'
+        )
+
+        result = self._invoke(spec=spec)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("does not match the recorded publication", result.stderr)
+        self.assertIn("refusing to republish", result.stderr)
+        self.assertEqual(len(self._pushes()), 1)
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            first["images"][0]["digest"],
+        )
+
+    def test_state_loss_with_missing_remote_image_publishes_automatically(self):
+        spec = self._derivation_spec()
+        first = self._result(self._invoke(spec=spec))
+        self.state.manifest_file("fly-alpha", self._tag()).unlink()
+        shutil.rmtree(self._state_file().parent)
+
+        second = self._result(self._invoke(spec=spec))
+        self.assertTrue(second["images"][0]["published"])
+        self.assertEqual(second["images"][0]["digest"], first["images"][0]["digest"])
+        self.assertEqual(len(self._pushes()), 2)
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            second["images"][0]["digest"],
+        )
+
+    def test_state_loss_adopts_an_existing_confirmed_image_without_republishing(self):
+        spec = self._derivation_spec()
+        first = self._result(self._invoke(spec=spec))
+        shutil.rmtree(self._state_file().parent)
+
+        second = self._result(self._invoke(spec=spec))
+        self.assertFalse(second["images"][0]["published"])
+        self.assertEqual(second["images"][0]["digest"], first["images"][0]["digest"])
+        self.assertEqual(len(self._pushes()), 1)
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            first["images"][0]["digest"],
+        )
+
+    def test_malformed_state_is_treated_as_first_deployment(self):
+        spec = self._derivation_spec()
+        self._result(self._invoke(spec=spec))
+        self._state_file().write_text("{not json", encoding="utf-8")
+        self.state.manifest_file("fly-alpha", self._tag()).unlink()
+
+        second = self._result(self._invoke(spec=spec))
+        self.assertTrue(second["images"][0]["published"])
+        self.assertEqual(len(self._pushes()), 2)
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            second["images"][0]["digest"],
+        )
+
+    def test_state_of_a_different_registry_reference_is_treated_as_first_deployment(self):
+        spec = self._derivation_spec()
+        self._result(self._invoke(spec=spec))
+        state = self._state()
+        state["images"][self._identity()]["reference"] = "registry.fly.io/fly-alpha:other"
+        self._state_file().write_text(json.dumps(state), encoding="utf-8")
+        self.state.manifest_file("fly-alpha", self._tag()).unlink()
+
+        second = self._result(self._invoke(spec=spec))
+        self.assertTrue(second["images"][0]["published"])
         self.assertEqual(len(self._pushes()), 2)
 
     def test_shared_derivation_is_published_once_for_all_machines(self):
@@ -442,6 +589,7 @@ class FlyPublishTests(unittest.TestCase):
         self.assertIn("publication failed", result.stderr)
         self.assertEqual(len(self._pushes()), 1)
         self.assertIsNone(self.state.read_manifest("fly-alpha", "nix-" + STORE_PATH.match(str(self.archive)).group(1)))
+        self.assertFalse(self._state_file().exists())
 
     def test_missing_or_empty_token_fails_before_publication(self):
         for token in (None, ""):
