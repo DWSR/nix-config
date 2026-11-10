@@ -13,6 +13,16 @@
 # deployments also receive `--update-only`, which keeps the existing
 # process-group counts and leaves creation of missing declared Machines to the
 # direct API reconciliation that follows this CLI stage.
+#
+# After every CLI deploy the reconciler enumerates the app's Machines and maps
+# each stable declaration key to a Fly Machine ID. A Machine is module-managed
+# when it carries the module identity marker (`fly_app_module_key` metadata,
+# written for Machines created through the Machines API) or a Fly Launch
+# process group (`fly_process_group` metadata). Machines with neither marker
+# are unrelated and are reported but excluded from the managed set. Ambiguous
+# matches and surplus managed Machines fail without deleting anything; missing
+# declared Machines are reported for the Machines API reconciliation step to
+# create. This stage never creates, mutates, or deletes Machines.
 {
   pkgs,
   flyctl ? pkgs.flyctl,
@@ -38,6 +48,8 @@ let
 
     APP_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+    MODULE_IDENTITY_KEY = "fly_app_module_key"
+    LAUNCH_IDENTITY_KEY = "fly_process_group"
     USAGE = (
         "usage: fly-app-reconcile --spec <secret-free-spec> "
         "--images <resolved-images>"
@@ -431,6 +443,123 @@ let
         return references[0]
 
 
+    def machine_record(entry, app):
+        if not isinstance(entry, dict):
+            fail("Fly returned an invalid Machine entry for app '{}'".format(app))
+        machine_id = entry.get("id")
+        if not isinstance(machine_id, str) or not machine_id.strip():
+            fail("Fly returned a Machine without a stable ID for app '{}'".format(app))
+        config = entry.get("config")
+        if not isinstance(config, dict):
+            fail(
+                "Fly returned a Machine without a configuration for app '{}': "
+                "{}".format(app, machine_id)
+            )
+        return machine_id, config
+
+
+    def machine_identity(machine_id, config, app):
+        """Return the stable declaration identity of a module-managed Machine."""
+        metadata = config.get("metadata")
+        if metadata is None:
+            return None
+        if not isinstance(metadata, dict):
+            fail(
+                "Fly returned a Machine with invalid identity metadata for app "
+                "'{}': {}".format(app, machine_id)
+            )
+        for key in (MODULE_IDENTITY_KEY, LAUNCH_IDENTITY_KEY):
+            if key not in metadata:
+                continue
+            value = metadata[key]
+            if not isinstance(value, str) or not value.strip():
+                fail(
+                    "Fly returned a Machine with invalid identity metadata '{}' "
+                    "for app '{}': {}".format(key, app, machine_id)
+                )
+            return value
+        return None
+
+
+    def has_managed_identity(app, machines):
+        return any(
+            machine_identity(machine_id, config, app) is not None
+            for machine_id, config in machines
+        )
+
+
+    def match_machines(app, declared, machines):
+        """Map declaration keys to Fly Machine IDs and reject bad managed sets."""
+        candidates = {}
+        unmanaged = []
+        surplus = []
+        for machine_id, config in machines:
+            identity = machine_identity(machine_id, config, app)
+            if identity is None:
+                unmanaged.append(machine_id)
+                continue
+            if identity not in declared:
+                surplus.append((machine_id, identity))
+                continue
+            candidates.setdefault(identity, []).append(machine_id)
+
+        ambiguous = {
+            identity: sorted(ids)
+            for identity, ids in candidates.items()
+            if len(ids) > 1
+        }
+        if ambiguous or surplus:
+            problems = []
+            for identity in sorted(ambiguous):
+                problems.append(
+                    "ambiguous matches for declared Machine '{}': {} (surplus "
+                    "duplicates are never deleted)".format(
+                        identity, ", ".join(ambiguous[identity])
+                    )
+                )
+            for machine_id, identity in sorted(surplus):
+                problems.append(
+                    "surplus module-managed Machine '{}' with identity '{}' "
+                    "(this reconciler never deletes Machines)".format(
+                        machine_id, identity
+                    )
+                )
+            fail(
+                "cannot reconcile the Machine set for app '{}': {}".format(
+                    app, "; ".join(problems)
+                )
+            )
+
+        matches = {identity: ids[0] for identity, ids in candidates.items()}
+        missing = sorted(set(declared) - set(matches))
+        return matches, missing, sorted(unmanaged)
+
+
+    def report_machine_set(app, matches, missing, unmanaged, token):
+        mapping = " ".join(
+            "{}={}".format(identity, matches[identity]) for identity in sorted(matches)
+        )
+        lines = [
+            "fly-app-reconcile: matched Machines for app '{}': {}".format(
+                app, mapping or "none"
+            )
+        ]
+        if missing:
+            lines.append(
+                "fly-app-reconcile: missing declared Machines for app '{}': {}; "
+                "the Machines API reconciliation step must create them".format(
+                    app, " ".join(missing)
+                )
+            )
+        if unmanaged:
+            lines.append(
+                "fly-app-reconcile: ignoring unmanaged Machines for app '{}': "
+                "{}".format(app, " ".join(unmanaged))
+            )
+        for line in lines:
+            print(redact(line, token), file=sys.stderr)
+
+
     def list_machines(flyctl, app, environment, token):
         result = subprocess.run(
             [flyctl, "machine", "list", "--app", app, "--json"],
@@ -451,7 +580,7 @@ let
         machines = payload.get("machines") if isinstance(payload, dict) else payload
         if not isinstance(machines, list):
             fail("Fly returned an invalid Machine list for app '{}'".format(app))
-        return len(machines) > 0
+        return [machine_record(entry, app) for entry in machines]
 
 
     def deploy(flyctl, app, config_path, reference, first_deploy, environment, token):
@@ -548,7 +677,8 @@ let
             runtime_dir = tempfile.mkdtemp(prefix="fly-app-reconcile.")
             os.chmod(runtime_dir, 0o700)
             config_path = write_config(runtime_dir, rendered)
-            first_deploy = not list_machines(flyctl, name, environment, token)
+            existing_machines = list_machines(flyctl, name, environment, token)
+            first_deploy = not has_managed_identity(name, existing_machines)
             deploy(
                 flyctl,
                 name,
@@ -558,6 +688,11 @@ let
                 environment,
                 token,
             )
+            deployed_machines = list_machines(flyctl, name, environment, token)
+            matches, missing, unmanaged = match_machines(
+                name, machines, deployed_machines
+            )
+            report_machine_set(name, matches, missing, unmanaged, token)
             print(
                 "fly-app-reconcile: deployed app '{}' with image '{}'".format(
                     name, reference
