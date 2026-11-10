@@ -131,7 +131,7 @@
   - _Requirements: 5.3, 5.4_
   - _Boundary: configurations/fabro-vm/default.nix_
 
-- [ ] 5.2 Add the session post-processing worker unit
+- [x] 5.2 Add the session post-processing worker unit
   - Add `total-recall-session-post-processing` with `TOTAL_RECALL_POST_PROCESSING_DATABASE` and `TOTAL_RECALL_POST_PROCESSING_MEMORY_DATABASE` set to the `memory` connection name, `..._PROVIDER = "openai"`, `..._OPENAI_BASE_URL` from `postProcessingBaseUrl`, `..._OPENAI_MODEL` from `postProcessingModel`, and `..._OPENAI_OUTPUT_MODE = "prompt"`
   - Set `EnvironmentFile = config.sops.templates."total-recall-env".path`, the shared `User`/`Group`/`StateDirectory`/`Restart` settings, and the same `after`/`requires` chain as task 4.4
   - Leave the worker's cron expression and inactivity window at the pinned defaults so an ended session is processed within one tick; a failed attempt must stay eligible for a later tick
