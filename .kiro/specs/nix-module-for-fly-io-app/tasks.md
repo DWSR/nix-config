@@ -54,7 +54,7 @@
   - Done when state loss permits automatic first publication while intact-state image disappearance returns failure without republishing.
   - _Boundary: `scripts/fly-app-publish.nix`_
   - _Requirements: 3.3, 3.4, 3.5, 3.8, 4.3, 6.2_
-- [ ] 3.5 Serialize concurrent publication for the same app
+- [x] 3.5 Serialize concurrent publication for the same app
   - Protect publication-state reads, registry verification, push, and state writes against overlapping commands targeting one app without blocking independent apps.
   - Done when concurrent same-app invocations avoid duplicate/conflicting publication and different apps proceed independently.
   - _Boundary: `scripts/fly-app-publish.nix`_
