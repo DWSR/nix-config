@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Fly CLI app-settings deployment tests for the Fly app reconciler."""
 
+import copy
+import http.server
 import json
 import os
 from pathlib import Path
@@ -8,8 +10,10 @@ import re
 import stat
 import subprocess
 import tempfile
+import threading
 import tomllib
 import unittest
+import urllib.parse
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,6 +126,155 @@ raise SystemExit(64)
 """
 
 
+class StubMachinesAPI:
+    """Stateful stand-in for the Fly Machines API used by the reconciler."""
+
+    def __init__(self):
+        self.machines = {}
+        self.requests = []
+        self.fail_auth = False
+        self.fail_create = None
+        self.fail_update = None
+        self.drop_field = None
+        self.surplus_after_update = False
+        self.lock = threading.Lock()
+        api = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def reply(self, status, payload=None):
+                body = b"" if payload is None else json.dumps(payload).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def read_body(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                if not length:
+                    return None
+                return json.loads(self.rfile.read(length))
+
+            def do_GET(self):
+                api.handle(self, "GET", None)
+
+            def do_POST(self):
+                api.handle(self, "POST", self.read_body())
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = "http://127.0.0.1:{}".format(self.server.server_port)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def reset(self, machines):
+        with self.lock:
+            self.machines = {}
+            self.requests = []
+            for entry in machines:
+                if not isinstance(entry, dict):
+                    continue
+                machine_id = entry.get("id")
+                config = entry.get("config")
+                if not isinstance(machine_id, str) or not isinstance(config, dict):
+                    continue
+                self.machines[machine_id] = {
+                    "id": machine_id,
+                    "region": entry.get("region", "ord"),
+                    "config": copy.deepcopy(config),
+                }
+
+    def snapshot(self):
+        with self.lock:
+            return copy.deepcopy(list(self.machines.values()))
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+    def creations(self):
+        with self.lock:
+            return [
+                request["body"]
+                for request in self.requests
+                if request["method"] == "POST" and request["machine_id"] is None
+            ]
+
+    def updates(self):
+        with self.lock:
+            return [
+                request
+                for request in self.requests
+                if request["method"] == "POST" and request["machine_id"] is not None
+            ]
+
+    def handle(self, handler, method, body):
+        with self.lock:
+            path = urllib.parse.urlparse(handler.path).path
+            parts = [part for part in path.split("/") if part]
+            machine_id = parts[4] if len(parts) > 4 else None
+            self.requests.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "machine_id": machine_id,
+                    "body": body,
+                    "authorization": handler.headers.get("Authorization"),
+                }
+            )
+            if self.fail_auth:
+                handler.reply(401, {"error": "unauthorized"})
+                return
+            if parts[:4] != ["v1", "apps", APP, "machines"]:
+                handler.reply(404, {"error": "unexpected path"})
+                return
+            if method == "GET" and machine_id is None:
+                handler.reply(200, {"machines": list(self.machines.values())})
+                return
+            if method == "GET":
+                machine = self.machines.get(machine_id)
+                handler.reply(200 if machine else 404, machine or {"error": "missing"})
+                return
+            if method == "POST" and machine_id is None:
+                if self.fail_create:
+                    handler.reply(self.fail_create, {"error": "create rejected"})
+                    return
+                created = "machine-created-{}".format(len(self.machines) + 1)
+                machine = {
+                    "id": created,
+                    "region": (body or {}).get("region", "ord"),
+                    "config": copy.deepcopy(body["config"]),
+                }
+                self.machines[created] = machine
+                handler.reply(200, machine)
+                return
+            if method == "POST":
+                if self.fail_update:
+                    handler.reply(self.fail_update, {"error": "update rejected"})
+                    return
+                machine = self.machines.get(machine_id)
+                if machine is None:
+                    handler.reply(404, {"error": "missing"})
+                    return
+                config = copy.deepcopy(body["config"])
+                if self.drop_field:
+                    config.pop(self.drop_field, None)
+                machine["config"] = config
+                if self.surplus_after_update:
+                    self.machines["machine-surplus"] = {
+                        "id": "machine-surplus",
+                        "region": "ord",
+                        "config": {"metadata": {"fly_app_module_key": "surplus"}},
+                    }
+                    self.surplus_after_update = False
+                handler.reply(200, machine)
+                return
+            handler.reply(405, {"error": "method not allowed"})
+
+
 def image_entry(reference):
     return {
         "kind": "existingImage",
@@ -206,13 +359,13 @@ def base_spec():
     }
 
 
-def fly_machine(machine_id, process_group=None, module_key=None, **fields):
-    metadata = {}
+def fly_machine(machine_id, process_group=None, module_key=None, metadata=None, **fields):
+    values = dict(metadata or {})
     if process_group is not None:
-        metadata["fly_process_group"] = process_group
+        values["fly_process_group"] = process_group
     if module_key is not None:
-        metadata["fly_app_module_key"] = module_key
-    config = {"metadata": metadata} if metadata else {}
+        values["fly_app_module_key"] = module_key
+    config = {"metadata": values} if values else {}
     config.update(fields)
     return {"id": machine_id, "config": config}
 
@@ -240,6 +393,38 @@ def resolved_payload(spec):
         "images": [images[reference] for reference in sorted(images)],
         "machines": machines,
     }
+
+
+def full_spec():
+    spec = base_spec()
+    spec["machines"]["web"]["config"] = {
+        "guest": {"cpu_kind": "shared", "cpus": 2, "memory_mb": 1024},
+        "env": {"APP_MODE": "web"},
+        "services": [
+            {
+                "internal_port": 8080,
+                "protocol": "tcp",
+                "ports": [{"port": 80, "handlers": ["http"]}],
+            }
+        ],
+        "restart": {"policy": "on-failure", "max_retries": 3},
+        "metadata": {"owner": "platform"},
+        "init": {"cmd": ["/app/web"]},
+    }
+    spec["machines"]["web"]["containers"]["sidecar"]["config"].update(
+        {
+            "entrypoint": ["/bin/sidecar"],
+            "env": {"SIDECAR": "enabled"},
+            "user": "1000",
+        }
+    )
+    spec["machines"]["worker"]["config"] = {
+        "guest": {"cpu_kind": "performance", "cpus": 1, "memory_mb": 2048},
+        "env": {"APP_MODE": "worker"},
+        "schedule": "hourly",
+        "metadata": {"owner": "platform"},
+    }
+    return spec
 
 
 class FlyReconcileTests(unittest.TestCase):
@@ -298,8 +483,10 @@ class FlyReconcileTests(unittest.TestCase):
         self.spec = self.root / "spec.json"
         self.images = self.root / "images.json"
         self.machines = []
+        self.api = StubMachinesAPI()
 
     def tearDown(self):
+        self.api.close()
         self.temp.cleanup()
 
     def _flight_files(self, spec=None, payload=None):
@@ -328,6 +515,7 @@ class FlyReconcileTests(unittest.TestCase):
                 "FLY_TEST_MACHINES": json.dumps(self.machines),
                 "FLY_TEST_DEPLOY_STATUS": deploy_status,
                 "FLY_TEST_LIST_STATUS": list_status,
+                "FLY_MACHINES_API": self.api.url,
             }
         )
         if machines_after is not None:
@@ -342,7 +530,10 @@ class FlyReconcileTests(unittest.TestCase):
             env["FLY_TEST_DEPLOY_FAIL"] = "1"
         return env
 
-    def _invoke(self, *, arguments=None, **environment):
+    def _invoke(self, *, arguments=None, seed=True, **environment):
+        if seed:
+            after = environment.get("machines_after")
+            self.api.reset(self.machines if after is None else after)
         return subprocess.run(
             [
                 str(self.package),
@@ -391,6 +582,25 @@ class FlyReconcileTests(unittest.TestCase):
         self.assertIn(
             "missing declared Machines for app 'fly-alpha': web worker",
             result.stderr,
+        )
+        creations = {
+            body["config"]["metadata"]["fly_app_module_key"]: body
+            for body in self.api.creations()
+        }
+        self.assertEqual(sorted(creations), ["web", "worker"])
+        self.assertEqual(
+            sorted(
+                container["name"]
+                for container in creations["web"]["config"]["containers"]
+            ),
+            ["app", "sidecar"],
+        )
+        self.assertEqual(creations["worker"]["config"]["image"], WORKER)
+        self.assertTrue(
+            all(
+                request["authorization"] == "Bearer " + TOKEN
+                for request in self.api.requests
+            )
         )
         deploy = self._deploy()
         self.assertEqual(deploy["app"], APP)
@@ -574,7 +784,7 @@ class FlyReconcileTests(unittest.TestCase):
         self.assertEqual(len(self._entries("deploy")), 1)
         self.assertEqual(set(self._commands()), {"machine-list", "deploy"})
 
-    def test_missing_declared_machines_are_identified_for_creation(self):
+    def test_missing_declared_machines_are_created_through_the_api(self):
         self._flight_files()
         self.machines = []
         result = self._invoke(
@@ -583,8 +793,14 @@ class FlyReconcileTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("web=machine-web", result.stderr)
         self.assertIn("missing declared Machines", result.stderr)
-        self.assertIn("worker", result.stderr)
-        self.assertNotIn("worker=machine-worker", result.stderr)
+        self.assertIn("creating them through the Machines API", result.stderr)
+        creations = {
+            body["config"]["metadata"]["fly_app_module_key"]: body
+            for body in self.api.creations()
+        }
+        self.assertEqual(sorted(creations), ["worker"])
+        self.assertEqual(creations["worker"]["config"]["image"], WORKER)
+        self.assertIn("worker=machine-created-2", result.stderr)
         self.assertIn("fly-app-reconcile: deployed app", result.stderr)
         self.assertEqual(self._commands().count("deploy"), 1)
         self.assertEqual(set(self._commands()), {"machine-list", "deploy"})
@@ -625,7 +841,7 @@ class FlyReconcileTests(unittest.TestCase):
                 self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
                 self.assertNotIn(TOKEN, result.stdout + result.stderr)
 
-    def test_reconciliation_never_attempts_a_machine_mutation(self):
+    def test_reconciliation_mutates_only_through_the_machines_api(self):
         self._flight_files()
         self.machines = [
             fly_machine("machine-web", process_group="web"),
@@ -634,6 +850,208 @@ class FlyReconcileTests(unittest.TestCase):
         result = self._invoke()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(set(self._commands()), {"machine-list", "deploy"})
+        self.assertEqual(self.api.creations(), [])
+        self.assertEqual(
+            sorted(request["machine_id"] for request in self.api.updates()),
+            ["machine-web", "machine-worker"],
+        )
+        self.assertFalse(
+            [
+                request
+                for request in self.api.requests
+                if request["method"] not in ("GET", "POST")
+            ]
+        )
+
+    def test_updates_every_declared_machine_and_preserves_launch_metadata(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine(
+                "machine-web",
+                process_group="web",
+                metadata={"fly_platform_version": "v2", "fly_release_id": "rel-1"},
+                image=PRIMARY,
+            ),
+            fly_machine(
+                "machine-worker",
+                process_group="worker",
+                metadata={"fly_platform_version": "v2"},
+                image=WORKER,
+            ),
+        ]
+        result = self._invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        updates = {
+            request["machine_id"]: request["body"]["config"]
+            for request in self.api.updates()
+        }
+        self.assertEqual(sorted(updates), ["machine-web", "machine-worker"])
+        web = updates["machine-web"]
+        self.assertEqual(web["metadata"]["fly_process_group"], "web")
+        self.assertEqual(web["metadata"]["fly_platform_version"], "v2")
+        self.assertEqual(web["metadata"]["fly_release_id"], "rel-1")
+        self.assertEqual(web["metadata"]["fly_app_module_key"], "web")
+        self.assertEqual(
+            sorted(container["name"] for container in web["containers"]),
+            ["app", "sidecar"],
+        )
+        self.assertEqual(updates["machine-worker"]["image"], WORKER)
+        final = {
+            machine["config"]["metadata"]["fly_app_module_key"]: machine["config"]
+            for machine in self.api.snapshot()
+        }
+        self.assertEqual(sorted(final), ["web", "worker"])
+        self.assertEqual(final["web"]["metadata"]["fly_process_group"], "web")
+        self.assertEqual(final["worker"]["metadata"]["fly_platform_version"], "v2")
+
+    def test_creates_missing_machines_with_full_declared_configs(self):
+        spec = full_spec()
+        self._flight_files(spec=spec)
+        self.machines = []
+        result = self._invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        creations = {
+            body["config"]["metadata"]["fly_app_module_key"]: body["config"]
+            for body in self.api.creations()
+        }
+        self.assertEqual(sorted(creations), ["web", "worker"])
+        web = creations["web"]
+        self.assertEqual(web["guest"], spec["machines"]["web"]["config"]["guest"])
+        self.assertEqual(web["env"], {"APP_MODE": "web"})
+        self.assertEqual(
+            web["services"], spec["machines"]["web"]["config"]["services"]
+        )
+        self.assertEqual(web["metadata"]["owner"], "platform")
+        containers = {container["name"]: container for container in web["containers"]}
+        self.assertEqual(sorted(containers), ["app", "sidecar"])
+        self.assertEqual(containers["app"]["image"], PRIMARY)
+        self.assertEqual(containers["sidecar"]["image"], SIDECAR)
+        self.assertEqual(containers["sidecar"]["entrypoint"], ["/bin/sidecar"])
+        self.assertEqual(
+            creations["worker"]["guest"],
+            spec["machines"]["worker"]["config"]["guest"],
+        )
+        self.assertEqual(creations["worker"]["schedule"], "hourly")
+        self.assertEqual(len(self.api.snapshot()), 2)
+
+    def test_two_consecutive_deployments_retain_full_machine_configs(self):
+        spec = full_spec()
+        self._flight_files(spec=spec)
+        self.machines = []
+        launch = [
+            fly_machine(
+                "machine-web",
+                process_group="web",
+                metadata={"fly_platform_version": "v2"},
+            ),
+            fly_machine(
+                "machine-worker",
+                process_group="worker",
+                metadata={"fly_platform_version": "v2"},
+            ),
+        ]
+        first = self._invoke(machines_after=launch)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.machines = self.api.snapshot()
+        second = self._invoke(machines_after=self.machines, seed=False)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        deploys = self._entries("deploy")
+        self.assertEqual(len(deploys), 2)
+        self.assertNotIn("--update-only", deploys[0]["args"])
+        self.assertIn("--update-only", deploys[1]["args"])
+
+        final = {
+            machine["config"]["metadata"]["fly_app_module_key"]: machine["config"]
+            for machine in self.api.snapshot()
+        }
+        self.assertEqual(sorted(final), ["web", "worker"])
+        web = final["web"]
+        self.assertEqual(web["guest"], spec["machines"]["web"]["config"]["guest"])
+        self.assertEqual(web["env"], {"APP_MODE": "web"})
+        self.assertEqual(web["services"], spec["machines"]["web"]["config"]["services"])
+        self.assertEqual(
+            web["restart"], spec["machines"]["web"]["config"]["restart"]
+        )
+        self.assertEqual(web["init"], spec["machines"]["web"]["config"]["init"])
+        self.assertEqual(web["metadata"]["owner"], "platform")
+        self.assertEqual(web["metadata"]["fly_process_group"], "web")
+        self.assertEqual(web["metadata"]["fly_platform_version"], "v2")
+        containers = {container["name"]: container for container in web["containers"]}
+        self.assertEqual(sorted(containers), ["app", "sidecar"])
+        self.assertEqual(containers["app"]["image"], PRIMARY)
+        self.assertEqual(containers["sidecar"]["image"], SIDECAR)
+        self.assertEqual(containers["sidecar"]["entrypoint"], ["/bin/sidecar"])
+        self.assertEqual(containers["sidecar"]["env"], {"SIDECAR": "enabled"})
+        self.assertEqual(containers["sidecar"]["user"], "1000")
+        worker = final["worker"]
+        self.assertEqual(
+            worker["guest"], spec["machines"]["worker"]["config"]["guest"]
+        )
+        self.assertEqual(worker["schedule"], "hourly")
+        self.assertEqual(worker["image"], WORKER)
+        self.assertEqual(worker["metadata"]["owner"], "platform")
+        self.assertEqual(worker["metadata"]["fly_process_group"], "worker")
+
+    def test_update_failure_returns_nonzero_and_does_not_report_success(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        self.api.fail_update = 500
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Fly Machines API", result.stderr)
+        self.assertIn("HTTP 500", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+        self.assertNotIn(TOKEN, result.stdout + result.stderr)
+
+    def test_create_failure_returns_nonzero_and_does_not_report_success(self):
+        self._flight_files()
+        self.machines = []
+        self.api.fail_create = 422
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Fly Machines API", result.stderr)
+        self.assertIn("HTTP 422", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+
+    def test_machines_api_authentication_failure_is_reported_without_the_token(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        self.api.fail_auth = True
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Machines API authentication failed", result.stderr)
+        self.assertNotIn(TOKEN, result.stdout + result.stderr)
+
+    def test_missing_field_after_update_fails_final_verification(self):
+        self._flight_files(spec=full_spec())
+        self.machines = [
+            fly_machine("machine-web", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        self.api.drop_field = "guest"
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did not retain the declared configuration", result.stderr)
+        self.assertIn("guest", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+
+    def test_surplus_managed_machine_during_api_reconciliation_fails(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        self.api.surplus_after_update = True
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("surplus module-managed Machine", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
 
     def test_explicit_deploy_container_wins_over_other_machine_images(self):
         spec = base_spec()

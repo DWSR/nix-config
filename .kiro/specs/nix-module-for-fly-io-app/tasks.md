@@ -70,7 +70,7 @@
   - Done when existing Machines have unique matches, surplus managed Machines cause failure, and missing declared Machines are identified for Task 3.8 to create.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
   - _Requirements: 2.2, 2.4, 4.4_
-- [ ] 3.8 Apply full Machine configs through the API
+- [x] 3.8 Apply full Machine configs through the API
   - Create missing declared Machines where supported, fully update every declared Machine after CLI deploy, preserve Fly Launch ownership metadata and all supported fields, and re-read final configurations.
   - Done when two consecutive deployments retain multi-container and arbitrary API fields and the final managed Machine count matches the declaration.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
