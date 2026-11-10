@@ -33,7 +33,7 @@ jobs:
           # nixbld users, and the daemon drops their store-copy requests, so
           # trust the build group for this disposable runner.
           extra_nix_config: |
-            extra-trusted-users = @nixbld
+            trusted-users = root runner @nixbld
             extra-substituters = https://nix-community.cachix.org
             extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
 
