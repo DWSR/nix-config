@@ -135,6 +135,8 @@ class StubMachinesAPI:
         self.fail_auth = False
         self.fail_create = None
         self.fail_update = None
+        self.fail_update_machine_key = None
+        self.ambiguous_create = False
         self.drop_field = None
         self.surplus_after_update = False
         self.lock = threading.Lock()
@@ -249,10 +251,24 @@ class StubMachinesAPI:
                     "config": copy.deepcopy(body["config"]),
                 }
                 self.machines[created] = machine
+                if self.ambiguous_create:
+                    self.ambiguous_create = False
+                    handler.reply(500, {"error": "create response lost"})
+                    return
                 handler.reply(200, machine)
                 return
             if method == "POST":
-                if self.fail_update:
+                config_body = (body or {}).get("config") or {}
+                metadata = config_body.get("metadata") or {}
+                wanted_key = (
+                    metadata.get("fly_app_module_key")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                if self.fail_update and (
+                    self.fail_update_machine_key is None
+                    or self.fail_update_machine_key == wanted_key
+                ):
                     handler.reply(self.fail_update, {"error": "update rejected"})
                     return
                 machine = self.machines.get(machine_id)
@@ -425,6 +441,22 @@ def full_spec():
         "metadata": {"owner": "platform"},
     }
     return spec
+
+
+def single_machine_spec(declared_mounts=None):
+    config = {"image": PRIMARY}
+    if declared_mounts is not None:
+        config["mounts"] = declared_mounts
+    return {
+        "name": APP,
+        "settings": {"primary_region": "ord"},
+        "machines": {
+            "web": {
+                "config": config,
+                "image": {"existingImage": PRIMARY},
+            }
+        },
+    }
 
 
 class FlyReconcileTests(unittest.TestCase):
@@ -1015,6 +1047,164 @@ class FlyReconcileTests(unittest.TestCase):
         self.assertIn("Fly Machines API", result.stderr)
         self.assertIn("HTTP 422", result.stderr)
         self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+
+    def test_failed_partial_update_returns_nonzero_and_retry_reuses_same_machines(self):
+        spec = full_spec()
+        self._flight_files(spec=spec)
+        self.machines = [
+            fly_machine("machine-web", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        self.api.fail_update = 500
+        self.api.fail_update_machine_key = "worker"
+        first = self._invoke()
+        self.assertNotEqual(first.returncode, 0)
+        self.assertIn("Machine 'worker'", first.stderr)
+        self.assertIn("no rollback", first.stderr)
+        self.assertIn("HTTP 500", first.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", first.stderr)
+        self.assertNotIn(TOKEN, first.stdout + first.stderr)
+
+        after_failure = {
+            machine["id"]: machine["config"] for machine in self.api.snapshot()
+        }
+        self.assertEqual(sorted(after_failure), ["machine-web", "machine-worker"])
+        self.assertEqual(after_failure["machine-web"]["env"], {"APP_MODE": "web"})
+        self.assertNotIn("env", after_failure["machine-worker"])
+        self.assertEqual(self.api.creations(), [])
+        update_attempts = len(self.api.updates())
+
+        self.api.fail_update = None
+        self.api.fail_update_machine_key = None
+        self.machines = self.api.snapshot()
+        retry = self._invoke(seed=False, machines_after=[])
+        self.assertEqual(retry.returncode, 0, retry.stderr)
+        final = {
+            machine["id"]: machine["config"] for machine in self.api.snapshot()
+        }
+        self.assertEqual(sorted(final), ["machine-web", "machine-worker"])
+        self.assertEqual(final["machine-worker"]["env"], {"APP_MODE": "worker"})
+        self.assertEqual(len(self.api.updates()), update_attempts + 2)
+        self.assertEqual(self.api.creations(), [])
+        self.assertFalse(
+            [request for request in self.api.requests if request["method"] == "DELETE"]
+        )
+        self.assertIn("fly-app-reconcile: deployed app", retry.stderr)
+
+    def test_ambiguous_create_is_adopted_by_retry_without_a_duplicate(self):
+        self._flight_files()
+        self.machines = []
+        self.api.ambiguous_create = True
+        first = self._invoke()
+        self.assertNotEqual(first.returncode, 0)
+        self.assertIn("Machine 'web'", first.stderr)
+        self.assertIn("no rollback", first.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", first.stderr)
+
+        created = self.api.snapshot()
+        self.assertEqual(len(created), 1)
+        created_id = created[0]["id"]
+        self.assertEqual(
+            created[0]["config"]["metadata"]["fly_app_module_key"], "web"
+        )
+
+        self.machines = created
+        retry = self._invoke(seed=False, machines_after=[])
+        self.assertEqual(retry.returncode, 0, retry.stderr)
+        final = {
+            machine["config"]["metadata"]["fly_app_module_key"]: machine["id"]
+            for machine in self.api.snapshot()
+        }
+        self.assertEqual(sorted(final), ["web", "worker"])
+        self.assertEqual(final["web"], created_id)
+        created_keys = [
+            body["config"]["metadata"]["fly_app_module_key"]
+            for body in self.api.creations()
+        ]
+        self.assertEqual(sorted(created_keys), ["web", "worker"])
+        self.assertFalse(
+            [request for request in self.api.requests if request["method"] == "DELETE"]
+        )
+        self.assertIn("fly-app-reconcile: deployed app", retry.stderr)
+
+    def test_mount_set_changes_require_replacement_without_mutation(self):
+        cases = {
+            "attach": (
+                [{"volume": "vol-new", "path": "/data"}],
+                None,
+            ),
+            "detach": (
+                None,
+                [{"volume": "vol-old", "path": "/data"}],
+            ),
+            "swap": (
+                [{"volume": "vol-new", "path": "/data"}],
+                [{"volume": "vol-old", "path": "/data"}],
+            ),
+        }
+        for label, (declared, existing) in cases.items():
+            with self.subTest(case=label):
+                if self.log.exists():
+                    self.log.unlink()
+                self._flight_files(spec=single_machine_spec(declared))
+                fields = {"process_group": "web", "image": PRIMARY}
+                if existing is not None:
+                    fields["mounts"] = existing
+                self.machines = [fly_machine("machine-web", **fields)]
+                self.api.reset(self.machines)
+                result = self._invoke(seed=False)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Machine 'web'", result.stderr)
+                self.assertIn("replacement-required", result.stderr)
+                self.assertIn("requires replacement", result.stderr)
+                self.assertIn("'mounts'", result.stderr)
+                self.assertIn("never deletes", result.stderr)
+                self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+                self.assertNotIn(TOKEN, result.stdout + result.stderr)
+                self.assertEqual(self.api.updates(), [])
+                self.assertEqual(len(self.api.snapshot()), 1)
+
+    def test_replacement_rejection_does_not_mutate_other_machines(self):
+        spec = base_spec()
+        spec["machines"]["web"]["config"] = {
+            "mounts": [{"volume": "vol-new", "path": "/data"}]
+        }
+        self._flight_files(spec=spec)
+        self.machines = [
+            fly_machine(
+                "machine-web",
+                process_group="web",
+                mounts=[{"volume": "vol-old", "path": "/data"}],
+            ),
+            fly_machine("machine-worker", process_group="worker", image=WORKER),
+        ]
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("replacement-required", result.stderr)
+        self.assertIn("Machine 'web'", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+        self.assertEqual(self.api.updates(), [])
+        self.assertEqual(self.api.creations(), [])
+        self.assertEqual(len(self.api.snapshot()), 2)
+
+    def test_mount_path_change_is_applied_in_place(self):
+        declared = [{"volume": "vol-one", "path": "/mnt/data"}]
+        self._flight_files(spec=single_machine_spec(declared))
+        self.machines = [
+            fly_machine(
+                "machine-web",
+                process_group="web",
+                image=PRIMARY,
+                mounts=[{"volume": "vol-one", "path": "/data"}],
+            )
+        ]
+        result = self._invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        updates = self.api.updates()
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["body"]["config"]["mounts"], declared)
+        self.assertEqual(len(self.api.snapshot()), 1)
+        self.assertIn("fly-app-reconcile: deployed app", result.stderr)
 
     def test_machines_api_authentication_failure_is_reported_without_the_token(self):
         self._flight_files()

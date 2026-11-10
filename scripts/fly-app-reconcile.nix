@@ -28,6 +28,23 @@
 # re-reads the managed set through the API and verifies that every declared
 # Machine carries its full declared configuration, image, and identity, and
 # that the managed count matches the declaration. It never deletes Machines.
+#
+# Fly can update an existing Machine in place for its image, guest,
+# environment, and service settings and most other config fields, but it
+# cannot attach, detach, or swap the volumes mounted on an existing Machine
+# (only a mount path may change).
+# Before any Machine is mutated the reconciler compares the declared and
+# existing mounted volume sets and rejects an in-place change with a named
+# replacement-required error, naming the Machine and the conflicting volumes.
+# It does not delete or recreate the Machine to work around that constraint.
+#
+# After the CLI stage the reconciler re-enumerates Machines through the
+# Machines API, not only through the CLI listing, before creating anything. If
+# an earlier run failed after the API accepted a create or update but before
+# the run observed the result, a retry maps the stable declaration identity to
+# the Machine that already exists and updates it instead of creating a
+# duplicate. A failed create or update reports the affected app and Machine,
+# states that the deployment is incomplete, and does not claim a rollback.
 # The Machines API defaults to https://api.machines.dev; `FLY_MACHINES_API`
 # overrides that base URL for tests and compatible endpoints.
 {
@@ -81,6 +98,10 @@ let
         def __init__(self, message, status):
             super().__init__(message)
             self.status = status
+
+
+    class ReplacementRequired(ReconcileError):
+        """A declared Machine change needs a replacement, not an in-place update."""
 
 
     def fail(message):
@@ -692,7 +713,15 @@ let
         payload = {"config": config}
         if region:
             payload["region"] = region
-        result = machines_api(app, "", token, method="POST", payload=payload)
+        try:
+            result = machines_api(app, "", token, method="POST", payload=payload)
+        except ReconcileError as error:
+            raise ReconcileError(
+                "Machine '{}' for app '{}' could not be created: {}; the "
+                "deployment is incomplete and no rollback was attempted".format(
+                    machine_name, app, error
+                )
+            ) from error
         machine_id = result.get("id") if isinstance(result, dict) else None
         if not isinstance(machine_id, str) or not machine_id.strip():
             fail(
@@ -711,13 +740,22 @@ let
 
 
     def update_machine(app, machine_name, machine_id, config, token):
-        machines_api(
-            app,
-            "/" + urllib.parse.quote(machine_id, safe=""),
-            token,
-            method="POST",
-            payload={"config": config},
-        )
+        try:
+            machines_api(
+                app,
+                "/" + urllib.parse.quote(machine_id, safe=""),
+                token,
+                method="POST",
+                payload={"config": config},
+            )
+        except ReconcileError as error:
+            raise ReconcileError(
+                "Machine '{}' for app '{}' could not be updated: {}; the "
+                "deployment is incomplete and no rollback was attempted; "
+                "retry to reconcile the same Machines".format(
+                    machine_name, app, error
+                )
+            ) from error
         print(
             redact(
                 "fly-app-reconcile: updated Machine '{}' for app '{}' "
@@ -814,6 +852,55 @@ let
         metadata[MODULE_IDENTITY_KEY] = machine_name
         config["metadata"] = metadata
         return config
+
+
+    def mounted_volumes(config, where):
+        """Return the sorted volume identities attached to a Machine config."""
+        mounts = config.get("mounts")
+        if mounts is None:
+            return []
+        if not isinstance(mounts, list):
+            fail("{} has an invalid mounts property".format(where))
+        volumes = []
+        for entry in mounts:
+            if not isinstance(entry, dict):
+                fail("{} has an invalid mount entry".format(where))
+            volume = entry.get("volume") or entry.get("name")
+            if not isinstance(volume, str) or not volume:
+                fail(
+                    "{} has a mount entry without a volume identity".format(where)
+                )
+            volumes.append(volume)
+        if len(set(volumes)) != len(volumes):
+            fail("{} mounts the same volume more than once".format(where))
+        return sorted(volumes)
+
+
+    def check_replacement(app, machine_name, desired, existing):
+        """Reject an in-place change that Fly only permits by replacement."""
+        if existing is None:
+            return
+        desired_volumes = mounted_volumes(
+            desired, "the declared Machine '{}'".format(machine_name)
+        )
+        existing_volumes = mounted_volumes(
+            existing, "Fly Machine '{}'".format(machine_name)
+        )
+        if desired_volumes == existing_volumes:
+            return
+        raise ReplacementRequired(
+            "Machine '{}' for app '{}' requires replacement: the immutable "
+            "'mounts' volume set cannot be attached, detached, or swapped on "
+            "an existing Machine (declared volumes: {}; existing volumes: "
+            "{}). This reconciler never deletes or recreates Machines; "
+            "declare a new logical Machine key or remove the Machine "
+            "manually.".format(
+                machine_name,
+                app,
+                ", ".join(desired_volumes) or "none",
+                ", ".join(existing_volumes) or "none",
+            )
+        )
 
 
     def container_configs(config, where):
@@ -1031,14 +1118,20 @@ let
                 environment,
                 token,
             )
-            deployed_machines = list_machines(flyctl, name, environment, token)
+            # Keep the CLI listing as a post-deploy health check, then
+            # re-enumerate through the Machines API before deciding what is
+            # missing. The API listing is authoritative for stable identities:
+            # it also sees a Machine whose create response was lost to an
+            # earlier run, which a retry must update instead of duplicating.
+            list_machines(flyctl, name, environment, token)
+            api_machines = list_api_machines(name, token)
             matches, missing, unmanaged = match_machines(
-                name, machines, deployed_machines
+                name, machines, api_machines
             )
             report_machine_set(name, matches, missing, unmanaged, token)
             existing_configs = {
                 machine_id: config
-                for machine_id, config, _region in deployed_machines
+                for machine_id, config, _region in api_machines
             }
             desired = {}
             for machine_name in sorted(machines):
@@ -1048,10 +1141,20 @@ let
                     resolved_machines.get(machine_name, {}),
                     existing_configs.get(matches.get(machine_name)),
                 )
+            # Validate every replacement-only change before mutating anything,
+            # so a rejected deployment leaves the managed set untouched.
+            for machine_name in sorted(machines):
+                if machine_name in matches:
+                    check_replacement(
+                        name,
+                        machine_name,
+                        desired[machine_name],
+                        existing_configs[matches[machine_name]],
+                    )
             region = next(
                 (
                     machine_region
-                    for _machine_id, _config, machine_region in deployed_machines
+                    for _machine_id, _config, machine_region in api_machines
                     if machine_region
                 ),
                 None,
@@ -1088,6 +1191,13 @@ let
                 file=sys.stderr,
             )
             return error.status
+        except ReplacementRequired as error:
+            print(
+                "fly-app-reconcile: replacement-required: "
+                + redact(str(error), token),
+                file=sys.stderr,
+            )
+            return 1
         except ReconcileError as error:
             print(
                 "fly-app-reconcile: " + redact(str(error), token),
