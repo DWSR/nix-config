@@ -758,7 +758,7 @@ test('live personal host renders consumer and root publisher ready mode', () => 
   assert.equal(rendered.publisherSurfaces.stateDirectory, rendered.runtimePaths.publisherState);
   assert.equal(rendered.publisherSurfaces.tokenFile, rendered.runtimePaths.publisherToken);
   assert.equal(rendered.consumerSurfaces.certificateFiles.includes(rendered.publicPaths.ca), true);
-  assert.equal(rendered.consumerSurfaces.settings.substituters.includes(publicSubstituter), true);
+  assert.equal(new Set(rendered.consumerSurfaces.settings.substituters).has(publicSubstituter), true);
   assert.equal(
     rendered.consumerSurfaces.settings['extra-substituters'].includes(communitySubstituter),
     true,
