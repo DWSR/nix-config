@@ -13,7 +13,7 @@
   - _Requirements: 1.3, 2.4, 3.2, 3.5, 4.4, 5.1_
 
 - [ ] 2. Build the declaration and image boundaries
-- [ ] 2.1 Define reusable app and Machine declarations
+- [x] 2.1 Define reusable app and Machine declarations
   - Provide app identity/settings, stable logical Machine keys, open JSON-compatible Machine fields, per-image existing-reference or derivation choice, and explicit deploy-container selection for multi-container Machines.
   - Done when a standalone module evaluation represents a single- and multi-container app without requiring a NixOS host.
   - _Boundary: `modules/fly-app.nix`_
