@@ -1,29 +1,29 @@
 # Implementation Plan
 
 - [ ] 1. Establish the external compatibility gates
-- [ ] 1.1 Prove the pinned self-contained OCI image contract on Linux
+- [x] 1.1 Prove the pinned self-contained OCI image contract on Linux
   - Add a build fixture using the pinned snapshotter `fromImage` with a complete `dockerTools` runtime closure; inspect the resulting OCI archive for runnable contents without a host store mount.
   - Done when the fixture builds and verifies the closure and pinned publisher interface; stop and request a requirement decision if the pinned hybrid path cannot produce it.
   - _Boundary: `tests/fly-app/image.test.nix`_
   - _Requirements: 3.2, 3.8_
-- [ ] 1.2 Create an executable Fly compatibility smoke harness
+- [x] 1.2 Create an executable Fly compatibility smoke harness
   - Set up an operator-token-only runner for an existing disposable Fly app, with redacted results and an initial image boot/registry check; later tasks add the full acceptance scenarios.
   - Done when the harness can probe Fly without storing or provisioning the token; live acceptance is required in Tasks 5.5 and 5.6.
   - _Boundary: `tests/fly-app/contract-smoke.sh`_
   - _Requirements: 1.3, 2.4, 3.2, 3.5, 4.4, 5.1_
 
 - [ ] 2. Build the declaration and image boundaries
-- [ ] 2.1 Define reusable app and Machine declarations
+- [x] 2.1 Define reusable app and Machine declarations
   - Provide app identity/settings, stable logical Machine keys, open JSON-compatible Machine fields, per-image existing-reference or derivation choice, and explicit deploy-container selection for multi-container Machines.
   - Done when a standalone module evaluation represents a single- and multi-container app without requiring a NixOS host.
   - _Boundary: `modules/fly-app.nix`_
   - _Requirements: 1.1, 1.2, 2.1, 2.2_
-- [ ] 2.2 Validate and serialize secret-free declarations
+- [x] 2.2 Validate and serialize secret-free declarations
   - Reject both or neither image sources where an image is required; preserve arbitrary supported Machine fields and keep the Fly token out of evaluation and generated specs.
   - Done when invalid choices fail evaluation and a valid declaration emits a store-safe app/Machine specification.
   - _Boundary: `modules/fly-app.nix`_
   - _Requirements: 2.2, 3.6, 3.7, 6.1, 6.2_
-- [ ] 2.3 (P) Produce local Fly-runnable OCI images
+- [x] 2.3 (P) Produce local Fly-runnable OCI images
   - Build a self-contained Linux base with `dockerTools` and feed it into the pinned `nix-snapshotter.buildImage`; expose the image/archive and publisher outputs without credential inputs.
   - Done when a derivation-backed fixture yields an OCI image whose runtime closure is present without host mounts.
   - _Depends: 1.1, 2.1_
@@ -31,13 +31,13 @@
   - _Requirements: 3.2, 6.1_
 
 - [ ] 3. Build per-app commands and deployment components
-- [ ] 3.1 Expose named Linux flake-app commands from the module
+- [x] 3.1 Expose named Linux flake-app commands from the module
   - Evaluate a named app map into `deploy-<app>` commands and create a two-app consumer flake fixture; reject name collisions and fix each command's app target.
   - Done when two independent apps are addressable through their own `nix run` outputs on Linux.
   - _Depends: 2.2_
   - _Boundary: `lib/fly-apps.nix`, `tests/fly-app/fixture/flake.nix`_
   - _Requirements: 4.1, 4.2_
-- [ ] 3.2 Supply runtime-only Fly credentials
+- [x] 3.2 Supply runtime-only Fly credentials
   - Read `FLY_API_TOKEN` after evaluation; reject missing/empty values and provide private temporary Docker-compatible credentials to the publisher with cleanup and redacted errors.
   - Done when a fixture token authenticates the runtime without appearing in derivations, persistent files, arguments, or diagnostics.
   - _Depends: 2.2_

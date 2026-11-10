@@ -28,6 +28,13 @@
   - _Depends: 1.1, 2.1_
   - _Requirements: 2.4_
 
+- [ ] 2.3 Publish the builder host-key pin
+  - Add the checked-in public host key at `certificates/linux-builder/ssh_host_ed25519_key.pub` from the provisioned guest's persistent `/var/lib/ssh/ssh_host_ed25519_key.pub`; never generate, mint, or commit the private host key.
+  - Treat the pin as operator-supplied public trust material: when the value is unavailable, record `environment-blocked: secret-material-blocked <name> (<source>)` rather than substituting a key.
+  - Done when the checked-in pin matches the guest's published host key and is available as the shared trust input for both client records.
+  - _Depends: 2.2_
+  - _Requirements: 3.1, 3.2_
+
 - [ ] 3. Wire Fabro Linux dispatch and enforce no local builds
 
 - [ ] 3.1 Extend the Fabro machines renderer for both builder records
@@ -52,6 +59,7 @@
   - Declare the personal Linux client private key in its own root-owned SOPS secret and reference only its runtime path and the pinned public builder host key in the machine record.
   - Preserve personal-host `max-jobs = 0`, the existing Darwin endpoint, and the local binary cache distributed-build policy.
   - Done when the personal Darwin configuration evaluates with both target systems and contains no private key value in the generated builders file or Nix store.
+  - _Depends: 2.3_
   - _Requirements: 3.2, 3.3_
 
 - [ ] 5. Integrate operator-managed secret and trust material
@@ -59,7 +67,7 @@
 - [ ] 5.1 Add builder secret-store and sync-command wiring
   - Add a distinct `host_linux_builder` SOPS recipient/rule and builder secret declarations for authorized client public keys and Tailscale OAuth material; use the operator-provisioned recipient, never a placeholder.
   - Create `scripts/linux-builder-sync-from-1password.nix` to encrypt operator-supplied builder values into the builder store and the personal client key into the personal encrypted store; it must not generate or mint values.
-  - Add the checked-in public host-key pin at `certificates/linux-builder/ssh_host_ed25519_key.pub` and update `scripts/fabro-sync-from-1password.nix` for the Fabro client key without storing private keys in the repository.
+  - Update `scripts/fabro-sync-from-1password.nix` for the Fabro client key without storing private keys in the repository.
   - Done when sync behavior is testable with fixture credentials/recipients and declarations refer only to runtime secret paths; no real secret is needed to run the checks.
   - _Requirements: 1.3, 3.1, 3.2_
 

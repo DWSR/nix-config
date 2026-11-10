@@ -257,7 +257,7 @@ in
     };
     cpus = 4;
     memory = "8GiB";
-    disk = "64GiB";
+    disk = "128GiB";
     suppressFirstLoginSetup = true;
     forward = {
       enable = true;
