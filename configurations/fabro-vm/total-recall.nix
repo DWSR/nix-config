@@ -108,6 +108,17 @@ let
       exit 1
     '';
   };
+  harnessWorkerAfter = [
+    "iii.service"
+    "total-recall-migrate.service"
+    "iii-database.service"
+    "iii-queue.service"
+    "iii-cron.service"
+  ];
+  harnessWorkerEnvironment = {
+    III_URL = "ws://${cfg.iiiHost}:${toString cfg.iiiPort}";
+    TOTAL_RECALL_QUEUE_TOPIC = cfg.queueTopic;
+  };
 in
 {
   options.fabro.totalRecall = {
@@ -298,6 +309,40 @@ in
           cfg.databaseName
         ];
         Restart = "on-failure";
+      };
+    };
+
+    systemd.services.total-recall-harness-ingestion = {
+      description = "Validate and enqueue total-recall harness events";
+      wantedBy = [ "multi-user.target" ];
+      after = harnessWorkerAfter;
+      requires = harnessWorkerAfter;
+      environment = harnessWorkerEnvironment;
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-harness-ingestion;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
+
+    systemd.services.total-recall-harness-event-persistence = {
+      description = "Persist queued total-recall harness events";
+      wantedBy = [ "multi-user.target" ];
+      after = harnessWorkerAfter;
+      requires = harnessWorkerAfter;
+      environment = harnessWorkerEnvironment // {
+        TOTAL_RECALL_DATABASE = cfg.databaseConnection;
+      };
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-harness-event-persistence;
+        Restart = "always";
+        RestartSec = 2;
       };
     };
 
