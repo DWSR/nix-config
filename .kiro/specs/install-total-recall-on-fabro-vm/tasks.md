@@ -150,7 +150,7 @@
   - _Boundary: configurations/fabro-vm/opencode.nix_
   - _Depends: 1.3, 4.4_
 
-- [ ] 7. (P) Add the svc:total-recall Tailscale Serve advertisement
+- [x] 7. (P) Add the svc:total-recall Tailscale Serve advertisement
   - Add a fourth `ExecStart` entry to `tailscale-serve` in `configurations/fabro-vm/tailscale.nix`: `serve --service=svc:total-recall --https=443 http://127.0.0.1:49134`, emitted only when `fabro.totalRecall.enable` is true and placed after the existing three
   - Keep the oneshot `wantedBy = [ "multi-user.target" ]` so the same handler is re-applied on every boot and converges when already applied; a failing fourth line must leave the earlier three applied while the unit reports failed and journals the service name
   - Add `wants` (not `requires`) and `after` entries for `iii.service` and the three total-recall worker units, keeping `tailscaled.service` and `tailscaled-autoconnect.service` required and the existing three lines byte-for-byte unchanged
