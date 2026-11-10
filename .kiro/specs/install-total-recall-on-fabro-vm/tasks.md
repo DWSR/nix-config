@@ -159,6 +159,7 @@
   - _Requirements: 6.1, 6.2, 6.3, 6.5, 6.6, 6.7, 6.8, 6.9_
   - _Boundary: configurations/fabro-vm/tailscale.nix_
   - _Depends: 4.4, 5.2_
+  - _Blocked: Task 9's stale flake assertion expects three Serve entries; unblock by updating it to assert four enabled entries and three disabled entries._
 
 - [ ] 8. Workstation capture and MCP clients
 
