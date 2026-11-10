@@ -19,6 +19,8 @@ function evaluateGuest() {
       dispatchOptions = vm.fabro.darwinBuilder;
       dispatchEnabled = vm.fabro.darwinBuilder.enable;
       distributedBuilds = vm.nix.distributedBuilds;
+      maxJobs = vm.nix.settings.max-jobs;
+      buildMachines = vm.nix.buildMachines;
       builders = vm.nix.settings.builders;
       buildersUseSubstitutes = vm.nix.settings.builders-use-substitutes;
       dispatchUnit = {
@@ -28,6 +30,7 @@ function evaluateGuest() {
         after = dispatch.after;
         wants = dispatch.wants;
         before = dispatch.before;
+        execStart = dispatch.serviceConfig.ExecStart;
       };
       daemonOrdering = {
         after = daemon.after;
@@ -42,6 +45,13 @@ function evaluateGuest() {
           owner = vm.sops.secrets."build-client-key".owner;
           group = vm.sops.secrets."build-client-key".group;
           restartUnits = vm.sops.secrets."build-client-key".restartUnits;
+        };
+        linuxClient = {
+          path = vm.sops.secrets."linux-builder-client-key".path;
+          mode = vm.sops.secrets."linux-builder-client-key".mode;
+          owner = vm.sops.secrets."linux-builder-client-key".owner;
+          group = vm.sops.secrets."linux-builder-client-key".group;
+          restartUnits = vm.sops.secrets."linux-builder-client-key".restartUnits;
         };
         host = {
           path = vm.sops.secrets."build-host-key".path;
@@ -92,8 +102,9 @@ function evaluateGuestWithDispatchDisabled() {
 }
 
 function assertBuilderSecretMappings(secrets) {
-  assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key');
+  assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh');
   assert.equal(secrets['build-host-key'], 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key');
+  assert.equal(secrets['linux-builder-client-key'], 'op://Infrastructure/Fabro Linux nix remote builder key/private key');
 }
 
 function assertSandboxBoundary({ wiringText, sandboxSource, imageSource }) {
@@ -103,10 +114,31 @@ function assertSandboxBoundary({ wiringText, sandboxSource, imageSource }) {
   assert.doesNotMatch(imageSource, forbidden);
 }
 
+test('guest dispatch options expose the dedicated Linux builder inputs', () => {
+  const config = evaluateGuest();
+
+  assert.equal(config.dispatchOptions.linuxMachine.hostName, 'linux-builder.tuxedo-musical.ts.net');
+  assert.equal(config.dispatchOptions.linuxMachine.system, 'aarch64-linux');
+  assert.equal(config.dispatchOptions.linuxMachine.maxJobs, 4);
+  assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
+  assert.match(config.dispatchOptions.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
+  assert.equal(config.dispatchOptions.machinesFile, '/run/fabro-darwin-builders/machines');
+  assert.match(config.dispatchUnit.execStart, /--linux-host-name linux-builder\.tuxedo-musical\.ts\.net/);
+  assert.match(config.dispatchUnit.execStart, /--linux-system aarch64-linux/);
+  assert.match(config.dispatchUnit.execStart, /--linux-max-jobs 4/);
+  assert.match(config.dispatchUnit.execStart, /--linux-client-key \/run\/secrets\/linux-builder-client-key/);
+  assert.match(config.dispatchUnit.execStart, /--linux-host-key \/nix\/store\/[^\s]+-source\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub/);
+});
+
 test('guest dispatch option defaults remain available when dispatch is disabled', () => {
   const { options, serviceExists } = evaluateGuestWithDispatchDisabled();
 
   assert.equal(options.enable, false);
+  assert.equal(options.linuxMachine.hostName, 'linux-builder.tuxedo-musical.ts.net');
+  assert.equal(options.linuxMachine.system, 'aarch64-linux');
+  assert.equal(options.linuxMachine.maxJobs, 4);
+  assert.equal(options.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
+  assert.match(options.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
   assert.equal(options.machine.hostName, 'mac-builder.tuxedo-musical.ts.net');
   assert.equal(options.machine.sshUser, 'nix-builder');
   assert.equal(options.machine.system, 'aarch64-darwin');
@@ -129,12 +161,20 @@ test('fabro-vm enables dispatch and Nix distributed builds from the real configu
   assert.equal(config.dispatchOptions.machine.speedFactor, 2);
   assert.equal(config.dispatchOptions.clientKeyPath, '/run/secrets/build-client-key');
   assert.equal(config.dispatchOptions.hostKeyPath, '/run/secrets/build-host-key');
+  assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
+  assert.match(config.dispatchOptions.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
   assert.equal(config.dispatchOptions.machinesFile, '/run/fabro-darwin-builders/machines');
   assert.equal(config.distributedBuilds, true);
+  assert.equal(config.maxJobs, 0);
+  assert.deepEqual(config.buildMachines, []);
   assert.equal(config.builders, `@${config.dispatchOptions.machinesFile}`);
   assert.ok(config.builders.startsWith('@'));
   assert.ok(!config.builders.includes('/nix/store/'));
   assert.equal(config.buildersUseSubstitutes, true);
+  assert.match(config.dispatchUnit.execStart, /--host-name mac-builder\.tuxedo-musical\.ts\.net/);
+  assert.match(config.dispatchUnit.execStart, /--system aarch64-darwin/);
+  assert.match(config.dispatchUnit.execStart, /--speed-factor 2/);
+  assert.ok(config.daemonOrdering.after.includes('fabro-darwin-builders.service'));
 });
 
 test('renderer unit ordering, daemon ordering, and tmpfiles provision the machines file', () => {
@@ -178,6 +218,13 @@ test('both build secrets are declared at root-only runtime paths with unit resta
     group: 'root',
     restartUnits: ['fabro-darwin-builders.service', 'nix-daemon.service'],
   });
+  assert.deepEqual(secrets.linuxClient, {
+    path: '/run/secrets/linux-builder-client-key',
+    mode: '0400',
+    owner: 'root',
+    group: 'root',
+    restartUnits: ['fabro-darwin-builders.service', 'nix-daemon.service'],
+  });
   assertBuilderSecretMappings(onePasswordSecrets);
 });
 
@@ -204,10 +251,12 @@ test('boundary assertions reject a missing 1Password mapping and leaked sandbox 
   const mappings = {
     'build-client-key': 'op://Infrastructure/Fabro nix remote builder key/private key',
     'build-host-key': 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key',
+    'linux-builder-client-key': 'op://Infrastructure/Fabro Linux nix remote builder key/private key',
   };
   const sandbox = { wiringText: '{}', sandboxSource: '', imageSource: '' };
 
   assert.throws(() => assertBuilderSecretMappings({ ...mappings, 'build-client-key': undefined }));
+  assert.throws(() => assertBuilderSecretMappings({ ...mappings, 'linux-builder-client-key': undefined }));
   assert.throws(() => assertSandboxBoundary({ ...sandbox, wiringText: '{"imageConfig":{"Env":["BUILDER_KEY=/run/secrets/build-client-key"]}}' }));
   assert.throws(() => assertSandboxBoundary({ ...sandbox, wiringText: '{"imageConfig":{"Env":["TAILSCALE_AUTH_KEY=... "]}}' }));
 });

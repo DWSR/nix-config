@@ -40,6 +40,20 @@ in
         default = 2;
       };
     };
+    linuxMachine = {
+      hostName = lib.mkOption {
+        type = lib.types.str;
+        default = "linux-builder.tuxedo-musical.ts.net";
+      };
+      system = lib.mkOption {
+        type = lib.types.str;
+        default = "aarch64-linux";
+      };
+      maxJobs = lib.mkOption {
+        type = lib.types.int;
+        default = 4;
+      };
+    };
     clientKeyPath = lib.mkOption {
       type = lib.types.str;
       default = config.sops.secrets.build-client-key.path;
@@ -47,6 +61,15 @@ in
     hostKeyPath = lib.mkOption {
       type = lib.types.str;
       default = config.sops.secrets.build-host-key.path;
+    };
+    linuxClientKeyPath = lib.mkOption {
+      type = lib.types.str;
+      default = config.sops.secrets.linux-builder-client-key.path;
+    };
+    linuxHostKeyPath = lib.mkOption {
+      type = lib.types.str;
+      default = "${toString ../..}/certificates/linux-builder/ssh_host_ed25519_key.pub";
+      description = "Pinned public SSH host key used to validate the Linux builder endpoint.";
     };
     machinesFile = lib.mkOption {
       type = lib.types.str;
@@ -60,6 +83,7 @@ in
     nix.settings = {
       builders = "@${cfg.machinesFile}";
       builders-use-substitutes = true;
+      max-jobs = 0;
     };
     systemd.services.fabro-darwin-builders = {
       description = "Render the Fabro Darwin Nix builder configuration";
@@ -80,7 +104,12 @@ in
             --max-jobs ${toString cfg.machine.maxJobs} \
             --speed-factor ${toString cfg.machine.speedFactor} \
             --client-key ${lib.escapeShellArg cfg.clientKeyPath} \
-            --host-key ${lib.escapeShellArg cfg.hostKeyPath}
+            --host-key ${lib.escapeShellArg cfg.hostKeyPath} \
+            --linux-host-name ${lib.escapeShellArg cfg.linuxMachine.hostName} \
+            --linux-system ${lib.escapeShellArg cfg.linuxMachine.system} \
+            --linux-max-jobs ${toString cfg.linuxMachine.maxJobs} \
+            --linux-client-key ${lib.escapeShellArg cfg.linuxClientKeyPath} \
+            --linux-host-key ${lib.escapeShellArg cfg.linuxHostKeyPath}
         '';
       };
     };
