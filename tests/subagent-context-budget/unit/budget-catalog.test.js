@@ -118,7 +118,7 @@ test('validateBudgetMetadata rejects host-specific and project-specific baseline
   metadata.minimalBaseline.instructionCategories = [
     'universal',
     'memory-mcpproxy',
-    'shopify',
+    'host-specific',
     'nix-config',
     'project-specific',
   ];
@@ -127,6 +127,11 @@ test('validateBudgetMetadata rejects host-specific and project-specific baseline
 
   assert.equal(result.ok, false);
   assert.deepEqual(result.errors, [
+    {
+      agent: '<minimalBaseline>',
+      field: 'instructionCategories.host-specific',
+      message: 'minimal read-only baseline must not include host-specific or project-specific instruction categories',
+    },
     {
       agent: '<minimalBaseline>',
       field: 'instructionCategories.nix-config',
