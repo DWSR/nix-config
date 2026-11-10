@@ -226,7 +226,6 @@ in
               "beam-free"
               "omen-alpha"
 
-              "deepseek-v4.1-flash"
               "glm-5.3-flash"
 
               # longcat-2.5-preview-free left the Go catalog; 2.0 is the
@@ -234,6 +233,23 @@ in
               "longcat-2.0"
             ]
           )
+          # DeepSeek V4.1 Flash is Fabro's default agent model. Pin max
+          # thinking on the deployment so every default call runs there; the
+          # fabro registry advertises only max so no request can send a
+          # conflicting level.
+          ++ [
+            {
+              model_name = "opencode-go/deepseek-v4.1-flash";
+              model_info.mode = "chat";
+              litellm_params = {
+                model = "openai/deepseek-v4.1-flash";
+                api_base = "https://opencode.ai/zen/go/v1";
+                api_key = "os.environ/OPENCODE_API_KEY";
+                reasoning_effort = "max";
+              }
+              // reasoningEffortAllowed;
+            }
+          ]
           # Big Pickle is not part of the Go catalog (opencode.ai/docs/go):
           # the stealth model serves on the Zen balance endpoint, which the
           # OpenCode API key reaches unchanged (usage draws from the balance

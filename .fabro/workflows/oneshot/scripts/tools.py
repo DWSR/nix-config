@@ -17,6 +17,97 @@ def run(cmd, check=True, env=None):
     return r.stdout.strip()
 
 
+def run_probe(label, cmd, timeout):
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "%s probe timed out after %d seconds" % (label, timeout)
+    except OSError as e:
+        return "%s probe could not run: %s" % (label, e)
+    if result.returncode == 0:
+        return ""
+    detail = (result.stderr or result.stdout).strip()
+    detail = re.sub(r"(https?://)[^/@\s]+@", r"\1[redacted]@", detail)
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        detail = detail.replace(token, "[redacted]")
+    return "%s probe failed: %s" % (label, detail[:600] or "exit status %d" % result.returncode)
+
+
+def github_rate_limit_blocker():
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        return ""
+    base = os.environ.get("ONESHOT_API_BASE", "https://api.github.com").rstrip("/")
+    req = urllib.request.Request(base + "/rate_limit", headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "fabro-oneshot-workflow",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            limits = json.loads(response.read()).get("resources", {}).get("core", {})
+    except urllib.error.HTTPError as e:
+        return "GitHub rate-limit probe failed: HTTP %d" % e.code
+    except (OSError, ValueError) as e:
+        return "GitHub rate-limit probe failed: %s" % type(e).__name__
+    if limits.get("remaining") == 0:
+        return "GitHub API core rate limit exhausted (reset at %s)" % limits.get("reset", "unknown")
+    return ""
+
+
+def github_reachability_blocker():
+    return run_probe("GitHub reachability", ["git", "ls-remote", "origin", "HEAD"], 15)
+
+
+def diagnose_environment_blocker(issue_text):
+    blocker = github_reachability_blocker()
+    if not blocker:
+        blocker = run_probe("Nix flake input reachability", ["nix", "flake", "metadata", "--json", "--no-write-lock-file", "."], 45)
+    if not blocker:
+        blocker = github_rate_limit_blocker()
+    if not blocker and re.search(r"\bworkflow\b|\.fabro(?:/|\b)|\bfabro\b", issue_text, re.I):
+        blocker = run_probe("Fabro preflight", ["fabro", "preflight", ".fabro/workflows/oneshot/workflow.fabro"], 35)
+    return blocker
+
+
+def save_environment_blocker(issue_number, blocker, preflight_only=False):
+    if os.path.exists(STATE_PATH):
+        state = load_state()
+        if state.get("issue") != issue_number:
+            return "run state describes issue %s, not #%d" % (state.get("issue"), issue_number)
+    else:
+        state = {"issue": issue_number}
+    if blocker:
+        if preflight_only and not state.get("baseline_sha"):
+            state["preflight_only"] = True
+        state["environment_blocker"] = blocker
+    else:
+        state.pop("environment_blocker", None)
+        state.pop("preflight_only", None)
+    save_state(state)
+    return blocker
+
+
+def diagnose(argv):
+    issue_number = parse_issue_number(argv[0] if argv else "")
+    issue_text = open(ISSUE_PATH).read()
+    blocker = diagnose_environment_blocker(issue_text)
+    if blocker:
+        original_blocker = blocker
+        blocker = save_environment_blocker(issue_number, blocker, preflight_only=True) or original_blocker
+        print("oneshot diagnose: blocked: %s" % blocker, file=sys.stderr)
+        updates = {
+            "environment_blocker": blocker,
+            "stage_failure": "environment preflight: " + blocker,
+        }
+    else:
+        print("oneshot diagnose: network, Nix inputs, and provider preflight are healthy", file=sys.stderr)
+        updates = {}
+    updates["preflight_status"] = "BLOCKED" if blocker else "READY"
+    print(json.dumps({"outcome": "succeeded", "context_updates": updates}))
+
+
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -158,6 +249,17 @@ def record_fingerprint(issue_number, fingerprint, meta_sha):
 
 def prepare(argv):
     issue_number = parse_issue_number(argv[0] if argv else "")
+    blocker = github_reachability_blocker()
+    if blocker:
+        original_blocker = blocker
+        blocker = save_environment_blocker(issue_number, blocker, preflight_only=True) or original_blocker
+        print("oneshot prepare: environment blocked: %s" % blocker, file=sys.stderr)
+        print(json.dumps({"outcome": "succeeded", "context_updates": {
+            "preflight_status": "BLOCKED",
+            "environment_blocker": blocker,
+            "stage_failure": "environment preflight: " + blocker,
+        }}))
+        return
     owner, repo = origin_repo()
     run(["git", "fetch", "--prune", "--quiet", "origin"])
     issue = gh("GET", "/repos/%s/%s/issues/%d" % (owner, repo, issue_number))[1]
@@ -179,6 +281,8 @@ def prepare(argv):
             state = None
     if state is not None and state.get("issue") != issue_number:
         sys.exit("state file %s describes issue %s, not #%d; start a fresh run" % (STATE_PATH, state.get("issue"), issue_number))
+    if state is not None and state.get("preflight_only") is True:
+        state = None
 
     fingerprint = issue_fingerprint(title, issue.get("body"))
     meta, meta_sha = load_meta(issue_number)
@@ -200,7 +304,7 @@ def prepare(argv):
                 sys.exit("issue #%d changed after branch %s was published (fingerprint %s recorded %s, current %s); delete the branch and its pull request to regenerate" % (
                     issue_number, branch, str(meta.get("fingerprint", ""))[:12], meta.get("recorded_at", "unknown"), fingerprint[:12]))
 
-    if state is None:
+    if state is None or state.get("preflight_only") is True:
         missing = [l for l in (READY_LABEL, TYPE_LABEL) if l not in labels]
         if missing:
             sys.exit("issue #%d is not labelled %s (labels: %s); only correctly labelled oneshots may run" % (
@@ -222,6 +326,8 @@ def prepare(argv):
     else:
         gh("POST", "/repos/%s/%s/issues/%d/labels" % (owner, repo, issue_number), {"labels": [RUNNING_LABEL]})
 
+    state.pop("preflight_only", None)
+    state.pop("environment_blocker", None)
     state["issue_title"] = title
     state["issue_url"] = issue.get("html_url", "")
     write_issue_file(issue, owner, repo, labels)
@@ -314,6 +420,23 @@ def load_publish_meta(issue_number, state):
 
 
 def publish(argv):
+    draft = False
+    failure_reason = ""
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--draft":
+            draft = True
+        elif argv[i] == "--failure-reason" and i + 1 < len(argv):
+            i += 1
+            failure_reason = argv[i]
+        else:
+            sys.exit("usage: tools.py publish [--draft] [--failure-reason TEXT]")
+        i += 1
+    if draft and not failure_reason:
+        failure_reason = sys.stdin.read().strip()
+    if draft and not failure_reason:
+        sys.exit("draft salvage requires a concrete failure reason from stage_failure")
+
     state = load_state()
     owner, repo = origin_repo()
     slug = "%s/%s" % (owner, repo)
@@ -321,17 +444,31 @@ def publish(argv):
     trunk = state.get("trunk") or detect_trunk()
     branch = "oneshot/issue-%d" % issue_number
     title, summary = load_publish_meta(issue_number, state)
+    baseline = state.get("baseline_sha")
+    if not baseline:
+        sys.exit("state file %s has no baseline_sha; cannot verify the change to publish" % STATE_PATH)
 
     run(["git", "add", "-A"])
+    tree = run(["git", "write-tree"])
+    diff_status = subprocess.run(["git", "diff", "--quiet", baseline, tree]).returncode
+    if diff_status == 0:
+        reason = "working tree has no changes relative to baseline %s; refusing to publish an empty commit" % baseline[:12]
+        if failure_reason:
+            reason = "%s; salvage reason: %s" % (reason, failure_reason)
+        sys.exit(reason)
+    if diff_status != 1:
+        sys.exit("failed to compare the working tree with baseline %s" % baseline[:12])
+
     run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % trunk])
     base = run(["git", "rev-parse", "FETCH_HEAD"])
-    tree = run(["git", "write-tree"])
-    diff_status = subprocess.run(["git", "diff", "--quiet", base, tree]).returncode
-    if diff_status == 0:
-        sys.exit("working tree has no changes relative to %s; refusing to publish an empty commit" % trunk)
-    if diff_status != 1:
-        sys.exit("failed to compare the working tree with %s" % trunk)
-
+    trunk_diff = subprocess.run(["git", "diff", "--quiet", base, tree]).returncode
+    if trunk_diff == 0:
+        reason = "working tree has no changes relative to current trunk %s; refusing to publish an empty commit" % base[:12]
+        if failure_reason:
+            reason = "%s; salvage reason: %s" % (reason, failure_reason)
+        sys.exit(reason)
+    if trunk_diff != 1:
+        sys.exit("failed to compare the working tree with current trunk %s" % base[:12])
     ident = []
     if not run(["git", "config", "user.name"], check=False) or not run(["git", "config", "user.email"], check=False):
         ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
@@ -341,6 +478,11 @@ def publish(argv):
     run(["git", "push", "--quiet", "--force-with-lease", "origin",
          "%s:refs/heads/%s" % (commit, branch)])
 
+    body = summary
+    if failure_reason:
+        body += "\n\n## Salvage reason\n\n%s" % failure_reason
+    body += "\n\nCloses #%d\n" % issue_number
+
     def find_open_pr():
         query = urllib.parse.urlencode({"state": "open", "head": "%s:%s" % (owner, branch), "per_page": 100})
         _, prs = gh("GET", "/repos/%s/pulls?%s" % (slug, query))
@@ -349,14 +491,29 @@ def publish(argv):
             sys.exit("multiple open pull requests for head %s: %s" % (branch, [p["number"] for p in prs]))
         return prs[0] if prs else None
 
+    def set_draft(pr):
+        if bool(pr.get("draft")) == draft:
+            return pr
+        if not pr.get("node_id"):
+            sys.exit("open PR #%s is missing node_id; cannot change its draft state" % pr.get("number"))
+        mutation = "convertPullRequestToDraft" if draft else "convertPullRequestToReadyForReview"
+        query = 'mutation { %s(input: {pullRequestId: "%s"}) { pullRequest { isDraft } } }' % (
+            mutation, pr["node_id"])
+        response = gh("POST", "/graphql", {"query": query})[1]
+        updated = response.get("data", {}).get(mutation, {}).get("pullRequest")
+        if updated is None:
+            sys.exit("GitHub did not return the updated draft state for PR #%s" % pr.get("number"))
+        pr["draft"] = updated.get("isDraft", draft)
+        return pr
+
     pr = find_open_pr()
+    created_new = False
     if pr is None:
-        body = "%s\n\nCloses #%d\n" % (summary, issue_number)
         status, created = gh("POST", "/repos/%s/pulls" % slug, {
             "title": title,
             "head": branch,
             "base": trunk,
-            "draft": False,
+            "draft": draft,
             "body": body,
         }, expect=(201, 422))
         if status == 422:
@@ -365,9 +522,17 @@ def publish(argv):
                 sys.exit("pull request create for head %s returned 422 and no open PR exists" % branch)
         else:
             pr = created
+            created_new = True
         print("oneshot publish: created PR #%s %s -> %s" % (pr.get("number"), branch, trunk), file=sys.stderr)
     else:
         print("oneshot publish: reusing PR #%s for %s" % (pr.get("number"), branch), file=sys.stderr)
+
+    if not created_new:
+        _, updated = gh("PATCH", "/repos/%s/pulls/%s" % (slug, pr["number"]), {
+            "title": title,
+            "body": body,
+        })
+        pr = set_draft(updated or pr)
 
     print(json.dumps({"context_updates": {
         "pr_number": str(pr.get("number")),
@@ -377,10 +542,12 @@ def publish(argv):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <prepare|check|publish> [args]")
+        sys.exit("usage: tools.py <prepare|diagnose|check|publish> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd == "prepare":
         prepare(rest)
+    elif cmd == "diagnose":
+        diagnose(rest)
     elif cmd == "check":
         check(rest)
     elif cmd == "publish":

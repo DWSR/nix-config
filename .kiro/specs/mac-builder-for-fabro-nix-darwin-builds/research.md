@@ -74,6 +74,9 @@ ones this repository pins (`flake.lock`): nixpkgs `36fd15bbb657`, nix-darwin
 - MagicDNS FQDNs are `<machine-name>.<tailnet-dns-name>.ts.net`; this repository's
   tailnet DNS name is `tuxedo-musical.ts.net` (service URLs in
   `configurations/fabro-vm/tailscale.nix`). Source: tailscale.com/kb/1081/magicdns.
+- Removing all policy connectivity between two tagged nodes can remove peer
+  visibility and MagicDNS resolution through netmap trimming. A protocol-limited
+  grant retains visibility. Source: tailscale.com/kb/1087/device-visibility.
 - Backend states used by the nixpkgs autoconnect loop are
   `NeedsLogin`, `NeedsMachineAuth`, `Stopped`, and `Running`
   (nixpkgs `nixos/modules/services/networking/tailscale.nix`).

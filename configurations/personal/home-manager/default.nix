@@ -272,8 +272,6 @@ in
   };
 
   programs.ssh = {
-    includes = [ "~/.orbstack/ssh/config" ];
-
     settings = {
       "192.168.1.1" = {
         User = "root";

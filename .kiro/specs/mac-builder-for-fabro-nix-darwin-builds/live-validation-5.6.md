@@ -1,0 +1,32 @@
+# Task 5.6 Live Validation
+
+- Builder deploy/switch: PASS
+- Builder deploy/switch: PASS
+- Builder deploy/switch: PASS
+- Builder deploy/switch: PASS
+- Builder deploy/switch: PASS
+- Builder deploy/switch: PASS
+- Builder deploy/switch: PASS
+- Builder deploy/switch: PASS
+- Builder tailnet: Running with tag:nix-remote-builder
+- Builder OAuth startup: operator confirmed from LaunchDaemon logs
+- Builder LAN readiness: PASS
+- Builder deploy/switch: PASS
+- Builder tailnet: Running with tag:nix-remote-builder
+- Builder OAuth startup: operator confirmed from LaunchDaemon logs
+- Builder LAN readiness: PASS
+- Builder deploy/switch: PASS
+- Builder tailnet: Running with tag:nix-remote-builder
+- Builder OAuth startup: operator confirmed from LaunchDaemon logs
+- Builder LAN readiness: PASS
+- Guest switch: machines file is 0600 with one Darwin entry; nix-daemon restarted; Linux build passed
+- Builder deploy/switch: PASS
+- Builder tailnet: Running with tag:nix-remote-builder
+- Builder OAuth startup: operator confirmed from LaunchDaemon logs
+- Builder LAN readiness: PASS
+- Guest switch: machines file is 0600 with one Darwin entry; nix-daemon restarted; Linux build passed
+- Sandbox smoke: PASS; guest store contains /nix/store/x829kyvklig7164gnrgz7rd63bjvdbx8-fabro-darwin-build-smoke and localhost/fabro-sandbox@sha256:2c89508e47da38327e3898f636751bd5afd3cd924dbab08a72ae5027b2e390f1 resolves it inside a sandbox container
+- Builder deploy/switch: PASS
+- Builder tailnet: Running with tag:nix-remote-builder
+- Builder OAuth startup: operator confirmed from LaunchDaemon logs
+- Builder LAN readiness: PASS

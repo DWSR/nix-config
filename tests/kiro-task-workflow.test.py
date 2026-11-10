@@ -381,6 +381,13 @@ class KiroTaskBoundaryWiringTests(unittest.TestCase):
         self.assertIn('stdin_source="context.baseline_sha"', text)
         self.assertIn("tools.py boundary {{ inputs.spec }} {{ inputs.task }}", text)
 
+    def test_review_node_has_a_timeout_before_the_run_stall_watchdog(self):
+        text = WORKFLOW.read_text()
+        start = text.index("    review [\n")
+        block = text[start:].split("\n    ]", 1)[0]
+        self.assertIn('timeout="20m"', block)
+        self.assertIn("review -> blocked", text)
+
     def test_guard_resets_shared_paths_before_recording_the_baseline(self):
         text = WORKFLOW.read_text()
         self.assertIn("tools.py reset", text)

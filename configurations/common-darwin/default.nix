@@ -59,6 +59,13 @@
         # it explicitly here documents intent. Saves wall-time on fresh
         # `darwin-rebuild switch` when many derivations are pulled from
         max-substitution-jobs = 32;
+        max-jobs = 0;
+        # Pin mac-builder's sshd host key (base64 of
+        # `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMW8JhSiKip7iYGsp2cO3U0INcXy9bfCQSIOTGoz4OqI`)
+        # so the root nix-daemon verifies the builder instead of consulting
+        # the missing /var/root/.ssh/known_hosts.
+        builders = lib.mkForce "ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net aarch64-darwin ${config.sops.secrets.mac-builder-ssh-private-key.path} 8 1 - - c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1XOEpoU2lLaXA3aVlHc3AyY08zVTBJTmNYeTliZkNRU0lPVEdvejRPcUkK";
+        builders-use-substitutes = true;
         # Append nix-community via extra-* so the nix-darwin defaults
         # (cache.nixos.org + its public key) aren't re-declared and duplicated
         # in the rendered /etc/nix/nix.conf.

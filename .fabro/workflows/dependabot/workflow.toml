@@ -8,8 +8,11 @@ pr = ""
 ci_failures = ""
 reason = ""
 
+# DeepSeek V4.1 Flash is the default model with max thinking pinned by its
+# deployment; fail over to the ChatGPT-backed Luna whose deployment pins
+# xhigh effort.
 [run.model.fallbacks]
-"gpt-6-luna" = ["litellm:deepseek-v4.1-flash"]
+"deepseek-v4.1-flash" = ["litellm:gpt-6-luna"]
 
 # Full history: rebasing the PR branch onto the base branch needs the real merge base
 # across both histories.
