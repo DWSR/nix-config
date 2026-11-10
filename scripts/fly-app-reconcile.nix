@@ -20,9 +20,16 @@
 # written for Machines created through the Machines API) or a Fly Launch
 # process group (`fly_process_group` metadata). Machines with neither marker
 # are unrelated and are reported but excluded from the managed set. Ambiguous
-# matches and surplus managed Machines fail without deleting anything; missing
-# declared Machines are reported for the Machines API reconciliation step to
-# create. This stage never creates, mutates, or deletes Machines.
+# matches and surplus managed Machines fail without deleting anything.
+#
+# The reconciler then creates missing declared Machines and fully updates every
+# declared Machine through the Fly Machines API, preserving Fly Launch
+# ownership metadata and writing the module identity marker. Finally it
+# re-reads the managed set through the API and verifies that every declared
+# Machine carries its full declared configuration, image, and identity, and
+# that the managed count matches the declaration. It never deletes Machines.
+# The Machines API defaults to https://api.machines.dev; `FLY_MACHINES_API`
+# overrides that base URL for tests and compatible endpoints.
 {
   pkgs,
   flyctl ? pkgs.flyctl,
@@ -37,6 +44,8 @@ let
     """Render secret-free fly.toml and deploy the selected app image with flyctl."""
 
     import base64
+    import copy
+    import http.client
     import json
     import math
     import os
@@ -45,11 +54,17 @@ let
     import subprocess
     import sys
     import tempfile
+    import urllib.error
+    import urllib.parse
+    import urllib.request
 
     APP_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
     MODULE_IDENTITY_KEY = "fly_app_module_key"
     LAUNCH_IDENTITY_KEY = "fly_process_group"
+    MACHINES_API_ENV = "FLY_MACHINES_API"
+    MACHINES_API_DEFAULT = "https://api.machines.dev"
+    MACHINES_API_TIMEOUT_SECONDS = 30
     USAGE = (
         "usage: fly-app-reconcile --spec <secret-free-spec> "
         "--images <resolved-images>"
@@ -455,7 +470,10 @@ let
                 "Fly returned a Machine without a configuration for app '{}': "
                 "{}".format(app, machine_id)
             )
-        return machine_id, config
+        region = entry.get("region")
+        if not isinstance(region, str) or not region:
+            region = None
+        return machine_id, config, region
 
 
     def machine_identity(machine_id, config, app):
@@ -484,7 +502,7 @@ let
     def has_managed_identity(app, machines):
         return any(
             machine_identity(machine_id, config, app) is not None
-            for machine_id, config in machines
+            for machine_id, config, _region in machines
         )
 
 
@@ -493,7 +511,7 @@ let
         candidates = {}
         unmanaged = []
         surplus = []
-        for machine_id, config in machines:
+        for machine_id, config, _region in machines:
             identity = machine_identity(machine_id, config, app)
             if identity is None:
                 unmanaged.append(machine_id)
@@ -547,7 +565,7 @@ let
         if missing:
             lines.append(
                 "fly-app-reconcile: missing declared Machines for app '{}': {}; "
-                "the Machines API reconciliation step must create them".format(
+                "creating them through the Machines API".format(
                     app, " ".join(missing)
                 )
             )
@@ -581,6 +599,331 @@ let
         if not isinstance(machines, list):
             fail("Fly returned an invalid Machine list for app '{}'".format(app))
         return [machine_record(entry, app) for entry in machines]
+
+
+    def machines_api_base():
+        base = os.environ.get(MACHINES_API_ENV, MACHINES_API_DEFAULT).rstrip("/")
+        if not base:
+            fail("the Fly Machines API base URL must not be empty")
+        return base
+
+
+    def machines_api(app, suffix, token, method="GET", payload=None):
+        url = "{}/v1/apps/{}/machines{}".format(
+            machines_api_base(),
+            urllib.parse.quote(app, safe=""),
+            suffix,
+        )
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            method=method,
+            headers={
+                "Authorization": "Bearer " + token,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+        )
+        action = "read"
+        if method == "POST":
+            action = "create" if suffix == "" else "update"
+        try:
+            with urllib.request.urlopen(
+                request, timeout=MACHINES_API_TIMEOUT_SECONDS
+            ) as response:
+                status = response.status
+                body = response.read()
+        except urllib.error.HTTPError as error:
+            detail = ""
+            try:
+                detail = error.read().decode("utf-8", "replace").strip()
+            except (OSError, http.client.HTTPException):
+                pass
+            if error.code in (401, 403):
+                fail(
+                    "Fly Machines API authentication failed for app '{}'; "
+                    "check FLY_API_TOKEN".format(app)
+                )
+            message = (
+                "Fly Machines API {} request for app '{}' failed with HTTP "
+                "{}".format(action, app, error.code)
+            )
+            if detail:
+                message += ": " + detail
+            fail(redact(message, token))
+        except (
+            urllib.error.URLError,
+            http.client.HTTPException,
+            TimeoutError,
+            OSError,
+        ) as error:
+            reason = getattr(error, "reason", error)
+            fail(
+                "could not reach the Fly Machines API for app '{}': {}".format(
+                    app, reason
+                )
+            )
+        if status < 200 or status >= 300:
+            fail(
+                "Fly Machines API {} request for app '{}' returned HTTP "
+                "{}".format(action, app, status)
+            )
+        if not body:
+            return None
+        try:
+            return json.loads(body)
+        except ValueError:
+            fail("Fly Machines API returned invalid JSON for app '{}'".format(app))
+
+
+    def list_api_machines(app, token):
+        payload = machines_api(app, "", token)
+        machines = payload.get("machines") if isinstance(payload, dict) else payload
+        if not isinstance(machines, list):
+            fail(
+                "Fly Machines API returned an invalid Machine list for app "
+                "'{}'".format(app)
+            )
+        return [machine_record(entry, app) for entry in machines]
+
+
+    def create_machine(app, machine_name, config, region, token):
+        payload = {"config": config}
+        if region:
+            payload["region"] = region
+        result = machines_api(app, "", token, method="POST", payload=payload)
+        machine_id = result.get("id") if isinstance(result, dict) else None
+        if not isinstance(machine_id, str) or not machine_id.strip():
+            fail(
+                "the Fly Machines API did not return an ID for created "
+                "Machine '{}' of app '{}'".format(machine_name, app)
+            )
+        print(
+            redact(
+                "fly-app-reconcile: created Machine '{}' for app '{}' as "
+                "{}".format(machine_name, app, machine_id),
+                token,
+            ),
+            file=sys.stderr,
+        )
+        return machine_id
+
+
+    def update_machine(app, machine_name, machine_id, config, token):
+        machines_api(
+            app,
+            "/" + urllib.parse.quote(machine_id, safe=""),
+            token,
+            method="POST",
+            payload={"config": config},
+        )
+        print(
+            redact(
+                "fly-app-reconcile: updated Machine '{}' for app '{}' "
+                "({})".format(machine_name, app, machine_id),
+                token,
+            ),
+            file=sys.stderr,
+        )
+
+
+    def desired_machine_config(machine_name, machine, resolved, existing_config):
+        """Build the full Machines API config for one declared Machine."""
+        if not isinstance(machine, dict):
+            fail("Machine '{}' must be a JSON object".format(machine_name))
+        if not isinstance(resolved, dict):
+            fail(
+                "resolved image data for Machine '{}' is missing".format(
+                    machine_name
+                )
+            )
+        declared = machine.get("config", {})
+        if not isinstance(declared, dict):
+            fail("Machine '{}' config must be a JSON object".format(machine_name))
+        config = copy.deepcopy(declared)
+
+        containers = machine.get("containers", {})
+        if not isinstance(containers, dict):
+            fail(
+                "Machine '{}' containers must be a JSON object".format(machine_name)
+            )
+        resolved_containers = resolved.get("containers", {})
+        if not isinstance(resolved_containers, dict):
+            fail(
+                "resolved container image data for Machine '{}' is invalid".format(
+                    machine_name
+                )
+            )
+        if containers:
+            config.pop("image", None)
+            rendered = []
+            for container_name in sorted(containers):
+                container = containers[container_name]
+                if not isinstance(container, dict):
+                    fail(
+                        "container '{}' of Machine '{}' must be a JSON "
+                        "object".format(container_name, machine_name)
+                    )
+                container_config = container.get("config", {})
+                if not isinstance(container_config, dict):
+                    fail(
+                        "container '{}' of Machine '{}' config must be a JSON "
+                        "object".format(container_name, machine_name)
+                    )
+                entry = copy.deepcopy(container_config)
+                entry["name"] = container_name
+                entry["image"] = resolved_reference(
+                    resolved_containers.get(container_name),
+                    "container '{}' of Machine '{}'".format(
+                        container_name, machine_name
+                    ),
+                    container.get("image"),
+                )
+                rendered.append(entry)
+            config["containers"] = rendered
+        else:
+            config.pop("containers", None)
+            config["image"] = resolved_reference(
+                resolved.get("image"),
+                "Machine '{}'".format(machine_name),
+                machine.get("image"),
+            )
+
+        existing_metadata = {}
+        if existing_config is not None:
+            candidate = existing_config.get("metadata")
+            if candidate is not None:
+                if not isinstance(candidate, dict):
+                    fail(
+                        "Fly returned invalid metadata for declared Machine "
+                        "'{}'".format(machine_name)
+                    )
+                existing_metadata = candidate
+        declared_metadata = config.get("metadata", {})
+        if declared_metadata is None:
+            declared_metadata = {}
+        if not isinstance(declared_metadata, dict):
+            fail(
+                "Machine '{}' metadata must be a JSON object".format(machine_name)
+            )
+        metadata = copy.deepcopy(declared_metadata)
+        for key, value in existing_metadata.items():
+            if key.startswith("fly_") and key != MODULE_IDENTITY_KEY:
+                metadata[key] = value
+        metadata[MODULE_IDENTITY_KEY] = machine_name
+        config["metadata"] = metadata
+        return config
+
+
+    def container_configs(config, where):
+        containers = config.get("containers")
+        if not isinstance(containers, list):
+            fail("{} has no container list".format(where))
+        result = {}
+        for entry in containers:
+            if not isinstance(entry, dict):
+                fail("{} contains an invalid container".format(where))
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                fail("{} contains a container without a name".format(where))
+            if name in result:
+                fail(
+                    "{} contains duplicate container name '{}'".format(where, name)
+                )
+            result[name] = entry
+        return result
+
+
+    def compare_config(expected, actual, path, problems):
+        if not isinstance(actual, dict):
+            problems.append("{} is not an object".format(".".join(path)))
+            return
+        for key in sorted(expected):
+            where = path + [key]
+            label = ".".join(where)
+            if key not in actual:
+                problems.append("missing " + label)
+                continue
+            wanted = expected[key]
+            found = actual[key]
+            if key == "containers" and isinstance(wanted, list):
+                if not isinstance(found, list):
+                    problems.append(label + " is not a container list")
+                    continue
+                wanted_containers = container_configs({"containers": wanted}, label)
+                found_containers = container_configs({"containers": found}, label)
+                if sorted(wanted_containers) != sorted(found_containers):
+                    problems.append(
+                        "{} has containers {} but the declaration requires "
+                        "{}".format(
+                            label,
+                            sorted(found_containers),
+                            sorted(wanted_containers),
+                        )
+                    )
+                for name in sorted(wanted_containers):
+                    if name in found_containers:
+                        compare_config(
+                            wanted_containers[name],
+                            found_containers[name],
+                            where + [name],
+                            problems,
+                        )
+            elif isinstance(wanted, dict):
+                compare_config(wanted, found, where, problems)
+            elif wanted != found:
+                problems.append(
+                    "{} is {!r} but the declaration requires {!r}".format(
+                        label, found, wanted
+                    )
+                )
+
+
+    def verify_machines(app, declared, desired, token):
+        final_machines = list_api_machines(app, token)
+        matches, missing, _unmanaged = match_machines(app, declared, final_machines)
+        if missing:
+            fail(
+                "the Machines API reconciliation did not create declared "
+                "Machines for app '{}': {}".format(app, " ".join(missing))
+            )
+        if len(matches) != len(declared):
+            fail(
+                "Fly reports {} module-managed Machines for app '{}' but the "
+                "declaration requires {}".format(len(matches), app, len(declared))
+            )
+        configs = {
+            machine_id: config for machine_id, config, _region in final_machines
+        }
+        problems = []
+        for machine_name in sorted(declared):
+            compare_config(
+                desired[machine_name],
+                configs[matches[machine_name]],
+                [machine_name],
+                problems,
+            )
+        if problems:
+            fail(
+                "the Machines API reconciliation for app '{}' did not retain "
+                "the declared configuration: {}".format(app, "; ".join(problems))
+            )
+        return matches
+
+
+    def report_reconciled(app, matches, token):
+        mapping = " ".join(
+            "{}={}".format(identity, matches[identity]) for identity in sorted(matches)
+        )
+        print(
+            redact(
+                "fly-app-reconcile: verified {} module-managed Machines for "
+                "app '{}': {}".format(len(matches), app, mapping or "none"),
+                token,
+            ),
+            file=sys.stderr,
+        )
 
 
     def deploy(flyctl, app, config_path, reference, first_deploy, environment, token):
@@ -693,6 +1036,45 @@ let
                 name, machines, deployed_machines
             )
             report_machine_set(name, matches, missing, unmanaged, token)
+            existing_configs = {
+                machine_id: config
+                for machine_id, config, _region in deployed_machines
+            }
+            desired = {}
+            for machine_name in sorted(machines):
+                desired[machine_name] = desired_machine_config(
+                    machine_name,
+                    machines[machine_name],
+                    resolved_machines.get(machine_name, {}),
+                    existing_configs.get(matches.get(machine_name)),
+                )
+            region = next(
+                (
+                    machine_region
+                    for _machine_id, _config, machine_region in deployed_machines
+                    if machine_region
+                ),
+                None,
+            )
+            for machine_name in sorted(machines):
+                if machine_name in matches:
+                    update_machine(
+                        name,
+                        machine_name,
+                        matches[machine_name],
+                        desired[machine_name],
+                        token,
+                    )
+                else:
+                    create_machine(
+                        name,
+                        machine_name,
+                        desired[machine_name],
+                        region,
+                        token,
+                    )
+            verified = verify_machines(name, machines, desired, token)
+            report_reconciled(name, verified, token)
             print(
                 "fly-app-reconcile: deployed app '{}' with image '{}'".format(
                     name, reference
