@@ -23,7 +23,7 @@
   - Done when invalid choices fail evaluation and a valid declaration emits a store-safe app/Machine specification.
   - _Boundary: `modules/fly-app.nix`_
   - _Requirements: 2.2, 3.6, 3.7, 6.1, 6.2_
-- [ ] 2.3 (P) Produce local Fly-runnable OCI images
+- [x] 2.3 (P) Produce local Fly-runnable OCI images
   - Build a self-contained Linux base with `dockerTools` and feed it into the pinned `nix-snapshotter.buildImage`; expose the image/archive and publisher outputs without credential inputs.
   - Done when a derivation-backed fixture yields an OCI image whose runtime closure is present without host mounts.
   - _Depends: 1.1, 2.1_
