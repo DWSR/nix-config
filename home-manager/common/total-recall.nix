@@ -1,7 +1,12 @@
 {
+  config,
   lib,
+  pkgs,
   ...
 }:
+let
+  cfg = config.home.totalRecall;
+in
 {
   options.home.totalRecall = {
     enable = lib.mkOption {
@@ -35,6 +40,8 @@
 
     harnessEvents = lib.mkOption {
       type = lib.types.package;
+      default = pkgs.total-recall-harness-events;
+      defaultText = lib.literalExpression "pkgs.total-recall-harness-events";
       description = ''
         The `harness-events` capture CLI installed for the OpenCode and Pi
         harness adapters.
@@ -43,6 +50,8 @@
 
     opencodePlugin = lib.mkOption {
       type = lib.types.package;
+      default = pkgs.total-recall-opencode-plugin;
+      defaultText = lib.literalExpression "pkgs.total-recall-opencode-plugin";
       description = ''
         The total-recall OpenCode capture plugin installed under
         `~/.config/opencode/plugins/`.
@@ -51,6 +60,8 @@
 
     piExtension = lib.mkOption {
       type = lib.types.package;
+      default = pkgs.total-recall-pi-extension;
+      defaultText = lib.literalExpression "pkgs.total-recall-pi-extension";
       description = ''
         The total-recall Pi capture extension added to the Pi coding agent.
       '';
@@ -58,10 +69,29 @@
 
     mcpWorker = lib.mkOption {
       type = lib.types.package;
+      default = pkgs.total-recall-mcp-worker;
+      defaultText = lib.literalExpression "pkgs.total-recall-mcp-worker";
       description = ''
         The stdio `mcp-worker` package that exposes total-recall memory
         tools through mcpproxy.
       '';
     };
+  };
+
+  # Install the client packages only on hosts that opt in. The Pi option is
+  # declared by the Pi module, which every wired host imports alongside this
+  # one.
+  config = lib.mkIf cfg.enable {
+    home.packages = [ cfg.harnessEvents ];
+
+    # OpenCode auto-loads global plugins from
+    # `$XDG_CONFIG_HOME/opencode/plugins/`; ship the pinned upstream adapter
+    # file unchanged.
+    xdg.configFile."opencode/plugins/total-recall-harness-events.js".source =
+      "${cfg.opencodePlugin}/dist/index.js";
+
+    # Pi reads the extension manifest from the package root, which points at
+    # `./src/index.ts`; pass the root, not the source file.
+    programs.pi.coding-agent.extensions = [ "${cfg.piExtension}" ];
   };
 }
