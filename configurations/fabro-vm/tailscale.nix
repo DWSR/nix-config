@@ -20,7 +20,7 @@
 # 1Password secret affects future registrations, not the live bond of an
 # already-registered node.
 #
-# The two services are advertised by the tailscale-serve oneshot, which
+# The application services are advertised by the tailscale-serve oneshot, which
 # runs once tailscaled-autoconnect completes (Type=notify means that unit
 # returns only when the backend reaches Running). Each `tailscale serve
 # --service` invocation sets the web handler (TLS terminated by tailscaled
@@ -35,6 +35,7 @@
 }:
 let
   cfg = config.services.tailscale;
+  totalRecallEnabled = config.fabro.totalRecall.enable;
 in
 {
   services.tailscale = {
@@ -62,10 +63,22 @@ in
   };
 
   systemd.services.tailscale-serve = {
-    description = "Advertise the fabro, litellm, and opencode Tailscale Services";
+    description = "Advertise the Fabro application Tailscale Services";
     after = [
       "tailscaled.service"
       "tailscaled-autoconnect.service"
+    ]
+    ++ lib.optionals totalRecallEnabled [
+      "iii.service"
+      "total-recall-harness-ingestion.service"
+      "total-recall-harness-event-persistence.service"
+      "total-recall-session-post-processing.service"
+    ];
+    wants = lib.optionals totalRecallEnabled [
+      "iii.service"
+      "total-recall-harness-ingestion.service"
+      "total-recall-harness-event-persistence.service"
+      "total-recall-session-post-processing.service"
     ];
     requires = [ "tailscaled-autoconnect.service" ];
     wantedBy = [ "multi-user.target" ];
@@ -86,6 +99,9 @@ in
         "${lib.getExe cfg.package} serve --service=svc:fabro --https=443 http://127.0.0.1:32276"
         "${lib.getExe cfg.package} serve --service=svc:litellm --https=443 http://127.0.0.1:4000"
         "${lib.getExe cfg.package} serve --service=svc:opencode --https=443 http://127.0.0.1:4096"
+      ]
+      ++ lib.optionals totalRecallEnabled [
+        "${lib.getExe cfg.package} serve --service=svc:total-recall --https=443 http://127.0.0.1:49134"
       ];
     };
   };
