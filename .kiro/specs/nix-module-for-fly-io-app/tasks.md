@@ -43,7 +43,7 @@
   - _Depends: 2.2_
   - _Boundary: `scripts/fly-app-deploy.nix`_
   - _Requirements: 5.1, 5.2, 5.3, 6.1, 6.2, 6.3_
-- [ ] 3.3 Publish and inspect content-addressed images
+- [x] 3.3 Publish and inspect content-addressed images
   - Resolve existing images without republishing; for derivation images publish via the pinned Linux publisher and inspect registry manifest digests with the runtime token.
   - Done when first publication yields a confirmed app-scoped reference and auth/network inspection errors never masquerade as missing images.
   - _Depends: 2.3, 3.2_
