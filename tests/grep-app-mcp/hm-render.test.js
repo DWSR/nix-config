@@ -171,6 +171,7 @@ test('opencode MCP config keeps only the mcpproxy wrapper entry', () => {
       enabled: true,
       type: 'remote',
       url: 'http://127.0.0.1:8080/mcp',
+      timeout: 930000,
     });
   }
 });

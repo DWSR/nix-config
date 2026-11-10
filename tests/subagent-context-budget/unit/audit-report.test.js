@@ -210,24 +210,24 @@ test('buildAuditReport: host=all leaves hostSpecificAgents empty (R7.3)', () => 
 
 test('buildAuditReport: non-"all" host scope surfaces host-specific agents separately (R7.3)', () => {
   const metadata = loadFixture('budget-metadata.json');
-  metadata.host = 'shopify';
-  metadata.agents.shopify_helper = {
-    name: 'shopify_helper',
+  metadata.host = 'personal';
+  metadata.agents.personal_helper = {
+    name: 'personal_helper',
     source: 'host-markdown',
-    hostScope: 'shopify',
+    hostScope: 'personal',
     state: { kind: 'enforced', reason: 'default' },
-    instructionProfile: 'shopify-helper',
+    instructionProfile: 'personal-helper',
     permissionBudget: { read: 'allow', glob: 'allow' },
     capabilityRationale: [],
-    smokeClass: 'shopify-helper-task',
+    smokeClass: 'personal-helper-task',
   };
   const diagnostic = loadFixture('cost-report-valid.json');
 
   const result = buildAuditReport(metadata, diagnostic);
 
   assert.equal(result.ok, true);
-  assert.equal(result.value.host, 'shopify');
-  assert.deepEqual(result.value.summary.hostSpecificAgents, ['shopify_helper']);
+  assert.equal(result.value.host, 'personal');
+  assert.deepEqual(result.value.summary.hostSpecificAgents, ['personal_helper']);
   // Common agents are NOT in the host-specific list.
   for (const name of ['explore', 'general']) {
     assert.equal(result.value.summary.hostSpecificAgents.includes(name), false);
@@ -236,13 +236,13 @@ test('buildAuditReport: non-"all" host scope surfaces host-specific agents separ
 
 test('buildAuditReport: reports host-specific agents and declared permission surfaces (R7.3)', () => {
   const metadata = loadFixture('budget-metadata.json');
-  metadata.host = 'shopify';
+  metadata.host = 'personal';
   metadata.agents['stack-captain'] = {
     name: 'stack-captain',
     source: 'host-markdown',
-    hostScope: 'shopify',
+    hostScope: 'personal',
     state: { kind: 'enforced', reason: 'host-override' },
-    instructionProfile: 'shopify-stack',
+    instructionProfile: 'personal-stack',
     permissionBudget: {
       read: 'allow',
       glob: 'allow',
@@ -257,14 +257,14 @@ test('buildAuditReport: reports host-specific agents and declared permission sur
       mcpproxy_call_tool_write: 'allow',
     },
     capabilityRationale: ['GitHub-native Stack, Buildkite, local repair, and subagent orchestration'],
-    smokeClass: 'shopify-stack-plan',
+    smokeClass: 'personal-stack-plan',
   };
   metadata.agents['yb-sleuth'] = {
     name: 'yb-sleuth',
     source: 'host-markdown',
-    hostScope: 'shopify',
+    hostScope: 'personal',
     state: { kind: 'enforced', reason: 'host-override' },
-    instructionProfile: 'shopify-yugabyte-readonly',
+    instructionProfile: 'personal-yugabyte-readonly',
     permissionBudget: {
       read: 'allow',
       glob: 'allow',
@@ -275,7 +275,7 @@ test('buildAuditReport: reports host-specific agents and declared permission sur
       bash: { git: 'allow' },
     },
     capabilityRationale: ['repository history inspection and upstream documentation lookup'],
-    smokeClass: 'shopify-source-trace',
+    smokeClass: 'personal-source-trace',
   };
   const diagnostic = loadFixture('cost-report-valid.json');
 
