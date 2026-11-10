@@ -9,7 +9,10 @@
 # It lives under $FLY_APP_STATE_DIR, or $XDG_STATE_HOME/fly-app, or
 # ~/.local/state/fly-app. Intact state makes a missing or changed remote
 # digest a failure without republishing; absent or malformed state is treated
-# as a first deployment.
+# as a first deployment. Reads, registry verification, publication, and state
+# writes for one app run under an exclusive advisory lock file in that
+# directory, so concurrent commands for the same app serialize while commands
+# for different apps proceed independently.
 {
   pkgs,
   nixSnapshotter ? pkgs.nix-snapshotter,
@@ -26,6 +29,8 @@ let
     """Publish derivation-backed Fly images and inspect the Fly registry."""
 
     import base64
+    import contextlib
+    import fcntl
     import hashlib
     import http.client
     import json
@@ -94,6 +99,69 @@ let
 
     def publication_state_path(state_dir, app):
         return os.path.join(state_dir, app + ".json")
+
+
+    def publication_lock_path(state_dir, app):
+        return os.path.join(state_dir, app + ".lock")
+
+
+    @contextlib.contextmanager
+    def publication_lock(state_dir, app):
+        """Serialize one app's publication transaction across processes.
+
+        The advisory lock covers the publication-state read, registry
+        verification, image publication, and the state write, so overlapping
+        commands for the same app cannot both publish or overwrite each
+        other's records. Each app uses its own lock file, so different apps
+        proceed independently. The kernel releases the lock when the process
+        exits, so a crashed or interrupted publisher leaves no stale lock.
+        """
+        path = publication_lock_path(state_dir, app)
+        try:
+            os.makedirs(state_dir, mode=0o700, exist_ok=True)
+            descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as error:
+            fail(
+                "could not open the publication lock '{}' for app '{}': "
+                "{}".format(path, app, error)
+            )
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(
+                    "fly-app-publish: waiting for another publication of "
+                    + app
+                    + " to finish",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                except OSError as error:
+                    fail(
+                        "could not acquire the publication lock '{}': "
+                        "{}".format(path, error)
+                    )
+            except OSError as error:
+                fail(
+                    "could not acquire the publication lock '{}': {}".format(
+                        path, error
+                    )
+                )
+            try:
+                os.ftruncate(descriptor, 0)
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                os.write(descriptor, "{}\n".format(os.getpid()).encode("ascii"))
+            except OSError:
+                pass
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(descriptor)
 
 
     def load_publication_state(state_dir, app):
@@ -409,11 +477,22 @@ let
         unique = {}
         for entry in entries:
             unique.setdefault((entry["kind"], entry["source"]), entry)
-        state_dir = None
-        records = {}
-        if any(entry["kind"] == "derivation" for entry in unique.values()):
-            state_dir = publication_state_dir()
+        if not any(entry["kind"] == "derivation" for entry in unique.values()):
+            return resolve_unique_images(app, unique, token, environment, None, {})
+        state_dir = publication_state_dir()
+        with publication_lock(state_dir, app):
             records = load_publication_state(state_dir, app)
+            return resolve_unique_images(
+                app, unique, token, environment, state_dir, records
+            )
+
+
+    def resolve_unique_images(app, unique, token, environment, state_dir, records):
+        """Resolve deduplicated image sources to confirmed registry references.
+
+        The caller holds the app's publication lock whenever publication state
+        is involved, which is exactly when derivation images are present.
+        """
         changed = False
         images = []
         for key in sorted(unique):
