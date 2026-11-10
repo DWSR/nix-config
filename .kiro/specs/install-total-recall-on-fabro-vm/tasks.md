@@ -196,7 +196,7 @@
 
 - [ ] 9. Evaluated verification
 
-- [ ] 9.1 Assert guest unit coverage, boot enablement, restart policy, and ordering
+- [x] 9.1 Assert guest unit coverage, boot enablement, restart policy, and ordering
   - Extend `fabro-vm-guest-eval` in `flake.nix` with assertions for `postgresql.service`, `total-recall-migrate`, `total-recall-config`, `iii`, `iii-database`, `iii-queue`, `iii-cron`, the three total-recall workers, and `tailscale-serve`
   - Assert each runtime unit is `wantedBy multi-user.target`, runs as the `total-recall` user with `Restart=always`, and that the migration oneshot runs as `postgres` with `after`/`requires` on `postgresql.service`
   - Assert the chain `postgresql → total-recall-migrate → iii-database`, `total-recall-config → iii`, `iii → workers`, and the workers → `tailscale-serve` as `wants`
