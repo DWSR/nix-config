@@ -6,6 +6,7 @@
 }:
 let
   cfg = config.home.totalRecall;
+  harnessEventsBin = "${cfg.harnessEvents}/bin/harness-events";
 in
 {
   options.home.totalRecall = {
@@ -83,6 +84,27 @@ in
   # one.
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.harnessEvents ];
+
+    # Both harness adapters and interactive shells read the same capture
+    # endpoint and CLI path from the module's option values. The shell
+    # export is unconditional and fail-open: an unreachable guest endpoint
+    # never blocks a session, it only loses capture.
+    home.sessionVariables = {
+      III_URL = cfg.endpoint;
+      HARNESS_EVENTS_BIN = harnessEventsBin;
+    };
+
+    home.opencode.wrapperCommands = [
+      ''
+        export III_URL="${cfg.endpoint}"
+        export HARNESS_EVENTS_BIN="${harnessEventsBin}"
+      ''
+    ];
+
+    programs.pi.coding-agent.environment = {
+      III_URL.value = cfg.endpoint;
+      HARNESS_EVENTS_BIN.value = harnessEventsBin;
+    };
 
     # OpenCode auto-loads global plugins from
     # `$XDG_CONFIG_HOME/opencode/plugins/`; ship the pinned upstream adapter
