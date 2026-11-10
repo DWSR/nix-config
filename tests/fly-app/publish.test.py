@@ -2,6 +2,7 @@
 """Image publication, registry inspection, and publication-state tests for the Fly app publisher."""
 
 import base64
+import fcntl
 import hashlib
 import http.server
 import json
@@ -13,6 +14,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 
@@ -29,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 
 def describe(path):
@@ -60,6 +63,24 @@ entry = {
 }
 with open(os.environ["FLY_TEST_PUSH_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(entry) + "\\n")
+delay = float(os.environ.get("FLY_TEST_PUSH_DELAY", "0") or 0)
+if delay > 0:
+    time.sleep(delay)
+_, _, remainder = reference.partition("/")
+app, _, tag = remainder.partition(":")
+gate = os.environ.get("FLY_TEST_PUSH_GATE_DIR")
+if gate:
+    entered = Path(gate) / (app + ".entered")
+    release = Path(gate) / (app + ".release")
+    entered.write_text("", encoding="utf-8")
+    deadline = time.monotonic() + float(
+        os.environ.get("FLY_TEST_PUSH_GATE_TIMEOUT", "60")
+    )
+    while not release.exists():
+        if time.monotonic() > deadline:
+            print("stub nix2container: push gate timed out", file=sys.stderr)
+            raise SystemExit(70)
+        time.sleep(0.02)
 if os.environ.get("FLY_TEST_PUSH_FAIL"):
     print("stub nix2container: simulated push failure", file=sys.stderr)
     raise SystemExit(9)
@@ -70,8 +91,6 @@ body = json.dumps(
         "reference": reference,
     }
 ).encode("utf-8")
-_, _, remainder = reference.partition("/")
-app, _, tag = remainder.partition(":")
 (Path(os.environ["FLY_TEST_REGISTRY_DIR"]) / (app + "@@" + tag + ".json")).write_bytes(body)
 """
 
@@ -243,12 +262,12 @@ class FlyPublishTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def _spec(self, spec):
-        path = self.root / "spec.json"
+    def _spec(self, spec, name="spec.json"):
+        path = self.root / name
         path.write_text(json.dumps(spec) + "\n", encoding="utf-8")
         return path
 
-    def _invoke(self, package=None, *, spec, token=TOKEN, extra_env=None):
+    def _environment(self, *, token=TOKEN, extra_env=None):
         env = os.environ.copy()
         env.pop("DOCKER_CONFIG", None)
         env.pop("FLY_API_TOKEN", None)
@@ -263,13 +282,39 @@ class FlyPublishTests(unittest.TestCase):
         if token is not None:
             env["FLY_API_TOKEN"] = token
         env.update(extra_env or {})
+        return env
+
+    def _invoke(
+        self,
+        package=None,
+        *,
+        spec,
+        token=TOKEN,
+        extra_env=None,
+        spec_name="spec.json",
+        timeout=None,
+    ):
         return subprocess.run(
-            [str(package or self.package), "--spec", str(self._spec(spec))],
-            env=env,
+            [str(package or self.package), "--spec", str(self._spec(spec, spec_name))],
+            env=self._environment(token=token, extra_env=extra_env),
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout,
         )
+
+    def _start(self, *, spec, spec_name, extra_env=None, token=TOKEN):
+        process = subprocess.Popen(
+            [str(self.package), "--spec", str(self._spec(spec, spec_name))],
+            env=self._environment(token=token, extra_env=extra_env),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(
+            lambda: process.kill() if process.poll() is None else None
+        )
+        return process
 
     def _pushes(self):
         if not self.push_log.exists():
@@ -279,6 +324,18 @@ class FlyPublishTests(unittest.TestCase):
             for line in self.push_log.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+
+    def _pushes_for_app(self, app):
+        prefix = f"{self.host}/{app}:"
+        return [push for push in self._pushes() if push["reference"].startswith(prefix)]
+
+    def _wait_until(self, predicate, *, description, timeout=60.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.02)
+        self.fail(f"timed out waiting for {description}")
 
     def _derivation_spec(self, archive=None):
         return {
@@ -299,6 +356,16 @@ class FlyPublishTests(unittest.TestCase):
 
     def _state(self, app="fly-alpha"):
         return json.loads(self._state_file(app).read_text(encoding="utf-8"))
+
+    def _lock_file(self, app="fly-alpha"):
+        return self.root / "state" / (app + ".lock")
+
+    def _completed(self, process):
+        stdout, stderr = process.communicate(timeout=120)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(stderr.count(TOKEN), 0)
+        self.assertEqual(stdout.count(TOKEN), 0)
+        return json.loads(stdout)
 
     def _result(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -671,6 +738,174 @@ class FlyPublishTests(unittest.TestCase):
         for path in [self.package, *embedded]:
             self.assertNotIn(TOKEN.encode(), path.read_bytes(), str(path))
         self.assertNotIn(TOKEN, self.push_log.read_text() if self.push_log.exists() else "")
+
+    def test_app_lock_is_private_and_secret_free(self):
+        self._result(self._invoke(spec=self._derivation_spec()))
+        lock_file = self._lock_file()
+        self.assertTrue(lock_file.is_file())
+        self.assertEqual(stat.S_IMODE(lock_file.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(lock_file.parent.stat().st_mode), 0o700)
+        self.assertNotIn(TOKEN.encode("utf-8"), lock_file.read_bytes())
+        self.assertNotEqual(
+            self._lock_file("fly-alpha"), self._lock_file("fly-beta")
+        )
+
+    def test_another_app_lock_does_not_serialize_this_app(self):
+        self._result(self._invoke(spec=self._derivation_spec()))
+        other = self._lock_file("fly-beta")
+        other.parent.mkdir(parents=True, exist_ok=True)
+        holder = other.open("w+", encoding="utf-8")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        try:
+            payload = self._result(
+                self._invoke(
+                    spec=self._derivation_spec(self.other_archive),
+                    timeout=60,
+                )
+            )
+        finally:
+            fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        self.assertTrue(payload["images"][0]["published"])
+        self.assertEqual(len(self._pushes()), 2)
+
+    def test_same_app_publication_waits_for_the_app_lock(self):
+        self._result(self._invoke(spec=self._derivation_spec()))
+        lock_file = self._lock_file()
+        self.assertTrue(lock_file.is_file())
+        requests_before = len(self.state.requests())
+
+        holder = lock_file.open("r+", encoding="utf-8")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        process = self._start(
+            spec=self._derivation_spec(self.other_archive), spec_name="blocked.json"
+        )
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait(timeout=2.0)
+            self.assertEqual(len(self._pushes()), 1)
+            self.assertEqual(len(self.state.requests()), requests_before)
+        finally:
+            fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+
+        payload = self._completed(process)
+        self.assertTrue(payload["images"][0]["published"])
+        self.assertEqual(len(self._pushes()), 2)
+        self.assertGreater(len(self.state.requests()), requests_before)
+
+    def test_stale_lock_file_from_a_crashed_publisher_does_not_block(self):
+        lock_file = self._lock_file()
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_file.write_text("999999\n", encoding="utf-8")
+        payload = self._result(self._invoke(spec=self._derivation_spec()))
+        self.assertTrue(payload["images"][0]["published"])
+        self.assertEqual(len(self._pushes()), 1)
+
+    def test_failed_publication_releases_the_app_lock(self):
+        failed = self._invoke(
+            spec=self._derivation_spec(),
+            extra_env={"FLY_TEST_PUSH_FAIL": "1"},
+            timeout=60,
+        )
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("publication failed", failed.stderr)
+        self.assertTrue(self._lock_file().is_file())
+
+        payload = self._result(
+            self._invoke(spec=self._derivation_spec(), timeout=60)
+        )
+        self.assertTrue(payload["images"][0]["published"])
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            payload["images"][0]["digest"],
+        )
+
+    def test_concurrent_identical_publications_publish_once(self):
+        spec = self._derivation_spec()
+        delay = {"FLY_TEST_PUSH_DELAY": "1.0"}
+        first = self._start(spec=spec, spec_name="first.json", extra_env=delay)
+        second = self._start(spec=spec, spec_name="second.json", extra_env=delay)
+        payloads = [self._completed(first), self._completed(second)]
+        self.assertEqual(len(self._pushes()), 1)
+        self.assertEqual(
+            len({payload["images"][0]["reference"] for payload in payloads}), 1
+        )
+        self.assertEqual(
+            len({payload["images"][0]["digest"] for payload in payloads}), 1
+        )
+        self.assertEqual(
+            sorted(payload["images"][0]["published"] for payload in payloads),
+            [False, True],
+        )
+        self.assertEqual(
+            self._state()["images"][self._identity()]["digest"],
+            payloads[0]["images"][0]["digest"],
+        )
+
+    def test_concurrent_same_app_publications_keep_each_image_record(self):
+        delay = {"FLY_TEST_PUSH_DELAY": "1.0"}
+        first = self._start(
+            spec=self._derivation_spec(self.archive),
+            spec_name="one.json",
+            extra_env=delay,
+        )
+        second = self._start(
+            spec=self._derivation_spec(self.other_archive),
+            spec_name="two.json",
+            extra_env=delay,
+        )
+        payloads = [self._completed(first), self._completed(second)]
+        self.assertEqual(len(self._pushes()), 2)
+        records = self._state()["images"]
+        self.assertEqual(
+            set(records),
+            {self._identity(), self._identity(self.other_archive)},
+        )
+        for payload in payloads:
+            image = payload["images"][0]
+            identity = STORE_PATH.match(image["source"]).group(1)
+            self.assertEqual(records[identity]["reference"], image["reference"])
+            self.assertEqual(records[identity]["digest"], image["digest"])
+
+    def test_different_apps_publish_without_waiting_for_each_other(self):
+        gate = self.root / "gate"
+        gate.mkdir()
+        alpha = self._start(
+            spec=self._derivation_spec(),
+            spec_name="alpha.json",
+            extra_env={"FLY_TEST_PUSH_GATE_DIR": str(gate)},
+        )
+        self._wait_until(
+            lambda: (gate / "fly-alpha.entered").exists(),
+            description="the first app to enter its publication",
+        )
+        try:
+            beta = self._invoke(
+                spec={
+                    "name": "fly-beta",
+                    "machines": {
+                        "web": {"image": {"derivation": str(self.archive)}}
+                    },
+                },
+                spec_name="beta.json",
+                timeout=60,
+            )
+            self._result(beta)
+            self.assertEqual(len(self._pushes_for_app("fly-beta")), 1)
+            self.assertIsNone(alpha.poll())
+        finally:
+            (gate / "fly-alpha.release").write_text("", encoding="utf-8")
+
+        payload = self._completed(alpha)
+        self.assertTrue(payload["images"][0]["published"])
+        self.assertEqual(len(self._pushes_for_app("fly-alpha")), 1)
+        self.assertEqual(len(self._pushes()), 2)
+        self.assertTrue(self._lock_file("fly-alpha").is_file())
+        self.assertTrue(self._lock_file("fly-beta").is_file())
+        self.assertNotEqual(
+            self._lock_file("fly-alpha"), self._lock_file("fly-beta")
+        )
 
 
 if __name__ == "__main__":
