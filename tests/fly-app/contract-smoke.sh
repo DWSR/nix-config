@@ -50,6 +50,9 @@ for command in curl flyctl jq base64 mktemp; do
 done
 boot_timeout=${FLY_SMOKE_BOOT_TIMEOUT_SECONDS:-300}
 [[ $boot_timeout =~ ^[0-9]+$ ]] || fail 'FLY_SMOKE_BOOT_TIMEOUT_SECONDS must be an integer from 1 through 3600'
+boot_timeout=${boot_timeout#"${boot_timeout%%[!0]*}"}
+[[ -n $boot_timeout ]] || boot_timeout=0
+[[ ${#boot_timeout} -le 4 ]] || fail 'FLY_SMOKE_BOOT_TIMEOUT_SECONDS must be an integer from 1 through 3600'
 (( 10#$boot_timeout >= 1 && 10#$boot_timeout <= 3600 )) ||
   fail 'FLY_SMOKE_BOOT_TIMEOUT_SECONDS must be an integer from 1 through 3600'
 boot_timeout=$((10#$boot_timeout))
@@ -64,6 +67,7 @@ fly_token=$FLY_API_TOKEN
 registry_auth=$(printf 'x:%s' "$fly_token" | base64 | tr -d '\n') || fail 'could not prepare registry authentication'
 response=$tmp_dir/response
 machines=$tmp_dir/machines
+machines_before=$tmp_dir/machines-before
 fly_config=$tmp_dir/fly.toml
 printf 'app = "%s"\n' "$app" > "$fly_config"
 
@@ -97,6 +101,11 @@ fi
 printf 'Fly registry image: ok\n'
 unset registry_auth
 
+if ! http_get "Authorization: Bearer $fly_token" "https://api.machines.dev/v1/apps/$app/machines" "$machines_before" ||
+  ! jq -e 'type == "array"' "$machines_before" >/dev/null 2>&1; then
+  fail 'could not record the existing Fly Machines before deployment'
+fi
+
 if ! flyctl deploy --app "$app" --config "$fly_config" --image "$image" --now --ha=false --yes >/dev/null 2>&1; then
   fail 'Fly rejected the image deployment; command diagnostics were suppressed'
 fi
@@ -113,14 +122,16 @@ while :; do
   if ! jq -e 'type == "array"' "$machines" >/dev/null 2>&1; then
     fail 'Fly returned an invalid Machines response'
   fi
-  if jq -e --arg image "$image" \
-    '[.[] | select(.state == "started" and .config.image == $image)] | length > 0' \
-    "$machines" >/dev/null 2>&1; then
-    printf 'Fly Machine boot: ok (requested image is running)\n'
+  if jq -e --arg image "$image" --slurpfile before "$machines_before" \
+    '[.[] as $machine |
+      select($machine.state == "started" and $machine.config.image == $image) |
+      select([$before[0][] | select(.id == $machine.id and .version == $machine.version)] | length == 0)] |
+      length > 0' "$machines" >/dev/null 2>&1; then
+    printf 'Fly Machine boot: ok (newly created or updated Machine is running the requested image)\n'
     exit 0
   fi
   if (( SECONDS - start_time >= boot_timeout )); then
-    fail "no started Machine using the requested image appeared within ${boot_timeout} seconds"
+    fail "no newly created or updated Machine using the requested image appeared within ${boot_timeout} seconds"
   fi
   remaining=$((boot_timeout - (SECONDS - start_time)))
   if (( remaining <= 5 )); then
