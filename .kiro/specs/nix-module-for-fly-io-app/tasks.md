@@ -75,7 +75,7 @@
   - Done when two consecutive deployments retain multi-container and arbitrary API fields and the final managed Machine count matches the declaration.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 4.3_
-- [ ] 3.9 Handle immutable fields and retryable partial failure
+- [x] 3.9 Handle immutable fields and retryable partial failure
   - Reject Machine changes requiring replacement with a named error; re-enumerate stable identities after ambiguous or partial API failures rather than creating duplicates.
   - Done when a failed update returns nonzero and a retry resolves the same logical Machine without silent deletion.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
