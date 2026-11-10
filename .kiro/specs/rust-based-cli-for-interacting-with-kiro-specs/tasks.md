@@ -41,7 +41,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Boundary: requirements index (`scripts/kiro-spec/src/requirements.rs`)_
 
 - [ ] 3. tasks.md parsing and task model
-- [ ] 3.1 Parse checkbox entries, blocks, and metadata
+- [x] 3.1 Parse checkbox entries, blocks, and metadata
   - Lex source lines so an unindented `- [ ]`, `- [x]`, or `- [!]` checkbox plus space starts an entry, trying the `N.M` subtask form before the `N` major form.
   - Capture 1-based line, canonical identifier, level, parent, and description; consume the `*` optional marker; attach the indented `_Requirements`, `_Boundary`, `_Depends`, and `_Blocked` metadata bullets plus continuation prose to the entry block.
   - End a block at a blank line, the next candidate, or an ATX heading; skip fenced code blocks; keep source lines and `to_bytes()` byte-faithful.
