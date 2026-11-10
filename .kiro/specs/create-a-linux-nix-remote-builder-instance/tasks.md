@@ -28,7 +28,7 @@
   - _Depends: 1.1, 2.1_
   - _Requirements: 2.4_
 
-- [ ] 2.3 Publish the builder host-key pin
+- [x] 2.3 Publish the builder host-key pin
   - Add the checked-in public host key at `certificates/linux-builder/ssh_host_ed25519_key.pub` from the provisioned guest's persistent `/var/lib/ssh/ssh_host_ed25519_key.pub`; never generate, mint, or commit the private host key.
   - Treat the pin as operator-supplied public trust material: when the value is unavailable, record `environment-blocked: secret-material-blocked <name> (<source>)` rather than substituting a key.
   - Done when the checked-in pin matches the guest's published host key and is available as the shared trust input for both client records.
