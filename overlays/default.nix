@@ -118,12 +118,6 @@ in
       config.allowUnfree = true;
       overlays = [
         (_ufinal: uprev: {
-          attic-client = uprev.attic-client.overrideAttrs (old: {
-            patches = (old.patches or [ ]) ++ [ ./patches/attic-client-ca-cert.patch ];
-          });
-          attic-server = uprev.attic-server.override {
-            inherit (uprev) attic-client;
-          };
           gh-stack = uprev.gh-stack.overrideAttrs (_: rec {
             version = "0.1.1";
             src = uprev.fetchFromGitHub {

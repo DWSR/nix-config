@@ -25,10 +25,6 @@ keys:
   - &host_mac_builder age10puuz9e0nj3u9va2mg7uaad5m5v2sdfs73e97tgsd3r4cykk2gcsk5laq5
 
 creation_rules:
-  - path_regex: secrets/local-binary-cache\.personal\.yaml$
-    key_groups:
-      - age:
-          - *host_personal
   - path_regex: secrets/mcp\.personal\.yaml$
     key_groups:
       - age:

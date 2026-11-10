@@ -19,9 +19,7 @@ WORKFLOW_TOOLS = ROOT / ".fabro/workflows/kiro-task/scripts/tools.py"
 SHARED_PATHS = (
     "flake.nix",
     "flake.lock",
-    "configurations/common-darwin/local-binary-cache.nix",
     "configurations/personal/default.nix",
-    "tests/local-binary-cache/",
 )
 GIT_ENV = dict(
     os.environ,
@@ -150,9 +148,7 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
         self.tools = load_boundary_tools()
         self.write("flake.nix", "original flake\n")
         self.write("flake.lock", "original lock\n")
-        self.write("configurations/common-darwin/local-binary-cache.nix", "original module\n")
         self.write("configurations/personal/default.nix", "original personal\n")
-        self.write("tests/local-binary-cache/existing.sh", "original test\n")
         self.write("app.txt", "original app\n")
         self.write(
             ".kiro/specs/example/tasks.md",
@@ -160,8 +156,8 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
             "  - Done when the widget renders.\n"
             "- [ ] 2. Add flake checks for the widget\n"
             "  - Done when the flake check passes.\n"
-            "- [ ] 3. Extend the local-binary-cache Caddy proxy\n"
-            "  - Done when the proxy serves the cache.\n"
+            "- [ ] 3. Extend the personal host widget\n"
+            "  - Done when the widget runs on the personal host.\n"
             "- [ ] 4. Adjust the personal host defaults\n"
             "  - _Boundary: configurations/personal/default.nix_\n"
             "- [ ] 5. Enable the guest on the personal host\n"
@@ -178,8 +174,8 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
             "  - Completed when a dropped widget fails `nix flake check` with a named message.\n",
         )
         self.write(
-            ".kiro/specs/local-binary-cache/tasks.md",
-            "- [ ] 1. Define the cache contract\n"
+            ".kiro/specs/personal-host/tasks.md",
+            "- [ ] 1. Define the contract\n"
             "  - Done when the contract renders.\n",
         )
         git(self.root, "add", "--all")
@@ -208,9 +204,7 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
     def test_reverts_unclaimed_shared_infrastructure_edits(self):
         self.write("flake.nix", "stale flake\n")
         (self.root / "flake.lock").unlink()
-        self.write("configurations/common-darwin/local-binary-cache.nix", "stale module\n")
         self.write("configurations/personal/default.nix", "stale personal\n")
-        self.write("tests/local-binary-cache/stale.sh", "stale test\n")
 
         updates = self.boundary()
 
@@ -218,39 +212,27 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
         self.assertEqual(
             updates["boundary_reverted"].split(","),
             [
-                "configurations/common-darwin/local-binary-cache.nix",
                 "configurations/personal/default.nix",
                 "flake.lock",
                 "flake.nix",
-                "tests/local-binary-cache/stale.sh",
             ],
         )
         self.assertEqual(updates["boundary_protected"], "")
         self.assertEqual(self.read("flake.nix"), "original flake\n")
         self.assertEqual(self.read("flake.lock"), "original lock\n")
         self.assertEqual(
-            self.read("configurations/common-darwin/local-binary-cache.nix"),
-            "original module\n",
-        )
-        self.assertEqual(
             self.read("configurations/personal/default.nix"), "original personal\n"
         )
-        self.assertFalse((self.root / "tests/local-binary-cache/stale.sh").exists())
         self.assertEqual(git(self.root, "status", "--porcelain"), "")
 
     def test_keeps_flake_edits_the_task_claims(self):
         self.write("flake.nix", "task flake\n")
-        self.write("configurations/common-darwin/local-binary-cache.nix", "stale module\n")
 
         updates = self.boundary(task="2")
 
-        self.assertEqual(updates["boundary_status"], "reverted")
+        self.assertEqual(updates["boundary_status"], "claimed")
         self.assertEqual(updates["boundary_protected"], "flake.nix")
         self.assertEqual(self.read("flake.nix"), "task flake\n")
-        self.assertEqual(
-            self.read("configurations/common-darwin/local-binary-cache.nix"),
-            "original module\n",
-        )
 
     def test_keeps_flake_input_output_and_check_edits_the_task_delivers(self):
         for task, content in (
@@ -279,8 +261,8 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
         self.assertEqual(self.read("flake.nix"), "original flake\n")
         self.assertEqual(self.read("flake.lock"), "original lock\n")
 
-    def test_keeps_local_binary_cache_edits_the_task_claims(self):
-        self.write("configurations/personal/default.nix", "task caddy\n")
+    def test_keeps_personal_host_edits_the_task_claims(self):
+        self.write("configurations/personal/default.nix", "task personal host\n")
         self.write("flake.nix", "stale flake\n")
 
         updates = self.boundary(task="3")
@@ -290,7 +272,7 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
             updates["boundary_protected"], "configurations/personal/default.nix"
         )
         self.assertEqual(
-            self.read("configurations/personal/default.nix"), "task caddy\n"
+            self.read("configurations/personal/default.nix"), "task personal host\n"
         )
         self.assertEqual(self.read("flake.nix"), "original flake\n")
 
@@ -308,23 +290,23 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
         )
 
     def test_keeps_shared_edits_when_the_spec_owns_the_concern(self):
-        self.write("configurations/common-darwin/local-binary-cache.nix", "spec module\n")
+        self.write("configurations/personal/default.nix", "spec personal\n")
 
-        updates = self.boundary(task="1", spec="local-binary-cache")
+        updates = self.boundary(task="1", spec="personal-host")
 
         self.assertEqual(updates["boundary_status"], "claimed")
         self.assertEqual(
             updates["boundary_protected"],
-            "configurations/common-darwin/local-binary-cache.nix",
+            "configurations/personal/default.nix",
         )
         self.assertEqual(
-            self.read("configurations/common-darwin/local-binary-cache.nix"),
-            "spec module\n",
+            self.read("configurations/personal/default.nix"),
+            "spec personal\n",
         )
 
     def test_keeps_personal_host_edits_when_the_task_names_the_host(self):
         self.write("configurations/personal/default.nix", "task personal host\n")
-        self.write("configurations/common-darwin/local-binary-cache.nix", "stale module\n")
+        self.write("flake.nix", "stale flake\n")
 
         updates = self.boundary(task="5")
 
@@ -335,10 +317,7 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
         self.assertEqual(
             self.read("configurations/personal/default.nix"), "task personal host\n"
         )
-        self.assertEqual(
-            self.read("configurations/common-darwin/local-binary-cache.nix"),
-            "original module\n",
-        )
+        self.assertEqual(self.read("flake.nix"), "original flake\n")
 
     def test_leaves_task_files_outside_the_shared_paths_alone(self):
         self.write("app.txt", "task app\n")
