@@ -514,9 +514,9 @@ async function startObsidianMock(handler) {
         const body = typeof result.body === 'string' ? result.body : JSON.stringify(result.body);
         response.writeHead(result.status || 200, { 'content-type': 'application/json' });
         response.end(body);
-      } catch (error) {
+      } catch {
         response.writeHead(500, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        response.end(JSON.stringify({ error: 'mock handler failed' }));
       }
     });
   });
