@@ -37,6 +37,17 @@ def record(entry):
         log.write(json.dumps(entry) + "\\n")
 
 
+def count(command):
+    path = Path(os.environ["FLY_TEST_LOG"])
+    if not path.exists():
+        return 0
+    return sum(
+        1
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("command") == command
+    )
+
+
 def mode(path):
     return stat.S_IMODE(Path(path).stat().st_mode) if Path(path).exists() else None
 
@@ -53,12 +64,28 @@ if args[:2] == ["machine", "list"]:
     if "--app" not in args or args[args.index("--app") + 1] != "fly-alpha":
         print("stub flyctl: unexpected machine list target", file=sys.stderr)
         raise SystemExit(64)
-    record({"command": "machine-list", **common})
-    if os.environ.get("FLY_TEST_LIST_FAIL"):
+    attempt = count("machine-list")
+    record({"command": "machine-list", **common, "attempt": attempt})
+    failure = "FLY_TEST_LIST_FAIL_AFTER" if attempt else "FLY_TEST_LIST_FAIL"
+    if os.environ.get(failure):
         print("stub flyctl: simulated Machine listing failure " + token, file=sys.stderr)
         raise SystemExit(int(os.environ.get("FLY_TEST_LIST_STATUS", "4")))
-    sys.stdout.write(os.environ.get("FLY_TEST_MACHINES", "[]"))
+    payload = os.environ.get(
+        "FLY_TEST_MACHINES" if attempt == 0 else "FLY_TEST_MACHINES_AFTER",
+        os.environ.get("FLY_TEST_MACHINES", "[]"),
+    )
+    sys.stdout.write(payload)
     raise SystemExit(0)
+
+if args[:1] == ["machine"]:
+    record(
+        {
+            "command": "machine-" + (args[1] if len(args) > 1 else "unknown"),
+            **common,
+        }
+    )
+    print("stub flyctl: unexpected machine subcommand " + repr(args), file=sys.stderr)
+    raise SystemExit(64)
 
 if args[:2] == ["deploy", "--app"]:
     arguments = args[2:]
@@ -179,6 +206,17 @@ def base_spec():
     }
 
 
+def fly_machine(machine_id, process_group=None, module_key=None, **fields):
+    metadata = {}
+    if process_group is not None:
+        metadata["fly_process_group"] = process_group
+    if module_key is not None:
+        metadata["fly_app_module_key"] = module_key
+    config = {"metadata": metadata} if metadata else {}
+    config.update(fields)
+    return {"id": machine_id, "config": config}
+
+
 def resolved_payload(spec):
     machines = {}
     images = {}
@@ -275,9 +313,11 @@ class FlyReconcileTests(unittest.TestCase):
         *,
         token=TOKEN,
         list_fail=False,
+        list_fail_after=False,
         deploy_fail=False,
         deploy_status="7",
         list_status="4",
+        machines_after=None,
     ):
         env = os.environ.copy()
         env.pop("FLY_API_TOKEN", None)
@@ -290,10 +330,14 @@ class FlyReconcileTests(unittest.TestCase):
                 "FLY_TEST_LIST_STATUS": list_status,
             }
         )
+        if machines_after is not None:
+            env["FLY_TEST_MACHINES_AFTER"] = json.dumps(machines_after)
         if token is not None:
             env["FLY_API_TOKEN"] = token
         if list_fail:
             env["FLY_TEST_LIST_FAIL"] = "1"
+        if list_fail_after:
+            env["FLY_TEST_LIST_FAIL_AFTER"] = "1"
         if deploy_fail:
             env["FLY_TEST_DEPLOY_FAIL"] = "1"
         return env
@@ -320,6 +364,15 @@ class FlyReconcileTests(unittest.TestCase):
         ]
         return [entry for entry in entries if entry["command"] == command]
 
+    def _commands(self):
+        if not self.log.exists():
+            return []
+        return [
+            json.loads(line)["command"]
+            for line in self.log.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
     def _deploy(self):
         deploys = self._entries("deploy")
         self.assertEqual(len(deploys), 1, deploys)
@@ -333,7 +386,12 @@ class FlyReconcileTests(unittest.TestCase):
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
 
         machine_lists = self._entries("machine-list")
-        self.assertEqual(len(machine_lists), 1)
+        self.assertEqual(len(machine_lists), 2)
+        self.assertIn("matched Machines for app 'fly-alpha': none", result.stderr)
+        self.assertIn(
+            "missing declared Machines for app 'fly-alpha': web worker",
+            result.stderr,
+        )
         deploy = self._deploy()
         self.assertEqual(deploy["app"], APP)
         self.assertEqual(deploy["image"], PRIMARY)
@@ -384,6 +442,198 @@ class FlyReconcileTests(unittest.TestCase):
         deploy = self._deploy()
         self.assertIn("--ha=false", deploy["args"])
         self.assertIn("--update-only", deploy["args"])
+
+    def test_maps_declared_machine_keys_to_post_deploy_fly_ids(self):
+        self._flight_files()
+        self.machines = []
+        result = self._invoke(
+            machines_after=[
+                fly_machine("machine-web", process_group="web", image=PRIMARY),
+                fly_machine("machine-worker", process_group="worker", image=WORKER),
+            ]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("matched Machines", result.stderr)
+        self.assertIn("web=machine-web", result.stderr)
+        self.assertIn("worker=machine-worker", result.stderr)
+        self.assertNotIn("missing declared Machines", result.stderr)
+        self.assertNotIn(TOKEN, result.stdout + result.stderr)
+
+        machine_lists = self._entries("machine-list")
+        self.assertEqual(len(machine_lists), 2)
+        self.assertEqual(machine_lists[0]["attempt"], 0)
+        self.assertEqual(machine_lists[1]["attempt"], 1)
+        self.assertEqual(len(self._entries("deploy")), 1)
+
+    def test_module_identity_metadata_maps_machines_created_through_the_api(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="web", module_key="web"),
+            fly_machine("machine-worker", process_group="worker", module_key="worker"),
+        ]
+        result = self._invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("web=machine-web", result.stderr)
+        self.assertIn("worker=machine-worker", result.stderr)
+        self.assertNotIn("missing declared Machines", result.stderr)
+        self.assertNotIn("surplus", result.stderr)
+
+    def test_module_identity_metadata_takes_precedence_over_a_launch_group(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="app", module_key="web"),
+            fly_machine("machine-worker", process_group="worker", module_key="worker"),
+        ]
+        result = self._invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("web=machine-web", result.stderr)
+        self.assertIn("worker=machine-worker", result.stderr)
+
+    def test_unmanaged_machines_do_not_suppress_first_deploy_machine_creation(self):
+        self._flight_files()
+        stray = {"id": "machine-stray", "config": {"image": PRIMARY}}
+        self.machines = [stray]
+        result = self._invoke(
+            machines_after=[
+                stray,
+                fly_machine("machine-web", process_group="web"),
+                fly_machine("machine-worker", process_group="worker"),
+            ]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        deploy = self._deploy()
+        self.assertNotIn("--update-only", deploy["args"])
+        self.assertIn("ignoring unmanaged Machines", result.stderr)
+
+    def test_unmanaged_machines_are_reported_and_excluded_from_the_managed_set(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="web", image=PRIMARY),
+            fly_machine("machine-worker", process_group="worker", image=WORKER),
+            {"id": "machine-stray", "config": {"image": PRIMARY}},
+            {"id": "machine-debug", "config": {"metadata": {"owner": "operator"}}},
+        ]
+        result = self._invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ignoring unmanaged Machines", result.stderr)
+        self.assertIn("machine-debug", result.stderr)
+        self.assertIn("machine-stray", result.stderr)
+        self.assertIn("web=machine-web", result.stderr)
+        self.assertIn("worker=machine-worker", result.stderr)
+        self.assertNotIn("=machine-debug", result.stderr)
+        self.assertNotIn("=machine-stray", result.stderr)
+        self.assertNotIn("missing declared Machines", result.stderr)
+
+    def test_ambiguous_matches_are_rejected_without_deleting(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web-a", process_group="web"),
+            fly_machine("machine-web-b", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ambiguous matches for declared Machine 'web'", result.stderr)
+        self.assertIn("machine-web-a", result.stderr)
+        self.assertIn("machine-web-b", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+        self.assertEqual(len(self._entries("deploy")), 1)
+        self.assertEqual(set(self._commands()), {"machine-list", "deploy"})
+
+    def test_marker_and_launch_identity_for_one_declaration_are_ambiguous(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web-api", process_group="app", module_key="web"),
+            fly_machine("machine-web-launch", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ambiguous matches for declared Machine 'web'", result.stderr)
+        self.assertIn("machine-web-api", result.stderr)
+        self.assertIn("machine-web-launch", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+
+    def test_surplus_managed_machine_is_rejected_without_deleting(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+            fly_machine("machine-extra", process_group="cron"),
+            fly_machine("machine-batch", module_key="batch"),
+        ]
+        result = self._invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("surplus module-managed Machine", result.stderr)
+        self.assertIn("machine-extra", result.stderr)
+        self.assertIn("cron", result.stderr)
+        self.assertIn("machine-batch", result.stderr)
+        self.assertIn("batch", result.stderr)
+        self.assertIn("never deletes Machines", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+        self.assertEqual(len(self._entries("deploy")), 1)
+        self.assertEqual(set(self._commands()), {"machine-list", "deploy"})
+
+    def test_missing_declared_machines_are_identified_for_creation(self):
+        self._flight_files()
+        self.machines = []
+        result = self._invoke(
+            machines_after=[fly_machine("machine-web", process_group="web")]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("web=machine-web", result.stderr)
+        self.assertIn("missing declared Machines", result.stderr)
+        self.assertIn("worker", result.stderr)
+        self.assertNotIn("worker=machine-worker", result.stderr)
+        self.assertIn("fly-app-reconcile: deployed app", result.stderr)
+        self.assertEqual(self._commands().count("deploy"), 1)
+        self.assertEqual(set(self._commands()), {"machine-list", "deploy"})
+
+    def test_post_deploy_machine_listing_failure_returns_failure(self):
+        self._flight_files()
+        self.machines = [fly_machine("machine-web", process_group="web")]
+        result = self._invoke(list_fail_after=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not list Fly Machines", result.stderr)
+        self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+        self.assertNotIn(TOKEN, result.stdout + result.stderr)
+        self.assertEqual(len(self._entries("machine-list")), 2)
+        self.assertEqual(len(self._entries("deploy")), 1)
+
+    def test_malformed_machine_entries_fail_instead_of_succeeding(self):
+        cases = {
+            "missing id": [{"config": {"metadata": {"fly_process_group": "web"}}}],
+            "empty id": [{"id": "", "config": {}}],
+            "missing config": [{"id": "machine-web"}],
+            "non-object config": [{"id": "machine-web", "config": "not-an-object"}],
+            "non-string module identity": [
+                {"id": "machine-web", "config": {"metadata": {"fly_app_module_key": 3}}}
+            ],
+            "empty launch identity": [
+                {"id": "machine-web", "config": {"metadata": {"fly_process_group": ""}}}
+            ],
+        }
+        for label, machines in cases.items():
+            with self.subTest(case=label):
+                if self.log.exists():
+                    self.log.unlink()
+                self._flight_files()
+                self.machines = []
+                result = self._invoke(machines_after=machines)
+                self.assertNotEqual(result.returncode, 0, label)
+                self.assertIn("Fly", result.stderr)
+                self.assertNotIn("fly-app-reconcile: deployed app", result.stderr)
+                self.assertNotIn(TOKEN, result.stdout + result.stderr)
+
+    def test_reconciliation_never_attempts_a_machine_mutation(self):
+        self._flight_files()
+        self.machines = [
+            fly_machine("machine-web", process_group="web"),
+            fly_machine("machine-worker", process_group="worker"),
+        ]
+        result = self._invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(self._commands()), {"machine-list", "deploy"})
 
     def test_explicit_deploy_container_wins_over_other_machine_images(self):
         spec = base_spec()
