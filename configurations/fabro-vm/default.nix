@@ -104,8 +104,11 @@ in
       # sops.secrets below.
       "github-token" = "op://Private/GitHub/Tokens/Fabro";
       "tailscale-oauth-secret" = "op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret";
-      "build-client-key" = "op://Infrastructure/Fabro nix remote builder key/private key";
+      "build-client-key" =
+        "op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh";
       "build-host-key" = "op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key";
+      # Dedicated Fabro key for the NixOS Linux builder; keep distinct from Darwin credentials.
+      "linux-builder-client-key" = "op://Infrastructure/Fabro Linux nix remote builder key/private key";
       # The OpenCode v1 server's secrets (opencode.nix): a dedicated
       # GitHub PAT, its basic-auth server password, and the SSH
       # commit-signing key (a 1Password SSH Key item — multi-line value;
@@ -189,6 +192,17 @@ in
         };
         "build-host-key" = {
           path = "/run/secrets/build-host-key";
+          mode = "0400";
+          owner = "root";
+          group = "root";
+          restartUnits = [
+            "fabro-darwin-builders.service"
+            "nix-daemon.service"
+          ];
+        };
+
+        "linux-builder-client-key" = {
+          path = "/run/secrets/linux-builder-client-key";
           mode = "0400";
           owner = "root";
           group = "root";
