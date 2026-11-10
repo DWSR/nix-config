@@ -43,6 +43,7 @@
     ./starship.nix
     ./stylix.nix
     ./tailscale-serve.nix
+    ./total-recall.nix
     ./zellij.nix
     ./zsh.nix
 
