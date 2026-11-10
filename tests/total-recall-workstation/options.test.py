@@ -26,6 +26,9 @@ let
     }};
     modules = [
       {json.dumps(str(MODULE))}
+      # The module wires the Pi extension under `mkIf enable`; import the Pi
+      # module so the option exists even while the wiring is disabled.
+      flake.inputs.pi.homeModules.default
       {{
         home.username = "total-recall-test";
         home.homeDirectory = "/Users/total-recall-test";
