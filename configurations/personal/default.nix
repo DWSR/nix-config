@@ -4,6 +4,16 @@
   username,
   ...
 }:
+let
+  # The dedicated Linux-builder client store is operator-provisioned (see the
+  # design's Operator Provisioning section and
+  # scripts/linux-builder-sync-from-1password.nix). Until it exists, point
+  # sops-nix at an empty evaluation-only file so the host configuration still
+  # evaluates; activation fails closed when sops-install-secrets cannot
+  # decrypt it. No secret value is ever written here.
+  linuxBuilderClientStore = ../../secrets/linux-builder-client.personal.yaml;
+  linuxBuilderClientStoreForEvaluation = builtins.toFile "linux-builder-client-unprovisioned-secrets.yaml" "";
+in
 {
   imports = [
     ../common-darwin
@@ -20,6 +30,23 @@
     secrets.mac-builder-ssh-private-key = {
       sopsFile = ../../secrets/mac-builder-client.personal.yaml;
       key = "mac-builder-ssh-private-key";
+      owner = "root";
+      mode = "0400";
+    };
+
+    # Dedicated personal-host key for the NixOS Linux builder. It has its own
+    # encrypted store and root-only runtime file so the nix-daemon can
+    # authenticate to linux-builder without widening the mac-builder identity.
+    # Only the runtime path enters the generated machine record; the value is
+    # provisioned by the operator (see the design's Operator Provisioning
+    # section and scripts/linux-builder-sync-from-1password.nix).
+    secrets.linux-builder-client-key = {
+      sopsFile =
+        if builtins.pathExists linuxBuilderClientStore then
+          linuxBuilderClientStore
+        else
+          linuxBuilderClientStoreForEvaluation;
+      key = "linux-builder-client-key";
       owner = "root";
       mode = "0400";
     };

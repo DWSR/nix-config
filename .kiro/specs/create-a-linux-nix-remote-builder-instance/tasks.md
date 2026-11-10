@@ -54,7 +54,7 @@
 
 - [ ] 4. Configure the personal Mac Linux client
 
-- [ ] 4.1 Add the Linux machine record and dedicated client key wiring
+- [x] 4.1 Add the Linux machine record and dedicated client key wiring
   - Update `configurations/common-darwin/default.nix` to use a `pkgs.writeText` builders file referenced through `@file`, containing both the existing Darwin record and the Linux `ssh-ng` record with `aarch64-linux`, 4 jobs, and speed factor 1.
   - Declare the personal Linux client private key in its own root-owned SOPS secret and reference only its runtime path and the pinned public builder host key in the machine record.
   - Preserve personal-host `max-jobs = 0`, the existing Darwin endpoint, and the local binary cache distributed-build policy.
