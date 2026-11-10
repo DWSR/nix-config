@@ -2694,66 +2694,6 @@
                 touch $out
               '';
 
-          local-binary-cache-render =
-            let
-              publisherValidatorFixture = pkgs.writeShellScriptBin "local-binary-cache-publish" ''
-                exit 0
-              '';
-            in
-            pkgs.runCommand "local-binary-cache-render"
-              {
-                ATTIC_CLIENT_EXECUTABLE = pkgs.lib.getExe pkgs.unstable.attic-client;
-                ATTIC_CLIENT_SOURCE = pkgs.unstable.attic-client.src;
-                PUBLISHER_VALIDATOR_EXECUTABLE = pkgs.lib.getExe publisherValidatorFixture;
-                nativeBuildInputs = [
-                  pkgs.bash
-                  pkgs.nix
-                  pkgs.nodejs
-                  pkgs.openssl
-                  pkgs.sops
-                ];
-                moduleTest = import ./tests/local-binary-cache/module.test.nix { inherit pkgs; };
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export NIX_CONFIG="experimental-features = nix-command flakes"
-                cp -R ${./.} source
-                chmod -R u+w source
-                cd source
-                test -e "$moduleTest"
-                bash tests/local-binary-cache/module-errors.test.sh
-                node --test \
-                  tests/local-binary-cache/identity-artifacts.test.js \
-                  tests/local-binary-cache/outage-evidence.test.js \
-                  tests/local-binary-cache/outage-publisher-control.test.js \
-                  tests/local-binary-cache/outage-restore.test.js \
-                  tests/local-binary-cache/outage-runner.test.js \
-                  tests/local-binary-cache/outage-smoke.test.js \
-                  tests/local-binary-cache/publisher-runtime-render.test.js \
-                  tests/local-binary-cache/system-render.test.js
-                touch $out
-              '';
-
-          local-binary-cache-publisher =
-            pkgs.runCommand "local-binary-cache-publisher"
-              {
-                ATTIC_CLIENT_EXECUTABLE = pkgs.lib.getExe pkgs.unstable.attic-client;
-                ATTIC_CLIENT_SOURCE = pkgs.unstable.attic-client.src;
-                nativeBuildInputs = [
-                  pkgs.nix
-                  pkgs.nodejs
-                ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export NIX_CONFIG="experimental-features = nix-command flakes"
-                cp -R ${./.} source
-                chmod -R u+w source
-                cd source
-                node --test tests/local-binary-cache/publisher.test.js
-                touch $out
-              '';
-
           rtk-opencode-tests =
             pkgs.runCommand "rtk-opencode-tests"
               {

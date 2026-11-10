@@ -30,13 +30,11 @@ A task owns only the files needed for its own deliverable. These shared
 infrastructure paths belong to the repository, not to one task:
 
 - `flake.nix`, `flake.lock`
-- `configurations/common-darwin/local-binary-cache.nix`
 - `configurations/personal/default.nix`
-- `tests/local-binary-cache/`
 
 Change a path in that list only when this task's entry names the concern as its
 own deliverable (for example the task adds or registers a flake check, adds or
-updates a flake input or flake output, the spec is `local-binary-cache`, or the
+updates a flake input or flake output, the spec is `personal-host`, or the
 task changes the personal host). Merely running `nix flake check` as validation
 does not claim the flake files.
 Before you report, run `git diff --name-only` against the `baseline_sha` value in

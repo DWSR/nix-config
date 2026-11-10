@@ -13,7 +13,6 @@
     inputs.stylix.darwinModules.stylix
 
     ./1password.nix
-    ./local-binary-cache.nix
     ./pared.nix
     ./slack.nix
     ./sqlite-backup-verify.nix

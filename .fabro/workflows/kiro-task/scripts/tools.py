@@ -38,17 +38,9 @@ PROTECTED = (
         ),
     },
     {
-        "name": "local-binary-cache",
-        "paths": (
-            "configurations/common-darwin/local-binary-cache.nix",
-            "tests/local-binary-cache/",
-        ),
-        "claims": ("local-binary-cache", "local binary cache", "caddy"),
-    },
-    {
         "name": "personal-host",
         "paths": ("configurations/personal/default.nix",),
-        "claims": ("personal host", "personal/default.nix", "local-binary-cache", "caddy"),
+        "claims": ("personal host", "personal-host", "personal/default.nix"),
     },
 )
 
