@@ -123,7 +123,7 @@
 
 - [ ] 5. Session post-processing
 
-- [ ] 5.1 (P) Add the total-recall-env sops template
+- [x] 5.1 (P) Add the total-recall-env sops template
   - Add `sops.templates."total-recall-env"` in `configurations/fabro-vm/default.nix` exporting `TOTAL_RECALL_POST_PROCESSING_OPENAI_API_TOKEN=${config.sops.placeholder."litellm-master-key"}` with `restartUnits = [ "total-recall-session-post-processing.service" ]`
   - Reuse the already-declared `litellm-master-key` secret that `litellm-env` renders; add no new secret, no new `fabro.onePasswordSecrets` entry, and no literal value
   - Leave the operator-side sync to the design's `## Operator Provisioning` row; this task only wires the placeholder
