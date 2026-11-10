@@ -7,6 +7,7 @@ pkgs.writeShellApplication {
     git
     gnugrep
     jq
+    openssh
     sops
   ];
   text = ''
@@ -78,7 +79,7 @@ pkgs.writeShellApplication {
     CLIENT_ID_URI='op://Infrastructure/mac-builder Tailscale OAuth/Client ID'
     CLIENT_SECRET_URI='op://Infrastructure/mac-builder Tailscale OAuth/Client Secret'
     AUTHORIZED_KEYS_URI='op://Infrastructure/mac-builder authorized keys/notesPlain'
-    SSH_PRIVATE_KEY_URI='op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key'
+    SSH_PRIVATE_KEY_URI='op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key?ssh-format=openssh'
     if ! client_id="$(op read --no-newline "$CLIENT_ID_URI" 2>/dev/null)"; then
       echo "mac-builder-sync-from-1password: error: failed to resolve Tailscale OAuth Client ID" >&2
       echo "  URI: $CLIENT_ID_URI" >&2
@@ -109,11 +110,28 @@ pkgs.writeShellApplication {
       exit 3
     fi
 
+    # OpenSSH rejects a private key whose final line has no newline, and
+    # command substitution strips trailing newlines; restore one before
+    # validating and storing the key. The macOS ssh client also rejects
+    # PKCS#8 Ed25519, so require the OpenSSH container explicitly rather
+    # than accepting whatever the Nix ssh-keygen can parse.
+    ssh_private_key="$(printf '%s' "$ssh_private_key" | tr -d '\r')"
+    key_file="$tmpdir/ssh-private-key"
+    printf '%s\n' "$ssh_private_key" > "$key_file"
+    chmod 0600 "$key_file"
+    if [[ "$(head -n 1 "$key_file")" != "-----BEGIN OPENSSH PRIVATE KEY-----" ]] \
+      || ! ssh-keygen -y -f "$key_file" >/dev/null 2>&1; then
+      echo "mac-builder-sync-from-1password: error: mac-builder SSH private key is not a valid OpenSSH key" >&2
+      echo "  Ensure the 1Password reference includes ?ssh-format=openssh" >&2
+      echo "  URI: $SSH_PRIVATE_KEY_URI" >&2
+      exit 3
+    fi
+
     # Quote values as JSON strings; JSON string syntax is valid YAML 1.2.
     printf '%s' "$client_id" | jq -Rs . > "$tmpdir/client-id.json"
     printf '%s' "$client_secret" | jq -Rs . > "$tmpdir/client-secret.json"
     printf '%s' "$authorized_keys" | jq -Rs . > "$tmpdir/authorized-keys.json"
-    printf '%s' "$ssh_private_key" | jq -Rs . > "$tmpdir/ssh-private-key.json"
+    printf '%s\n' "$ssh_private_key" | jq -Rs . > "$tmpdir/ssh-private-key.json"
     {
       printf 'builder-tailscale-oauth-client-id: '
       tr -d '\n' < "$tmpdir/client-id.json"
