@@ -764,7 +764,7 @@ test('live personal host renders consumer and root publisher ready mode', () => 
     true,
   );
   assert.equal(
-    rendered.consumerSurfaces.settings['extra-substituters'].includes(localSubstituter),
+    new Set(rendered.consumerSurfaces.settings['extra-substituters']).has(localSubstituter),
     true,
   );
   assert.equal(
