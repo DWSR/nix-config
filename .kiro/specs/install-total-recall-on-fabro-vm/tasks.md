@@ -186,7 +186,7 @@
   - _Requirements: 7.2, 7.3, 7.4_
   - _Depends: 8.2_
 
-- [ ] 8.4 Add the total-recall mcpproxy stdio upstream
+- [x] 8.4 Add the total-recall mcpproxy stdio upstream
   - Add `home.mcp.extraServers.total-recall = { command = "${mcpWorker}/bin/mcp-worker"; env = { III_URL = endpoint; TOTAL_RECALL_MEMORY_DATABASE = databaseConnection; }; }` with no `args`, `type`, or `url`
   - Leave the upstream's memory save, search, get, and version-list tools unchanged and let mcpproxy namespace them like every other upstream
   - Keep mcpproxy the only MCP listener and `mcp-worker` stdio-only; add no HTTP MCP transport, no guest-side proxy, and no workstation service
