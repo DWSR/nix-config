@@ -346,6 +346,31 @@ in
       };
     };
 
+    systemd.services.total-recall-session-post-processing = {
+      description = "Interpret completed total-recall sessions";
+      wantedBy = [ "multi-user.target" ];
+      after = harnessWorkerAfter;
+      requires = harnessWorkerAfter;
+      environment = {
+        III_URL = "ws://${cfg.iiiHost}:${toString cfg.iiiPort}";
+        TOTAL_RECALL_POST_PROCESSING_DATABASE = cfg.databaseConnection;
+        TOTAL_RECALL_POST_PROCESSING_MEMORY_DATABASE = cfg.databaseConnection;
+        TOTAL_RECALL_POST_PROCESSING_PROVIDER = "openai";
+        TOTAL_RECALL_POST_PROCESSING_OPENAI_BASE_URL = cfg.postProcessingBaseUrl;
+        TOTAL_RECALL_POST_PROCESSING_OPENAI_MODEL = cfg.postProcessingModel;
+        TOTAL_RECALL_POST_PROCESSING_OPENAI_OUTPUT_MODE = "prompt";
+      };
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-session-post-processing;
+        EnvironmentFile = config.sops.templates."total-recall-env".path;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
+
     services.postgresql = {
       enable = true;
       package = pkgs.unstable.postgresql_17;
