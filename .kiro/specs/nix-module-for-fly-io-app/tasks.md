@@ -65,7 +65,7 @@
   - _Depends: 2.2, 3.2_
   - _Boundary: `scripts/fly-app-reconcile.nix`_
   - _Requirements: 1.2, 1.3, 1.4, 2.1, 4.3, 4.4_
-- [ ] 3.7 Match and verify the module-managed Machine set
+- [x] 3.7 Match and verify the module-managed Machine set
   - Map stable declaration identities to Fly Machine IDs after each CLI deploy; distinguish unrelated unmanaged Machines and reject ambiguous matches or surplus Fly Launch Machines without deleting them.
   - Done when existing Machines have unique matches, surplus managed Machines cause failure, and missing declared Machines are identified for Task 3.8 to create.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
