@@ -3,6 +3,13 @@
 # A spec's `derivation` image source is the OCI archive produced by
 # lib/fly-app-image.nix (`image`/`archive`), and `nixSnapshotter` is the
 # package whose `nix2container` the flake overlay pins.
+#
+# Publication state is a non-secret per-app JSON record of each realized
+# image identity, its registry reference, and its confirmed manifest digest.
+# It lives under $FLY_APP_STATE_DIR, or $XDG_STATE_HOME/fly-app, or
+# ~/.local/state/fly-app. Intact state makes a missing or changed remote
+# digest a failure without republishing; absent or malformed state is treated
+# as a first deployment.
 {
   pkgs,
   nixSnapshotter ? pkgs.nix-snapshotter,
@@ -43,6 +50,8 @@ let
     APP_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
     STORE_PATH = re.compile(r"^/nix/store/([0-9abcdfghijklmnpqrsvwxyz]{32})-[^/]+$")
     DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+    STATE_VERSION = 1
+    STATE_DIR_ENV = "FLY_APP_STATE_DIR"
     TIMEOUT_SECONDS = 30
     USAGE = "usage: fly-app-publish --spec <secret-free-spec>"
 
@@ -65,6 +74,114 @@ let
             if secret:
                 text = text.replace(secret, "[REDACTED]")
         return text
+
+
+    def publication_state_dir():
+        configured = os.environ.get(STATE_DIR_ENV)
+        if configured:
+            return configured
+        base = os.environ.get("XDG_STATE_HOME")
+        if not base:
+            home = os.environ.get("HOME")
+            if not home:
+                fail(
+                    "cannot determine the publication state directory; "
+                    "set " + STATE_DIR_ENV
+                )
+            base = os.path.join(home, ".local", "state")
+        return os.path.join(base, "fly-app")
+
+
+    def publication_state_path(state_dir, app):
+        return os.path.join(state_dir, app + ".json")
+
+
+    def load_publication_state(state_dir, app):
+        """Return valid records keyed by image identity; malformed state is empty."""
+        path = publication_state_path(state_dir, app)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                document = json.load(handle)
+        except FileNotFoundError:
+            return {}
+        except ValueError:
+            print(
+                "fly-app-publish: ignoring malformed publication state " + path,
+                file=sys.stderr,
+            )
+            return {}
+        except OSError as error:
+            fail("could not read publication state '{}': {}".format(path, error))
+        if (
+            not isinstance(document, dict)
+            or document.get("version") != STATE_VERSION
+            or document.get("app") != app
+            or not isinstance(document.get("images"), dict)
+        ):
+            print(
+                "fly-app-publish: ignoring incompatible publication state " + path,
+                file=sys.stderr,
+            )
+            return {}
+        records = {}
+        for identity, record in document["images"].items():
+            if (
+                isinstance(identity, str)
+                and isinstance(record, dict)
+                and record.get("identity") == identity
+                and isinstance(record.get("reference"), str)
+                and isinstance(record.get("digest"), str)
+                and DIGEST.match(record["digest"]) is not None
+            ):
+                records[identity] = {
+                    "identity": identity,
+                    "reference": record["reference"],
+                    "digest": record["digest"],
+                }
+        return records
+
+
+    def save_publication_state(state_dir, app, records):
+        path = publication_state_path(state_dir, app)
+        temporary = None
+        try:
+            os.makedirs(state_dir, mode=0o700, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix="." + app + ".", suffix=".tmp", dir=state_dir
+            )
+            try:
+                os.fchmod(descriptor, 0o600)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    descriptor = -1
+                    json.dump(
+                        {
+                            "version": STATE_VERSION,
+                            "app": app,
+                            "images": records,
+                        },
+                        handle,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            finally:
+                if descriptor >= 0:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, path)
+        except OSError as error:
+            fail("could not persist publication state '{}': {}".format(path, error))
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
 
     def registry_url(app, reference):
@@ -221,7 +338,13 @@ let
                 "{} must use a realized /nix/store image derivation, "
                 "got '{}'".format(where, derivation)
             )
-        return {"kind": "derivation", "source": derivation, "tag": "nix-" + match.group(1)}
+        identity = match.group(1)
+        return {
+            "kind": "derivation",
+            "source": derivation,
+            "identity": identity,
+            "tag": "nix-" + identity,
+        }
 
 
     def collect_images(machines):
@@ -286,6 +409,12 @@ let
         unique = {}
         for entry in entries:
             unique.setdefault((entry["kind"], entry["source"]), entry)
+        state_dir = None
+        records = {}
+        if any(entry["kind"] == "derivation" for entry in unique.values()):
+            state_dir = publication_state_dir()
+            records = load_publication_state(state_dir, app)
+        changed = False
         images = []
         for key in sorted(unique):
             entry = unique[key]
@@ -300,28 +429,64 @@ let
                     }
                 )
                 continue
+            identity = entry["identity"]
             reference = "{}/{}:{}".format(
                 os.environ["FLY_REGISTRY_HOST"], app, entry["tag"]
             )
             digest = inspect_manifest(app, entry["tag"], token)
+            recorded = records.get(identity)
+            if recorded is not None and recorded["reference"] != reference:
+                recorded = None
             published = False
-            if digest is None:
-                print("fly-app-publish: publishing " + reference, file=sys.stderr)
-                publish_image(entry["source"], reference, environment, token)
-                digest = inspect_manifest(app, entry["tag"], token)
+            if recorded is not None:
+                state_path = publication_state_path(state_dir, app)
                 if digest is None:
                     fail(
-                        "publication of '{}' was not confirmed by the Fly "
-                        "registry".format(reference)
+                        "previously published image '{}' is missing from the "
+                        "Fly registry while publication state '{}' records "
+                        "digest {}; refusing to republish".format(
+                            reference, state_path, recorded["digest"]
+                        )
                     )
-                published = True
-            else:
+                if digest != recorded["digest"]:
+                    fail(
+                        "Fly registry digest for previously published image "
+                        "'{}' is {} and does not match the recorded "
+                        "publication digest {} in '{}'; refusing to "
+                        "republish".format(
+                            reference, digest, recorded["digest"], state_path
+                        )
+                    )
                 print(
                     "fly-app-publish: image "
                     + reference
-                    + " is already available; not republishing",
+                    + " is unchanged and still available; not republishing",
                     file=sys.stderr,
                 )
+            else:
+                if digest is None:
+                    print("fly-app-publish: publishing " + reference, file=sys.stderr)
+                    publish_image(entry["source"], reference, environment, token)
+                    digest = inspect_manifest(app, entry["tag"], token)
+                    if digest is None:
+                        fail(
+                            "publication of '{}' was not confirmed by the Fly "
+                            "registry".format(reference)
+                        )
+                    published = True
+                else:
+                    print(
+                        "fly-app-publish: adopting existing image "
+                        + reference
+                        + " without republishing",
+                        file=sys.stderr,
+                    )
+                records[identity] = {
+                    "identity": identity,
+                    "reference": reference,
+                    "digest": digest,
+                }
+                changed = True
             images.append(
                 {
                     "kind": "derivation",
@@ -331,6 +496,8 @@ let
                     "published": published,
                 }
             )
+        if changed:
+            save_publication_state(state_dir, app, records)
         return images
 
 
