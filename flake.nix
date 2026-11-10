@@ -3417,6 +3417,14 @@
         };
       };
 
+      nixosConfigurations.linux-builder = inputs.nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        modules = [
+          inputs.sops-nix.nixosModules.default
+          ./configurations/linux-builder
+        ];
+      };
+
       # qcow-efi boot image for the fabro Lima VM guest (`system.build.qcow-efi`
       # on nixosConfigurations.fabro-vm), the same format nixos-lima builds its
       # release images with. The personal host boots the pinned upstream
