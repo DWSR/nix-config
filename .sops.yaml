@@ -13,7 +13,10 @@
 # fabro-vm NixOS guest). Each
 # `creation_rule` lists exactly one recipient (the target host) so that
 # compromise of one host's age private key cannot decrypt the other host's
-# secrets — see requirements.md sections 2.1, 2.2, 2.4.
+# secrets — see requirements.md sections 2.1, 2.2, 2.4. The Linux builder's
+# store is the documented exception: its recipient is operator-provisioned
+# at sync time, so the rule below is intentionally fail-closed rather than
+# carrying a fabricated placeholder.
 #
 # `path_regex` uses Go regex semantics (regexp.MatchString), NOT shell glob.
 # Rules are evaluated top-to-bottom; first match wins. Backslash-escape `.`
@@ -23,6 +26,15 @@ keys:
   - &host_personal age158am3rk8z2msgnx08e03f9x2dumgqqj3rfhkdj7fcffp5g99tfsstagvlp
   - &host_fabro age13dg3prj95p7gxtql8m8zr5jwfm7a550js5mm9l2tc9n8n9rft5ys3gke7z
   - &host_mac_builder age10puuz9e0nj3u9va2mg7uaad5m5v2sdfs73e97tgsd3r4cykk2gcsk5laq5
+  # The linux-builder age identity is operator-provisioned at
+  # op://Private/sops-age-key-linux-builder/notesPlain (design's
+  # `## Operator Provisioning`). Its public recipient is deliberately not
+  # committed here: no value exists until the operator runs the bootstrap
+  # command, and a fabricated recipient would either be a placeholder or
+  # make the builder store undecryptable. The builder sync script derives
+  # the live recipient from that 1Password key with `age-keygen -y` and
+  # passes it to sops with `--age`, so the encrypted store is always
+  # addressed to the operator-provisioned `host_linux_builder` identity.
 
 creation_rules:
   - path_regex: secrets/mcp\.personal\.yaml$
@@ -45,6 +57,23 @@ creation_rules:
       - age:
           - *host_mac_builder
   - path_regex: secrets/mac-builder-client\.personal\.yaml$
+    key_groups:
+      - age:
+          - *host_personal
+  # The linux-builder host's own store: authorized client public keys and
+  # the Tailscale OAuth credential. The static recipient list is empty on
+  # purpose. No `host_linux_builder` recipient is known at commit time, so
+  # a config-only encryption fails closed ("empty key group provided")
+  # instead of writing a store that no operator key can decrypt.
+  # scripts/linux-builder-sync-from-1password.nix supplies the recipient
+  # derived from the operator-provisioned age key with `--age`.
+  - path_regex: secrets/remote-builder\.linux-builder\.yaml$
+    key_groups:
+      - age: []
+  # The personal Mac's dedicated Linux-builder client key has its own
+  # store, encrypted only to the personal host recipient so neither the
+  # builder nor Fabro can decrypt it. The builder sync writes this file.
+  - path_regex: secrets/linux-builder-client\.personal\.yaml$
     key_groups:
       - age:
           - *host_personal
