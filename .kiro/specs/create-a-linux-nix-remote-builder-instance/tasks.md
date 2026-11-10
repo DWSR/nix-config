@@ -64,7 +64,7 @@
 
 - [ ] 5. Integrate operator-managed secret and trust material
 
-- [ ] 5.1 Add builder secret-store and sync-command wiring
+- [x] 5.1 Add builder secret-store and sync-command wiring
   - Add a distinct `host_linux_builder` SOPS recipient/rule and builder secret declarations for authorized client public keys and Tailscale OAuth material; use the operator-provisioned recipient, never a placeholder.
   - Create `scripts/linux-builder-sync-from-1password.nix` to encrypt operator-supplied builder values into the builder store and the personal client key into the personal encrypted store; it must not generate or mint values.
   - Update `scripts/fabro-sync-from-1password.nix` for the Fabro client key without storing private keys in the repository.
