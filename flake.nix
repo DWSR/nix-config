@@ -2296,6 +2296,251 @@
               totalRecallServeHardRequires = builtins.filter (
                 name: builtins.elem name (vm.systemd.services.tailscale-serve.requires or [ ])
               ) totalRecallServeWants;
+              # Loopback bindings and single-tailnet-exposure contract
+              # (install-total-recall-on-fabro-vm spec, task 9.2;
+              # requirements 6.4, 9.2, 9.5; design "C4: Tailscale Serve
+              # exposure" and "Testing Strategy → Pure-evaluation checks").
+              # Every assertion below is pure evaluation: option values, the
+              # structured values the guest renders into its iii engine and
+              # configuration-worker YAML files (the internal
+              # `fabro.totalRecall.engineConfiguration` /
+              # `.workerConfiguration` seams), the rendered unit text, and a
+              # module-disabled guest variant. Failure messages name the
+              # offending port, service, file, or unit.
+              totalRecallMemoryPorts = [
+                vm.services.postgresql.settings.port
+                vm.fabro.totalRecall.iiiPort
+                vm.fabro.totalRecall.streamPort
+              ];
+              totalRecallMemoryPortList = pkgs.lib.concatStringsSep ", " (map toString totalRecallMemoryPorts);
+              # Recursively collect `(path, value)` for every attribute named
+              # `name` in a structured configuration value (lists included).
+              totalRecallCollectAttr =
+                name: prefix: value:
+                if builtins.isAttrs value then
+                  builtins.concatMap (
+                    childName:
+                    let
+                      child = value.${childName};
+                      path = if prefix == "" then childName else "${prefix}.${childName}";
+                    in
+                    (
+                      if childName == name then
+                        [
+                          {
+                            inherit path;
+                            value = child;
+                          }
+                        ]
+                      else
+                        [ ]
+                    )
+                    ++ totalRecallCollectAttr name path child
+                  ) (builtins.attrNames value)
+                else if builtins.isList value then
+                  builtins.concatMap (totalRecallCollectAttr name prefix) value
+                else
+                  [ ];
+              # Recursively collect every string `(prefix, value)` pair.
+              totalRecallCollectStrings =
+                prefix: value:
+                if builtins.isString value then
+                  [ { inherit prefix value; } ]
+                else if builtins.isAttrs value then
+                  builtins.concatMap (
+                    childName:
+                    totalRecallCollectStrings (
+                      if prefix == "" then childName else "${prefix}.${childName}"
+                    ) value.${childName}
+                  ) (builtins.attrNames value)
+                else if builtins.isList value then
+                  builtins.concatMap (totalRecallCollectStrings prefix) value
+                else
+                  [ ];
+              totalRecallEngineConfiguration = vm.fabro.totalRecall.engineConfiguration;
+              totalRecallEngineWorker =
+                name:
+                let
+                  matches = builtins.filter (worker: (worker.name or "") == name) (
+                    totalRecallEngineConfiguration.workers or [ ]
+                  );
+                in
+                if matches == [ ] then null else builtins.head matches;
+              totalRecallEngineBindings = [
+                {
+                  name = "iii-worker-manager";
+                  host = "127.0.0.1";
+                  port = vm.fabro.totalRecall.iiiPort;
+                }
+                {
+                  name = "iii-stream";
+                  host = "127.0.0.1";
+                  port = vm.fabro.totalRecall.streamPort;
+                }
+              ];
+              totalRecallEngineBindingProblems = builtins.concatMap (
+                binding:
+                let
+                  worker = totalRecallEngineWorker binding.name;
+                  expected = "${binding.host}:${toString binding.port}";
+                  actualHost = if worker == null then null else worker.config.host or null;
+                  actualPort = if worker == null then null else worker.config.port or null;
+                in
+                if worker == null then
+                  [ "${binding.name} is missing (expected ${expected})" ]
+                else
+                  pkgs.lib.optional (actualHost != binding.host)
+                    "${binding.name} binds host ${builtins.toJSON actualHost} instead of ${binding.host} (expected ${expected})"
+                  ++
+                    pkgs.lib.optional (actualPort != binding.port)
+                      "${binding.name} binds port ${builtins.toJSON actualPort} instead of ${toString binding.port} (expected ${expected})"
+              ) totalRecallEngineBindings;
+              totalRecallEngineOtherHosts = builtins.filter (entry: entry.value != "127.0.0.1") (
+                totalRecallCollectAttr "host" "" totalRecallEngineConfiguration
+              );
+              totalRecallWorkerConfiguration = vm.fabro.totalRecall.workerConfiguration;
+              totalRecallWorkerConfigFiles = builtins.attrNames totalRecallWorkerConfiguration;
+              totalRecallExpectedWorkerConfigFiles = [
+                "database"
+                "queue"
+                "cron"
+              ];
+              totalRecallMissingWorkerConfigFiles = builtins.filter (
+                file: !(builtins.hasAttr file totalRecallWorkerConfiguration)
+              ) totalRecallExpectedWorkerConfigFiles;
+              totalRecallWorkerConfigOtherHosts = builtins.concatMap (
+                file:
+                map (entry: "${file}.yaml ${entry.path}=${builtins.toJSON entry.value}") (
+                  builtins.filter (entry: entry.value != "127.0.0.1") (
+                    totalRecallCollectAttr "host" "" totalRecallWorkerConfiguration.${file}
+                  )
+                )
+              ) totalRecallWorkerConfigFiles;
+              totalRecallWorkerConfigUrls = builtins.concatMap (
+                file:
+                map (entry: "${file}.yaml ${entry.prefix}=${entry.value}") (
+                  builtins.filter (entry: pkgs.lib.hasInfix "://" entry.value) (
+                    totalRecallCollectStrings "" totalRecallWorkerConfiguration.${file}
+                  )
+                )
+              ) totalRecallWorkerConfigFiles;
+              totalRecallDatabaseConnectionHost =
+                let
+                  connections = totalRecallWorkerConfiguration.database.value.databases or { };
+                  connection = connections.${vm.fabro.totalRecall.databaseConnection} or null;
+                in
+                if connection == null then null else connection.host or null;
+              totalRecallFirewall = vm.networking.firewall;
+              totalRecallPortInRange =
+                ranges: port: builtins.any (range: port >= range.from && port <= range.to) ranges;
+              totalRecallFirewallAllowsPort =
+                port:
+                builtins.elem port totalRecallFirewall.allowedTCPPorts
+                || builtins.elem port totalRecallFirewall.allowedUDPPorts
+                || totalRecallPortInRange totalRecallFirewall.allowedTCPPortRanges port
+                || totalRecallPortInRange totalRecallFirewall.allowedUDPPortRanges port
+                || builtins.any (
+                  interface:
+                  builtins.elem port interface.allowedTCPPorts
+                  || builtins.elem port interface.allowedUDPPorts
+                  || totalRecallPortInRange interface.allowedTCPPortRanges port
+                  || totalRecallPortInRange interface.allowedUDPPortRanges port
+                ) (builtins.attrValues totalRecallFirewall.interfaces);
+              totalRecallFirewallOpenPorts = builtins.filter totalRecallFirewallAllowsPort totalRecallMemoryPorts;
+              totalRecallFirewallExtraCommands = pkgs.lib.concatStringsSep "\n" [
+                totalRecallFirewall.extraCommands
+                totalRecallFirewall.extraStopCommands
+                totalRecallFirewall.extraInputRules
+                totalRecallFirewall.extraForwardRules
+              ];
+              totalRecallFirewallExtraMentions = builtins.filter (
+                port: pkgs.lib.hasInfix ":${toString port}" totalRecallFirewallExtraCommands
+              ) totalRecallMemoryPorts;
+              totalRecallSocketListenValues =
+                name:
+                let
+                  socket = vm.systemd.sockets.${name};
+                  socketConfig = socket.socketConfig or { };
+                  asList = value: if builtins.isList value then value else [ value ];
+                in
+                (socket.listenStreams or [ ])
+                ++ (socket.listenDatagram or [ ])
+                ++ asList (socketConfig.ListenStream or [ ])
+                ++ asList (socketConfig.ListenDatagram or [ ]);
+              totalRecallSocketListeners = builtins.concatMap (
+                name:
+                map (value: "${name} listens on ${builtins.toJSON value}") (
+                  builtins.filter (
+                    value:
+                    builtins.any (
+                      port:
+                      let
+                        text = toString value;
+                      in
+                      text == toString port || pkgs.lib.hasInfix ":${toString port}" text
+                    ) totalRecallMemoryPorts
+                  ) (totalRecallSocketListenValues name)
+                )
+              ) (builtins.attrNames vm.systemd.sockets);
+              totalRecallWildcardBindMarkers = port: [
+                "0.0.0.0:${toString port}"
+                "[::]:${toString port}"
+                ":::${toString port}"
+                "*:${toString port}"
+              ];
+              totalRecallWidenedBindUnits = builtins.concatMap (
+                port:
+                map (name: "${name} binds port ${toString port} on a wildcard address") (
+                  builtins.filter (
+                    name:
+                    builtins.any (marker: pkgs.lib.hasInfix marker vm.systemd.units.${name}.text) (
+                      totalRecallWildcardBindMarkers port
+                    )
+                  ) (builtins.attrNames vm.systemd.units)
+                )
+              ) totalRecallMemoryPorts;
+              totalRecallServeEntry =
+                service: target:
+                "${pkgs.lib.getExe vm.services.tailscale.package} serve --service=${service} --https=443 ${target}";
+              totalRecallExistingServeEntries = [
+                (totalRecallServeEntry "svc:fabro" "http://127.0.0.1:32276")
+                (totalRecallServeEntry "svc:litellm" "http://127.0.0.1:4000")
+                (totalRecallServeEntry "svc:opencode" "http://127.0.0.1:4096")
+              ];
+              totalRecallMemoryServeEntry = totalRecallServeEntry "svc:total-recall" "http://127.0.0.1:49134";
+              totalRecallEnabledServeEntries = totalRecallExistingServeEntries ++ [ totalRecallMemoryServeEntry ];
+              totalRecallGuestDisabled = self.nixosConfigurations.fabro-vm.extendModules {
+                modules = [
+                  {
+                    fabro.totalRecall.enable = pkgs.lib.mkForce false;
+                  }
+                ];
+              };
+              totalRecallServeMismatch =
+                expected: actual:
+                let
+                  expectedLength = builtins.length expected;
+                  actualLength = builtins.length actual;
+                  commonLength = pkgs.lib.min expectedLength actualLength;
+                  mismatched = builtins.filter (
+                    index: builtins.elemAt actual index != builtins.elemAt expected index
+                  ) (pkgs.lib.range 0 (commonLength - 1));
+                in
+                if mismatched != [ ] then
+                  let
+                    index = builtins.head mismatched;
+                  in
+                  "entry #${toString (index + 1)} is ${builtins.toJSON (builtins.elemAt actual index)} (expected ${builtins.toJSON (builtins.elemAt expected index)})"
+                else if actualLength != expectedLength then
+                  "expected ${toString expectedLength} entries but ${toString actualLength} are declared: ${builtins.toJSON (pkgs.lib.drop expectedLength actual)}"
+                else
+                  null;
+              totalRecallServeEnabledProblem = totalRecallServeMismatch totalRecallEnabledServeEntries (
+                vm.systemd.services.tailscale-serve.serviceConfig.ExecStart or [ ]
+              );
+              totalRecallServeDisabledProblem = totalRecallServeMismatch totalRecallExistingServeEntries (
+                totalRecallGuestDisabled.config.systemd.services.tailscale-serve.serviceConfig.ExecStart or [ ]
+              );
               guestReport =
                 assert pkgs.lib.assertMsg vm.services.lima.enable
                   "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
@@ -2627,26 +2872,50 @@
                   "fabro-vm: tailscale-serve.service must start after [ ${pkgs.lib.concatStringsSep ", " totalRecallServeMissingAfter} ] so the Serve handler is re-applied only once the memory units are up.";
                 assert pkgs.lib.assertMsg (totalRecallServeHardRequires == [ ])
                   "fabro-vm: tailscale-serve.service must not require [ ${pkgs.lib.concatStringsSep ", " totalRecallServeHardRequires} ]; the memory units are wants only.";
+                # Loopback bindings and single-tailnet-exposure contract
+                # (install-total-recall-on-fabro-vm spec, task 9.2;
+                # requirements 6.4, 9.2, 9.5). Each message names the
+                # offending port, service, file, or unit.
+                assert pkgs.lib.assertMsg (totalRecallServeEnabledProblem == null)
+                  "fabro-vm: tailscale-serve must publish exactly four entries in order (svc:fabro→127.0.0.1:32276, svc:litellm→127.0.0.1:4000, svc:opencode→127.0.0.1:4096, then svc:total-recall→127.0.0.1:49134): ${totalRecallServeEnabledProblem}.";
+                assert pkgs.lib.assertMsg (totalRecallServeDisabledProblem == null)
+                  "fabro-vm: with fabro.totalRecall.enable = false tailscale-serve must publish exactly the original three entries (svc:fabro→127.0.0.1:32276, svc:litellm→127.0.0.1:4000, svc:opencode→127.0.0.1:4096) and no svc:total-recall: ${totalRecallServeDisabledProblem}.";
+                assert pkgs.lib.assertMsg (vm.services.postgresql.settings.listen_addresses == "127.0.0.1")
+                  "fabro-vm: services.postgresql.settings.listen_addresses must be exactly \"127.0.0.1\" so PostgreSQL (port ${toString vm.services.postgresql.settings.port}) stays loopback-only; got ${builtins.toJSON vm.services.postgresql.settings.listen_addresses}.";
+                assert pkgs.lib.assertMsg (totalRecallEngineBindingProblems == [ ])
+                  "fabro-vm: the iii engine must bind its listeners to loopback: ${pkgs.lib.concatStringsSep "; " totalRecallEngineBindingProblems}.";
+                assert pkgs.lib.assertMsg (totalRecallEngineOtherHosts == [ ])
+                  "fabro-vm: the iii engine configuration names non-loopback hosts [ ${
+                    pkgs.lib.concatStringsSep ", " (
+                      map (entry: "${entry.path}=${builtins.toJSON entry.value}") totalRecallEngineOtherHosts
+                    )
+                  } ]; worker-manager and stream must stay on 127.0.0.1.";
+                assert pkgs.lib.assertMsg (totalRecallMissingWorkerConfigFiles == [ ])
+                  "fabro-vm: the configuration worker must seed [ ${
+                    pkgs.lib.concatStringsSep ", " (map (file: "${file}.yaml") totalRecallExpectedWorkerConfigFiles)
+                  } ]; missing [ ${
+                    pkgs.lib.concatStringsSep ", " (map (file: "${file}.yaml") totalRecallMissingWorkerConfigFiles)
+                  } ].";
+                assert pkgs.lib.assertMsg (totalRecallWorkerConfigOtherHosts == [ ])
+                  "fabro-vm: configuration-worker files must name only 127.0.0.1; found [ ${pkgs.lib.concatStringsSep ", " totalRecallWorkerConfigOtherHosts} ] across database/queue/cron.";
+                assert pkgs.lib.assertMsg (totalRecallWorkerConfigUrls == [ ])
+                  "fabro-vm: configuration-worker files must use the structured host/port entry, not a connection URL naming another host; found [ ${pkgs.lib.concatStringsSep ", " totalRecallWorkerConfigUrls} ].";
+                assert pkgs.lib.assertMsg (totalRecallDatabaseConnectionHost == "127.0.0.1")
+                  "fabro-vm: database.yaml must give connection \"${vm.fabro.totalRecall.databaseConnection}\" host 127.0.0.1 so PostgreSQL stays loopback-only; got ${builtins.toJSON totalRecallDatabaseConnectionHost}.";
                 assert pkgs.lib.assertMsg
                   (
-                    builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
-                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 4
-                    && pkgs.lib.hasInfix "--service=svc:fabro --https=443 http://127.0.0.1:32276" (
-                      builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
-                    )
-                    && pkgs.lib.hasInfix "--service=svc:litellm --https=443 http://127.0.0.1:4000" (
-                      builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
-                    )
-                    && pkgs.lib.hasInfix "--service=svc:opencode --https=443 http://127.0.0.1:4096" (
-                      builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
-                    )
+                    totalRecallFirewall.enable
+                    && totalRecallFirewallOpenPorts == [ ]
+                    && totalRecallFirewallExtraMentions == [ ]
                   )
-                  "fabro-vm: tailscale-serve must advertise svc:fabro, svc:litellm, and svc:opencode per the console resource defs (tcp:443 each).";
+                  "fabro-vm: the guest firewall must stay enabled and open no memory port (${totalRecallMemoryPortList}); firewall.enable=${builtins.toJSON totalRecallFirewall.enable}, allowed ports=[ ${pkgs.lib.concatStringsSep ", " (map toString totalRecallFirewallOpenPorts)} ], extra-rule mentions=[ ${pkgs.lib.concatStringsSep ", " (map toString totalRecallFirewallExtraMentions)} ].";
+                assert pkgs.lib.assertMsg (totalRecallSocketListeners == [ ])
+                  "fabro-vm: no systemd socket unit may listen on a memory port (${totalRecallMemoryPortList}); found [ ${pkgs.lib.concatStringsSep ", " totalRecallSocketListeners} ].";
+                assert pkgs.lib.assertMsg (totalRecallWidenedBindUnits == [ ])
+                  "fabro-vm: no unit may bind a memory port (${totalRecallMemoryPortList}) on a wildcard address; found [ ${pkgs.lib.concatStringsSep ", " totalRecallWidenedBindUnits} ].";
                 assert pkgs.lib.assertMsg
                   (
-                    builtins.elemAt vm.systemd.services.tailscale-serve.serviceConfig.ExecStart 3
-                    == "${pkgs.lib.getExe vm.services.tailscale.package} serve --service=svc:total-recall --https=443 http://127.0.0.1:49134"
-                    && builtins.elem "multi-user.target" vm.systemd.services.tailscale-serve.wantedBy
+                    builtins.elem "multi-user.target" vm.systemd.services.tailscale-serve.wantedBy
                     &&
                       builtins.all
                         (
@@ -2662,7 +2931,7 @@
                           "total-recall-session-post-processing.service"
                         ]
                   )
-                  "fabro-vm: tailscale-serve must apply svc:total-recall last at boot and softly order after iii and all total-recall workers.";
+                  "fabro-vm: tailscale-serve must stay boot-enabled and apply svc:total-recall with soft wants/after ordering on iii and all total-recall workers (never requires).";
                 # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services ? opencode

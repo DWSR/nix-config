@@ -9,7 +9,11 @@
 let
   cfg = config.fabro.totalRecall;
   yamlFormat = pkgs.formats.yaml { };
-  iiiConfig = yamlFormat.generate "total-recall-iii-config.yaml" {
+  # Structured values rendered into the iii engine configuration and the
+  # configuration worker's per-worker YAML files. They are also exposed as
+  # read-only internal options so the pure-evaluation guest check can assert
+  # loopback bindings without reading (or building) the YAML derivations.
+  engineConfiguration = {
     workers = [
       {
         name = "iii-worker-manager";
@@ -41,41 +45,41 @@ let
       }
     ];
   };
+  iiiConfig = yamlFormat.generate "total-recall-iii-config.yaml" engineConfiguration;
   configurationEntry = id: description: value: {
     inherit id description value;
     name = id;
   };
+  workerConfiguration = {
+    database = configurationEntry "database" "PostgreSQL memory connection" {
+      databases.${cfg.databaseConnection} = {
+        driver = "postgres";
+        host = "127.0.0.1";
+        port = 5432;
+        user = "memory_application";
+        database = cfg.databaseName;
+        tls.mode = "disable";
+        pool.max = 10;
+      };
+      history_max_entries = 0;
+    };
+    queue = configurationEntry "queue" "Durable harness event queue" {
+      adapter = {
+        name = "builtin";
+        config = {
+          store_method = "file_based";
+          file_path = "/var/lib/total-recall/queue";
+        };
+      };
+    };
+    cron = configurationEntry "cron" "Local scheduled worker triggers" {
+      adapter.name = "local";
+    };
+  };
   workerConfigs = {
-    database = yamlFormat.generate "database.yaml" (
-      configurationEntry "database" "PostgreSQL memory connection" {
-        databases.${cfg.databaseConnection} = {
-          driver = "postgres";
-          host = "127.0.0.1";
-          port = 5432;
-          user = "memory_application";
-          database = cfg.databaseName;
-          tls.mode = "disable";
-          pool.max = 10;
-        };
-        history_max_entries = 0;
-      }
-    );
-    queue = yamlFormat.generate "queue.yaml" (
-      configurationEntry "queue" "Durable harness event queue" {
-        adapter = {
-          name = "builtin";
-          config = {
-            store_method = "file_based";
-            file_path = "/var/lib/total-recall/queue";
-          };
-        };
-      }
-    );
-    cron = yamlFormat.generate "cron.yaml" (
-      configurationEntry "cron" "Local scheduled worker triggers" {
-        adapter.name = "local";
-      }
-    );
+    database = yamlFormat.generate "database.yaml" workerConfiguration.database;
+    queue = yamlFormat.generate "queue.yaml" workerConfiguration.queue;
+    cron = yamlFormat.generate "cron.yaml" workerConfiguration.cron;
   };
   installWorkerConfig = name: path: ''
     install -D -m 0644 ${lib.escapeShellArg (toString path)} \
@@ -177,9 +181,34 @@ in
       default = "http://127.0.0.1:4000/v1/";
       description = "OpenAI-compatible base URL for post-processing requests.";
     };
+
+    engineConfiguration = lib.mkOption {
+      type = lib.types.anything;
+      internal = true;
+      readOnly = true;
+      description = ''
+        Structured value rendered into the iii engine configuration. Exposed
+        for the pure-evaluation guest check (loopback bindings); not a
+        user-facing option.
+      '';
+    };
+
+    workerConfiguration = lib.mkOption {
+      type = lib.types.anything;
+      internal = true;
+      readOnly = true;
+      description = ''
+        Structured values rendered into the configuration worker's
+        per-worker YAML files. Exposed for the pure-evaluation guest check
+        (loopback-only database host); not a user-facing option.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    fabro.totalRecall.engineConfiguration = engineConfiguration;
+    fabro.totalRecall.workerConfiguration = workerConfiguration;
+
     users.groups."total-recall" = { };
     users.users."total-recall" = {
       isSystemUser = true;
