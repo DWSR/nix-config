@@ -21,6 +21,7 @@ boundary of this pipeline.
 | Brandons-MacBook-Pro   | `personal`      | Private         | `op://Private/sops-age-key-personal` | `secrets/mcp.personal.yaml` |
 | fabro (fabro-vm Lima VM guest) | `fabro`  | Private         | `op://Private/sops-age-key-fabro` | `secrets/fabro.fabro.yaml`    |
 | mac-builder (macOS remote builder guest) | `mac-builder` | Private | `op://Private/sops-age-key-mac-builder` | `secrets/remote-builder.mac-builder.yaml` |
+| linux-builder (NixOS Linux remote builder guest) | `linux-builder` | Private | `op://Private/sops-age-key-linux-builder` | `secrets/remote-builder.linux-builder.yaml` |
 
 The short-name (`shopify` / `personal` / `fabro`) is the value passed to the
 helper apps (`mcp-sync-from-1password`, `mcp-verify-secrets`) and
@@ -313,6 +314,479 @@ key's public half in `builder-authorized-keys` and re-encrypting
 Preserve the other authorized keys, and never drop a recipient or weaken the
 builder store encryption. Re-run deploy/switch and confirm the new key is
 accepted while the old one is refused.
+
+## Linux builder host store (NixOS remote builder)
+
+The Linux builder is the separate NixOS `aarch64-linux` Lima guest
+(`nixosConfigurations.linux-builder`, instance `linux-builder`) managed by the
+personal host. Its secret material is split across three per-host stores:
+
+- `secrets/remote-builder.linux-builder.yaml` — the builder host's own store:
+  the authorized client public keys and the builder's Tailscale OAuth
+  credential, encrypted only to the builder's `&host_linux_builder` age
+  recipient.
+- `secrets/linux-builder-client.personal.yaml` — the personal Mac's dedicated
+  Linux-builder SSH client key, encrypted only to `&host_personal` and
+  decrypted on the Mac to a root-owned runtime path.
+- `secrets/fabro.fabro.yaml` — the Fabro guest's store, which also holds the
+  Fabro guest's dedicated Linux-builder client key (see "Fabro host store"
+  above).
+
+Every value is operator-provisioned; the repository contributes declarations,
+runtime paths, and the sync command only. The authoritative table of secret,
+source, provisioning command, verification command, and owner is the design's
+`## Operator Provisioning` section in
+`.kiro/specs/create-a-linux-nix-remote-builder-instance/design.md`; this
+section is its operational runbook.
+
+| Item | Value |
+| --- | --- |
+| Builder encrypted file | `secrets/remote-builder.linux-builder.yaml` |
+| Builder SOPS keys | `builder-authorized-keys`, `builder-tailscale-oauth-secret` |
+| Builder recipient | `&host_linux_builder` (operator-enrolled; see below) |
+| Builder age key | `op://Private/sops-age-key-linux-builder/notesPlain` |
+| Builder authorized keys source | `op://Infrastructure/linux-builder authorized keys/notesPlain` (one public key per line) |
+| Builder OAuth source | `op://Infrastructure/linux-builder Tailscale OAuth/Client Secret` |
+| Guest runtime paths | `/run/secrets/builder-authorized-keys` (mode `0400`, root) → `/home/builder/.ssh/authorized_keys`; `/run/secrets/builder-tailscale-oauth-secret` (mode `0400`, root) |
+| Personal client store | `secrets/linux-builder-client.personal.yaml` (key `linux-builder-client-key`) |
+| Personal client source | `op://Infrastructure/Brandons Mac Linux nix remote builder key/private key` (read with `?ssh-format=openssh`) |
+| Personal runtime path | `/run/secrets/linux-builder-client-key` (mode `0400`, root) |
+| Fabro client store | `secrets/fabro.fabro.yaml` (key `linux-builder-client-key`) |
+| Fabro client source | `op://Infrastructure/Fabro Linux nix remote builder key/private key` |
+| Fabro runtime path | `/run/secrets/linux-builder-client-key` (mode `0400`, root) |
+
+The builder age key is installed on the guest at `/var/lib/sops-nix/key.txt`
+(mode `0600`, root), exactly like the other NixOS guest stores. Only the
+encrypted stores are committed; no private key or OAuth value ever enters the
+checkout or the Nix store.
+
+The builder store's creation rule in `.sops.yaml` starts with an empty `age`
+list on purpose. The real `host_linux_builder` recipient does not exist until
+the operator provisions the builder age identity (design's
+`## Operator Provisioning`), and a fabricated recipient would either be a
+placeholder or make the store undecryptable. The sync command therefore
+derives the recipient from the operator-held age key with `age-keygen -y` and
+passes it to sops with `--age`; a config-only encryption of that path fails
+closed ("empty key group provided"). Once the operator enrolls the derived
+public key as `&host_linux_builder` in `.sops.yaml` and lists it in the
+builder rule, the sync also refuses to run if the derived recipient differs
+from the configured one.
+
+### Bootstrap order
+
+Run these steps from the personal-host checkout with `op` signed in. They are
+operator-owned: the sync command writes the encrypted stores and the operator
+copies the public host-key pin, but no step mints, guesses, or records a
+secret value. The order matters because each activation reads what the
+previous step installed.
+
+1. **Create the builder age identity.** Generate the keypair out of band,
+   stash the full file in 1Password, and print its public recipient — all in
+   one shell session, because the temp directory is removed on exit:
+
+   ```sh
+   T=$(mktemp -d); chmod 0700 "$T"; trap 'rm -rf "$T"' EXIT
+   nix shell nixpkgs#age -c age-keygen -o "$T/linux-builder-age-key.txt"
+   op item create --vault=Private --category="Secure Note" \
+     --title="sops-age-key-linux-builder" \
+     "notesPlain=$(cat "$T/linux-builder-age-key.txt")"
+   nix shell nixpkgs#age -c age-keygen -y "$T/linux-builder-age-key.txt"
+   ```
+
+   Enroll the printed recipient as the `&host_linux_builder` anchor in
+   `.sops.yaml`, then list that anchor in the
+   `secrets/remote-builder\.linux-builder\.yaml$` creation rule so future
+   config-driven sops operations address the same recipient.
+
+2. **Create the two dedicated client keypairs.** These are distinct from the
+   Darwin builder's `build-client-key`; reused or shared keys are not
+   acceptable. Generate each pair inside a mode-`0700` temp directory that is
+   removed only after both private halves are stored:
+
+   ```sh
+   T=$(mktemp -d); chmod 0700 "$T"
+   ssh-keygen -t ed25519 -N '' -C 'fabro-linux-builder' \
+     -f "$T/fabro-linux-builder-client"
+   ssh-keygen -t ed25519 -N '' -C 'personal-linux-builder' \
+     -f "$T/personal-linux-builder-client"
+   ```
+
+   Store each private half in its 1Password SSH Key item's `private key`
+   field (`.../Fabro Linux nix remote builder key` and
+   `.../Brandons Mac Linux nix remote builder key`), then delete the temp
+   directory. Never copy a private half into the checkout, a commit, a shell
+   history, or a log. Append each `.pub` line to
+   `op://Infrastructure/linux-builder authorized keys/notesPlain` — one public
+   key per line, preserving any existing authorized keys.
+
+3. **Create the builder's Tailscale OAuth client.** In the Tailscale admin
+   console, create a client that is separate from the Fabro guest's OAuth
+   client, grant it the `auth_keys` scope, and authorize it to apply
+   `tag:linux-nix-remote-builder`. Store only its client secret at
+   `op://Infrastructure/linux-builder Tailscale OAuth/Client Secret`; the
+   secret value carries the client ID, so no separate field is mirrored.
+
+4. **Sync the stores from 1Password.** This creates the builder and personal
+   client stores from the values above, so every later activation can decrypt
+   what it declares (see "Syncing the stores from 1Password" below). Commit
+   the stores and the `.sops.yaml` change before continuing:
+
+   ```sh
+   nix run '.#linux-builder-sync-from-1password'
+   nix run '.#fabro-sync-from-1password'
+   ```
+
+5. **Start the instance and install the builder age key before the first
+   switch.** The guest's `sops-install-secrets` pre-start check fails the
+   switch when either `/var/lib/sops-nix/key.txt` or the encrypted store is
+   missing, so install the key first:
+
+   ```sh
+   launchctl kickstart "gui/$(id -u)/dev.dwsr.lima-linux-builder"
+   lima-vmctl list linux-builder    # wait until the instance reports Running
+
+   lima-vmctl shell linux-builder sudo -n install -d -m 0755 -o root -g root \
+     /var/lib/sops-nix
+   op read 'op://Private/sops-age-key-linux-builder/notesPlain' \
+     | lima-vmctl shell linux-builder sudo -n install -m 0600 -o root -g root \
+       /dev/stdin /var/lib/sops-nix/key.txt
+   ```
+
+   `install` may warn that `/dev/stdin` changed before being copied (it stats
+   the pipe twice); the content is correct — confirm with `sudo -n stat -c
+   '%a %U' /var/lib/sops-nix/key.txt`.
+
+   `lima-vmctl` is the personal host's `limactl` wrapper that pins the shared
+   managed Lima home (`~/.local/state/lima` by default) for every instance;
+   the supervisor and the deploy command use the same `LIMA_HOME`.
+
+6. **Deploy the host configuration into the guest.** `linux-builder-deploy`
+   streams the checkout (`.git` and local results excluded) and runs
+   `nixos-rebuild switch --sudo --flake <scratch>#linux-builder` in the guest:
+
+   ```sh
+   linux-builder-deploy
+   ```
+
+   The first switch generates the persistent OpenSSH host key at
+   `/var/lib/ssh/ssh_host_ed25519_key`, enrolls the node with the synced
+   OAuth credential, and materializes the authorized keys. Do not proceed to
+   the clients until the pin is committed (next step).
+
+7. **Capture and commit the host-key pin** (see "Host-key pin" below). The
+   Fabro renderer fails closed without it, so it must exist in the deployed
+   tree before the Fabro switch.
+
+8. **Deploy the clients.** Refresh Fabro with `lima-vm-deploy` from the
+   personal host and the Mac with `sudo darwin-rebuild switch --flake .`.
+   Fabro's `fabro-darwin-builders.service` renders both machine records before
+   `nix-daemon` starts, and the Mac's generated `nix-builders` file contains
+   the Darwin and Linux records. If the pin was skipped, the Mac switch still
+   succeeds with a warning but its Linux record omits the host-key field and
+   Linux builds fail closed.
+
+### Syncing the stores from 1Password
+
+`nix run '.#linux-builder-sync-from-1password'` refreshes both Linux-builder
+stores in one gather-then-commit pass:
+
+1. It resolves the builder age key, the personal age key, the authorized-key
+   note, the Tailscale OAuth secret, and the personal client key from the
+   1Password references in the table above.
+2. It validates every value before writing anything — the age keys are
+   well-formed age files, every authorized-keys line is a public key, the
+   OAuth secret is a single non-empty token, and the personal key is an
+   OpenSSH private key — so one bad input leaves both prior stores untouched.
+3. It writes each store through a mode-`0700` temporary directory under
+   `secrets/` and an atomic rename, addressing the builder store to the
+   recipient derived from the builder age key and the personal store to
+   `&host_personal`.
+
+The command never mints, generates, rotates, or prints a secret value. Run it
+from the repository checkout after `op signin`.
+
+`nix run '.#fabro-sync-from-1password'` separately mirrors the Fabro guest's
+`linux-builder-client-key` into `secrets/fabro.fabro.yaml` with the rest of
+the Fabro store; its coverage gate aborts (exit 5) if the run would drop a key
+that the guest configuration declares.
+
+Exit codes for the builder sync: 0 success; 1 not a git working tree or an
+invalid invocation; 2 `op` not authenticated; 3 an unresolvable 1Password URI
+or an invalid supplied value; 4 a sops encryption failure. Commit the
+re-encrypted stores and the `.sops.yaml` recipient/rule change before
+deploying: the Linux builder guest's activation fails at sops when its store
+or age key is missing, and each client's switch fails when a declared secret
+cannot be decrypted.
+
+### Builder Tailscale credential and tailnet grants
+
+The builder joins the tailnet as the stable node `linux-builder` with
+MagicDNS name `linux-builder.tuxedo-musical.ts.net` and the dedicated tag
+`tag:linux-nix-remote-builder`. Enrollment uses the builder-specific OAuth
+client from the table, separate from the Fabro guest's client:
+
+- The client must have the `auth_keys` scope and be authorized to apply
+  `tag:linux-nix-remote-builder`.
+- Only its client secret is mirrored, as `builder-tailscale-oauth-secret` in
+  the builder store.
+- On the guest, `builder-tailscale-auth.service` waits for
+  `sops-install-secrets.service` and `tailscaled.service`, then reads
+  `/run/secrets/builder-tailscale-oauth-secret` and runs `tailscale up
+  --hostname=linux-builder --advertise-tags=tag:linux-nix-remote-builder
+  --accept-dns=false` with the secret as the auth key. The node is
+  persistent, not ephemeral, so its identity survives guest restarts.
+- Rotation affects future enrollments only. An already-registered guest keeps
+  its node until `sudo tailscale logout` runs in-guest; restart
+  `builder-tailscale-auth.service` afterwards to enroll with the new
+  credential.
+
+Tag ownership and the SSH-only grants are **external tailnet policy**: they
+live in the Tailscale admin console (or the operator's policy-as-code source),
+not in this repository, and this runbook does not create, edit, or commit
+them. Mirror the macOS builder's model with the Linux builder's own tag and
+both client identities:
+
+```json
+{
+  "hosts": {
+    "brandons-macbook-pro": "100.x.y.z"
+  },
+  "tagOwners": {
+    "tag:linux-nix-remote-builder": ["autogroup:admin"]
+  },
+  "grants": [
+    {
+      "src": ["tag:fabro", "brandons-macbook-pro"],
+      "dst": ["tag:linux-nix-remote-builder"],
+      "ip": ["tcp:22"]
+    }
+  ]
+}
+```
+
+Merge these entries into the existing policy and preserve every other entry.
+`tag:fabro` is the Fabro guest's existing tag. A host alias is referenced by
+its bare name in `src`. The personal Mac is untagged, so it is selected
+through such an alias: read its tailnet IPv4 address on the Mac and use it in
+place of the sample address above (the alias name itself is free-form; the
+one shown only mirrors the host's name):
+
+```sh
+/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json \
+  | jq -r '.Self.TailscaleIPs[0]'
+```
+
+The grant controls reachability only: SSH client keys authenticate the
+session and the pinned host key verifies the builder. Tailscale SSH is not
+used (the guest joins without `--ssh`).
+
+Verify resolution and TCP/22 reachability from both clients —
+`getent ahostsv4 linux-builder.tuxedo-musical.ts.net` must resolve in the
+NixOS guest and `dscacheutil -q host -a name
+linux-builder.tuxedo-musical.ts.net` on the Mac; an allowed client's
+`nc -vz linux-builder.tuxedo-musical.ts.net 22` (or an equivalent bash
+`/dev/tcp` probe in the guest) must connect. Confirm an identity that is
+neither `tag:fabro` nor the aliased Mac cannot reach TCP/22.
+
+### Verifying the stores and the guest
+
+Decrypt only the key being checked, and never print a private or OAuth value.
+The builder store is readable with the builder age key from 1Password:
+
+```sh
+T=$(mktemp -d); chmod 0700 "$T"; trap 'rm -rf "$T"' EXIT
+op read 'op://Private/sops-age-key-linux-builder/notesPlain' > "$T/key.txt"
+# Public keys only: safe to print.
+SOPS_AGE_KEY_FILE="$T/key.txt" nix shell --inputs-from . nixpkgs#sops -c \
+  sops -d --extract '["builder-authorized-keys"]' \
+  secrets/remote-builder.linux-builder.yaml
+# Length only: never print the OAuth value.
+SOPS_AGE_KEY_FILE="$T/key.txt" nix shell --inputs-from . nixpkgs#sops -c \
+  sops -d --extract '["builder-tailscale-oauth-secret"]' \
+  secrets/remote-builder.linux-builder.yaml | wc -c
+```
+
+The first output must be the newline-separated public keys of the Fabro and
+personal Mac clients; compare each line with the public half of the matching
+keypair — `ssh-keygen -y -f <private-key-copy>` prints only that public half.
+The second output must be a positive byte count with no embedded newline.
+
+The personal client store is readable with the personal host's key, which
+sops-nix installs at `/var/lib/sops-nix/key.txt`:
+
+```sh
+T=$(mktemp -d); chmod 0700 "$T"; trap 'rm -rf "$T"' EXIT
+SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+  nix shell --inputs-from . nixpkgs#sops -c \
+  sops -d --extract '["linux-builder-client-key"]' \
+  secrets/linux-builder-client.personal.yaml > "$T/key"
+chmod 0600 "$T/key"
+ssh-keygen -y -f "$T/key"   # prints only the public half
+```
+
+The Fabro store needs the fabro host's age key from 1Password (the Mac's
+`/var/lib/sops-nix/key.txt` cannot open it). Use the same
+`SOPS_AGE_KEY_FILE` pattern as "Editing / rotating" in the Fabro host store
+section above, with `--extract '["linux-builder-client-key"]'`.
+
+On the guest, confirm sops-nix materialized the secrets and the consuming
+units are active:
+
+```sh
+lima-vmctl shell linux-builder sudo -n stat -c '%a %U' /run/secrets/builder-authorized-keys
+lima-vmctl shell linux-builder sudo -n stat -c '%a %U' /home/builder/.ssh/authorized_keys
+lima-vmctl shell linux-builder sudo -n stat -c '%a %U' /run/secrets/builder-tailscale-oauth-secret
+lima-vmctl shell linux-builder systemctl is-active sshd builder-authorized-keys tailscaled builder-tailscale-auth
+lima-vmctl shell linux-builder sudo -n tailscale status --json \
+  | jq -e '.Self.DNSName | startswith("linux-builder.")'
+```
+
+`stat` must report `400 root` for the `/run/secrets` files and `600 builder`
+for `authorized_keys`. `builder-authorized-keys.service` fails closed when the
+secret is missing or empty, and `sshd` is ordered after it, so a builder
+without authorized keys does not accept SSH sessions.
+
+### Host-key pin
+
+The builder's SSH host key is generated on the guest at the persistent path
+declared by `services.openssh.hostKeys`, `/var/lib/ssh/ssh_host_ed25519_key`.
+That path is outside the Nix store, so the host identity survives VM restarts.
+Only its public half is trust material for the clients:
+
+```sh
+lima-vmctl shell linux-builder sudo -n cat /var/lib/ssh/ssh_host_ed25519_key.pub
+```
+
+Create `certificates/linux-builder/` and save that single line as
+`certificates/linux-builder/ssh_host_ed25519_key.pub`, then `git add` and
+commit it before deploying either client. Never copy the private host key out
+of the guest and never commit the private host key; never generate a
+replacement pin to work around a mismatch.
+
+Both clients embed the base64 of the pin file as the machine record's
+host-key field: Fabro's `fabro-darwin-builders.service` renderer and the
+personal Mac's generated `nix-builders` file. Fabro's service fails closed if
+the pin is missing, unreadable, or not a single-line `ssh-ed25519` public key,
+and `nix.settings.builders = @/run/fabro-darwin-builders/machines` then refers
+to a file the daemon cannot load, so the guest fails rather than falling back
+to local builds. The personal Mac evaluates with a warning and omits the
+host-key field until the pin exists, so its builds fail closed instead of
+trusting an unverified host.
+
+Verify the pin matches the live guest:
+
+```sh
+ssh-keygen -lf certificates/linux-builder/ssh_host_ed25519_key.pub
+lima-vmctl shell linux-builder sudo -n \
+  ssh-keygen -lf /var/lib/ssh/ssh_host_ed25519_key.pub
+```
+
+The two fingerprints must be identical. A mismatch is a hard failure: stop,
+compare the guest's key with the committed pin, and treat a changed key as a
+deliberate operator review. Never disable host-key checking, and never point
+the machine record at an unpinned host as a workaround.
+
+### Live acceptance after provisioning
+
+Run this after the builder is deployed, the pin is committed, both clients
+have switched, and the tailnet grants are active. Every check is read-only
+except the no-fallback check, which stops and restarts the builder.
+
+**1. Linux build from the Fabro guest.** The Fabro guest cannot build
+`aarch64-linux` locally (`max-jobs = 0`), so a returned output proves the
+Linux route:
+
+```sh
+out=$(lima-vmctl shell fabro nix build --no-link --print-out-paths --impure \
+  --expr 'derivation { name = "linux-builder-acceptance"; system = "aarch64-linux"; builder = "/bin/sh"; args = [ "-c" "echo linux-builder > $out" ]; }')
+lima-vmctl shell linux-builder test -e "$out" && echo "linux build ran on linux-builder"
+```
+
+**2. Linux build from `Brandons-MacBook-Pro`.** Run from the repo checkout on
+the Mac; the returned output must exist in the builder's store:
+
+```sh
+out=$(nix build --no-link --print-out-paths --impure \
+  --expr 'derivation { name = "linux-builder-acceptance-mac"; system = "aarch64-linux"; builder = "/bin/sh"; args = [ "-c" "echo linux-builder > $out" ]; }')
+lima-vmctl shell linux-builder test -e "$out" && echo "linux build ran on linux-builder"
+```
+
+**3. Darwin dispatch is preserved.** From the Fabro guest, an
+`aarch64-darwin` derivation must still return through the existing mac-builder
+entry (Fabro cannot build Darwin locally either, so success proves the Darwin
+route):
+
+```sh
+lima-vmctl shell fabro nix build --no-link --print-out-paths --impure \
+  --expr 'derivation { name = "mac-builder-acceptance"; system = "aarch64-darwin"; builder = "/bin/sh"; args = [ "-c" "echo mac-builder > $out" ]; }'
+```
+
+The existing `ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net
+aarch64-darwin …` record in `/run/fabro-darwin-builders/machines` must be
+unchanged. A Darwin build that starts failing for Linux-entry reasons means
+the Linux record disturbed the Darwin record.
+
+**4. Unsupported platforms are rejected.** No machine record advertises
+`x86_64-linux`, and the builder sets `extra-platforms = [ ]`. From either
+client:
+
+```sh
+nix build --no-link --impure --expr 'derivation { name = "unsupported-linux-platform"; system = "x86_64-linux"; builder = "/bin/sh"; args = [ "-c" "echo no > $out" ]; }'
+```
+
+Expect a nonzero exit naming the requested platform and the client's own
+system (`a 'x86_64-linux' … is required to build … but I am a
+'aarch64-linux'` on Fabro, `'aarch64-darwin'` on the Mac). A success, or a
+build attempted on the Linux builder, means the machine record advertises
+more than `aarch64-linux`.
+
+**5. Fabro has no local fallback.** Stop the builder cleanly, then request a
+Linux build on Fabro. The build must fail without producing the output
+locally; `nix.settings.max-jobs = 0` is what makes that the intentional
+behavior:
+
+```sh
+lima-vmctl stop linux-builder          # clean stop; launchd leaves it stopped
+lima-vmctl shell fabro nix build --no-link --impure \
+  --expr 'derivation { name = "linux-builder-outage"; system = "aarch64-linux"; builder = "/bin/sh"; args = [ "-c" "echo local > $out" ]; }'
+lima-vmctl shell fabro grep '^max-jobs' /etc/nix/nix.conf   # max-jobs = 0
+```
+
+Expect a nonzero exit from the build naming the remote builder or the SSH
+transport (`Connection refused`, `Could not resolve hostname`, or a remote
+build failure). A locally built output is a policy regression: check that
+`max-jobs` is still `0` and that the Linux machine record was not dropped.
+
+Restore supervision by restarting the launchd agent — a clean stop exits 0,
+so launchd itself does not restart the VM:
+
+```sh
+launchctl kickstart "gui/$(id -u)/dev.dwsr.lima-linux-builder"
+lima-vmctl list linux-builder    # wait until the instance reports Running
+```
+
+Then repeat check 1 to confirm the builder is serving builds again.
+
+### Rotating builder secrets
+
+- **Client key.** Generate a new dedicated keypair out of band, replace that
+  client's private key in its 1Password SSH Key item, replace only that key's
+  public half in the authorized-keys note, and re-run
+  `nix run '.#linux-builder-sync-from-1password'` (plus
+  `nix run '.#fabro-sync-from-1password'` when the Fabro key rotates). Then
+  redeploy the guest and the affected client. Preserve every other authorized
+  key and never drop the builder store's recipient.
+- **Tailscale credential.** Replace the client secret in 1Password, re-run the
+  builder sync, and re-enroll only if a new registration is intended (an
+  existing node keeps its identity until `sudo tailscale logout`).
+- **Builder age key.** Generate a new identity, update 1Password and the
+  `&host_linux_builder` recipient in `.sops.yaml`, install the new key at
+  `/var/lib/sops-nix/key.txt` on the guest, and re-run the builder sync so the
+  builder store is re-encrypted to the new recipient (the personal store is
+  re-encrypted to `&host_personal` as usual). Keep the previous age key in
+  1Password until the re-encrypted store decrypts with the new key: the sync
+  replaces the file by rename, so the old ciphertext only survives in git
+  history and stays readable only with the old key.
 
 ## Prerequisites — read this first
 
@@ -881,7 +1355,12 @@ should get its own spec rather than expanding this pipeline.
 
 - `scripts/bootstrap-nix-github-token.sh` — no-Nix 1Password seeder
   for the Nix GitHub access-token file.
+- `scripts/linux-builder-sync-from-1password.nix` — builder and personal
+  Linux-builder client store sync from the 1Password sources above.
 - Repo-root `.sops.yaml` — the recipient policy file.
+- `.kiro/specs/create-a-linux-nix-remote-builder-instance/design.md` —
+  Linux builder architecture, data contracts, and its
+  `## Operator Provisioning` table.
 - `.kiro/specs/mcp-secrets-sops-nix/requirements.md` sections 3.4,
   9.1–9.5 — the underlying requirements this runbook satisfies.
 - `.kiro/specs/mcp-secrets-sops-nix/design.md` — architecture and
