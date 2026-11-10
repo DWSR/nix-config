@@ -28,14 +28,19 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v31.11.3
         with:
-          # Several checks evaluate the flake again from inside their build
-          # (for example tests/ast-grep-mcp). Builds run as the untrusted
-          # nixbld users, and the daemon drops their store-copy requests, so
-          # trust the build group for this disposable runner.
           extra_nix_config: |
-            trusted-users = root runner @nixbld
             extra-substituters = https://nix-community.cachix.org
             extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+
+      - name: Run builds as the runner user
+        run: |
+          # Several checks evaluate the flake again from inside their build
+          # (for example tests/ast-grep-mcp). The daemon drops store-copy
+          # requests from the untrusted nixbld users, so run builds as root
+          # on this disposable runner. The installer appends its own
+          # build-users-group line, hence the override after installation.
+          echo 'build-users-group =' | sudo tee -a /etc/nix/nix.conf
+          sudo launchctl kickstart -k system/org.nixos.nix-daemon
 
       - name: Run flake checks
         run: |
