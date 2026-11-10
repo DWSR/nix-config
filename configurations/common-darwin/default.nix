@@ -3,9 +3,107 @@
   outputs,
   config,
   lib,
+  pkgs,
   username,
   ...
 }:
+let
+  # Nix machine records carry the remote host public key base64-encoded
+  # (`base64 -w0` of the complete `ssh-ed25519 ...` line). Nix has no
+  # base64 builtin, so this pure encoder keeps the generated builders file
+  # evaluable without import-from-derivation.
+  base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  # Printable ASCII 32..126 in order; a character's code is its index + 32.
+  printableAscii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+  charCodes = builtins.listToAttrs (
+    builtins.genList (index: {
+      name = builtins.substring index 1 printableAscii;
+      value = 32 + index;
+    }) (builtins.stringLength printableAscii)
+    ++ [
+      {
+        name = "\n";
+        value = 10;
+      }
+      {
+        name = "\r";
+        value = 13;
+      }
+      {
+        name = "\t";
+        value = 9;
+      }
+    ]
+  );
+  byteAt =
+    text: index:
+    if index >= builtins.stringLength text then
+      0
+    else
+      let
+        character = builtins.substring index 1 text;
+      in
+      charCodes.${character} or (throw "nix-config: builders input contains a non-ASCII byte");
+  base64Char = value: builtins.substring value 1 base64Alphabet;
+  base64Encode =
+    text:
+    let
+      length = builtins.stringLength text;
+      fullGroups = length / 3;
+      remainder = length - fullGroups * 3;
+      encodeGroup =
+        groupIndex:
+        let
+          offset = groupIndex * 3;
+          a = byteAt text offset;
+          b = byteAt text (offset + 1);
+          c = byteAt text (offset + 2);
+          triple = a * 65536 + b * 256 + c;
+        in
+        base64Char (triple / 262144)
+        + base64Char ((triple / 4096) - (triple / 262144) * 64)
+        + base64Char ((triple / 64) - (triple / 4096) * 64)
+        + base64Char (triple - (triple / 64) * 64);
+      tail =
+        if remainder == 0 then
+          ""
+        else
+          let
+            offset = fullGroups * 3;
+            a = byteAt text offset;
+            b = byteAt text (offset + 1);
+          in
+          if remainder == 1 then
+            base64Char (a / 4) + base64Char ((a - (a / 4) * 4) * 16) + "=="
+          else
+            base64Char (a / 4)
+            + base64Char ((a - (a / 4) * 4) * 16 + b / 16)
+            + base64Char ((b - (b / 16) * 16) * 4)
+            + "=";
+    in
+    builtins.concatStringsSep "" (builtins.genList encodeGroup fullGroups) + tail;
+
+  linuxBuilderHostKeyPath = config.nix-config.linuxBuilderHostKeyPath;
+  linuxBuilderHostKey =
+    if builtins.pathExists linuxBuilderHostKeyPath then
+      builtins.readFile linuxBuilderHostKeyPath
+    else
+      "";
+  # The checked-in pin is operator-supplied public trust material (spec
+  # task 2.3). Until it is published the Linux record leaves the host-key
+  # field at its default (`-`), so SSH falls back to known_hosts and fails
+  # closed instead of trusting an invented key.
+  linuxBuilderHostKeyField =
+    if linuxBuilderHostKey == "" then "-" else base64Encode linuxBuilderHostKey;
+
+  buildersText = ''
+    ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net aarch64-darwin ${config.sops.secrets.mac-builder-ssh-private-key.path} 8 1 - - c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1XOEpoU2lLaXA3aVlHc3AyY08zVTBJTmNYeTliZkNRU0lPVEdvejRPcUkK
+    ssh-ng://builder@linux-builder.tuxedo-musical.ts.net aarch64-linux ${
+      config.sops.secrets."linux-builder-client-key".path
+    } 4 1 - - ${linuxBuilderHostKeyField}
+  '';
+  buildersFile = pkgs.writeText "nix-builders" buildersText;
+in
 {
   imports = [
     inputs.home-manager.darwinModules.home-manager
@@ -22,6 +120,20 @@
   options.nix-config.repoPath = lib.mkOption {
     type = lib.types.str;
     description = "Absolute path to the nix-config repository checkout on this machine";
+  };
+
+  options.nix-config.linuxBuilderHostKeyPath = lib.mkOption {
+    type = lib.types.str;
+    default = "${toString ../..}/certificates/linux-builder/ssh_host_ed25519_key.pub";
+    description = "Absolute path to the checked-in public SSH host-key pin for the Linux builder.";
+  };
+
+  options.nix-config.linuxBuilderBuilders = lib.mkOption {
+    type = lib.types.package;
+    internal = true;
+    readOnly = true;
+    description = "Generated Nix builders file containing the Darwin and Linux remote machine records.";
+    default = buildersFile;
   };
 
   config = {
@@ -59,11 +171,12 @@
         # `darwin-rebuild switch` when many derivations are pulled from
         max-substitution-jobs = 32;
         max-jobs = 0;
-        # Pin mac-builder's sshd host key (base64 of
-        # `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMW8JhSiKip7iYGsp2cO3U0INcXy9bfCQSIOTGoz4OqI`)
-        # so the root nix-daemon verifies the builder instead of consulting
-        # the missing /var/root/.ssh/known_hosts.
-        builders = lib.mkForce "ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net aarch64-darwin ${config.sops.secrets.mac-builder-ssh-private-key.path} 8 1 - - c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1XOEpoU2lLaXA3aVlHc3AyY08zVTBJTmNYeTliZkNRU0lPVEdvejRPcUkK";
+        # Both remote machine records live in one `pkgs.writeText` file
+        # referenced through Nix's `@file` form. The file contains only
+        # public host identity, endpoints, and runtime secret paths -- never
+        # a private key value. Keeping the Darwin record here preserves its
+        # existing endpoint and fields.
+        builders = lib.mkForce "@${buildersFile}";
         builders-use-substitutes = true;
         # Append nix-community via extra-* so the nix-darwin defaults
         # (cache.nixos.org + its public key) aren't re-declared and duplicated

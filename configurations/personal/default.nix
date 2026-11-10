@@ -24,6 +24,24 @@
       mode = "0400";
     };
 
+    # Dedicated client key for the Linux builder, in its own encrypted store.
+    # The machine record references only this root-only runtime path; the key
+    # value never enters the Nix store. The store is operator-provisioned by
+    # the builder sync command; the empty evaluation-only file keeps the host
+    # evaluable beforehand, while sops activation fails closed because the
+    # declared key is absent.
+    secrets."linux-builder-client-key" = {
+      sopsFile = builtins.toString (
+        if builtins.pathExists ../../secrets/linux-builder-client.personal.yaml then
+          ../../secrets/linux-builder-client.personal.yaml
+        else
+          pkgs.writeText "linux-builder-client-personal-unprovisioned.yaml" ""
+      );
+      key = "linux-builder-client-key";
+      owner = "root";
+      mode = "0400";
+    };
+
     # Deskflow server TLS identity (cert + private key, PEM). Decrypted to an
     # owner-only path under /run/secrets and referenced by path from the
     # personal host's home.deskflow.tls.certificateFile -- the key never enters
