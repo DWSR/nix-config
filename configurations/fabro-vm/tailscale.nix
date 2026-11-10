@@ -1,7 +1,7 @@
 # Tailscale on the fabro host: the guest joins the tailnet as a persistent
-# tagged node and advertises the three application services as Tailscale
-# Services (`svc:fabro`, `svc:litellm`, and `svc:opencode`, defined in the
-# admin console).
+# tagged node and advertises its application services as Tailscale Services
+# (`svc:fabro`, `svc:litellm`, `svc:opencode`, and optionally
+# `svc:total-recall`, defined in the admin console).
 #
 # Node registration uses the OAuth client credentials from the 1Password
 # item `Fabro Host Tailscale Credentials`
@@ -62,10 +62,22 @@ in
   };
 
   systemd.services.tailscale-serve = {
-    description = "Advertise the fabro, litellm, and opencode Tailscale Services";
+    description = "Advertise the fabro application Tailscale Services";
     after = [
       "tailscaled.service"
       "tailscaled-autoconnect.service"
+    ]
+    ++ lib.optionals config.fabro.totalRecall.enable [
+      "iii.service"
+      "total-recall-harness-ingestion.service"
+      "total-recall-harness-event-persistence.service"
+      "total-recall-session-post-processing.service"
+    ];
+    wants = lib.optionals config.fabro.totalRecall.enable [
+      "iii.service"
+      "total-recall-harness-ingestion.service"
+      "total-recall-harness-event-persistence.service"
+      "total-recall-session-post-processing.service"
     ];
     requires = [ "tailscaled-autoconnect.service" ];
     wantedBy = [ "multi-user.target" ];
@@ -73,8 +85,8 @@ in
       Type = "oneshot";
       Restart = "on-failure";
       RestartSec = 5;
-      # Tailnet-facing ports: all three admin-console resource definitions
-      # use tcp:443, so the services are reachable at
+      # Tailnet-facing ports: all admin-console resource definitions use
+      # tcp:443, so the services are reachable at
       # https://fabro.tuxedo-musical.ts.net/,
       # https://litellm.tuxedo-musical.ts.net/, and
       # https://opencode.tuxedo-musical.ts.net/ (no port suffix; TLS is
@@ -86,6 +98,9 @@ in
         "${lib.getExe cfg.package} serve --service=svc:fabro --https=443 http://127.0.0.1:32276"
         "${lib.getExe cfg.package} serve --service=svc:litellm --https=443 http://127.0.0.1:4000"
         "${lib.getExe cfg.package} serve --service=svc:opencode --https=443 http://127.0.0.1:4096"
+      ]
+      ++ lib.optionals config.fabro.totalRecall.enable [
+        "${lib.getExe cfg.package} serve --service=svc:total-recall --https=443 http://127.0.0.1:49134"
       ];
     };
   };
