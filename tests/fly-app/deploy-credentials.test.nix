@@ -19,6 +19,10 @@ let
 
     sys.excepthook = report_test_error
     docker_config = pathlib.Path(os.environ["DOCKER_CONFIG"])
+    if not docker_config.name.startswith("fly-app-docker-"):
+        raise SystemExit("Docker credentials are not in a private temporary directory")
+    if docker_config.stat().st_uid != os.getuid():
+        raise SystemExit("Docker credential directory has an unexpected owner")
     config_path = docker_config / "config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
     auth = config["auths"]["registry.fly.io"]["auth"]
@@ -159,6 +163,14 @@ pkgs.runCommand "fly-app-deploy-credentials-test"
             raise SystemExit("publisher did not receive the expected temporary Docker auth")
         if pathlib.Path(record[0]).exists():
             raise SystemExit("temporary Docker credentials survived publisher completion")
+
+    result, record, publisher_error = run({"PUBLISHER_EXIT": "127"})
+    if result.returncode == 0:
+        raise SystemExit("publisher exit status 127 was reported as success")
+    if token in result.stdout or token in result.stderr or auth in result.stdout or auth in result.stderr:
+        raise SystemExit("publisher failure diagnostics exposed runtime credentials")
+    if len(record) != 2 or pathlib.Path(record[0]).exists():
+        raise SystemExit("temporary Docker credentials were not cleaned after publisher failure")
 
     deployed_artifact = pathlib.Path(deploy).read_bytes()
     if token.encode() in deployed_artifact:
