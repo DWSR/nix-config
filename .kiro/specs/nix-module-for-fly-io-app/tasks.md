@@ -49,7 +49,7 @@
   - _Depends: 2.3, 3.2_
   - _Boundary: `scripts/fly-app-publish.nix`_
   - _Requirements: 3.1, 3.2, 3.4, 3.8, 5.1_
-- [ ] 3.4 Apply image-identity and publication-state rules
+- [x] 3.4 Apply image-identity and publication-state rules
   - Persist a non-secret per-app record with image identity/reference/digest; skip an unchanged confirmed digest, publish on change, and fail without a push for missing or wrong remote digest when state is intact.
   - Done when state loss permits automatic first publication while intact-state image disappearance returns failure without republishing.
   - _Boundary: `scripts/fly-app-publish.nix`_
