@@ -178,7 +178,7 @@
   - _Requirements: 7.1, 7.5, 7.6_
   - _Depends: 8.1_
 
-- [ ] 8.3 Export the capture environment for OpenCode and Pi
+- [x] 8.3 Export the capture environment for OpenCode and Pi
   - Export `III_URL = endpoint` and `HARNESS_EVENTS_BIN = ${harnessEvents}/bin/harness-events` through `home.sessionVariables`, `home.opencode.wrapperCommands`, and `programs.pi.coding-agent.environment`, all from the same two option values
   - Follow the existing shapes in `home-manager/common/opencode.nix` and `home-manager/common/pi.nix`; add no new wrapper, preflight, or second endpoint variable
   - Keep the adapters fail-open: no session-blocking preflight, no retry loop, and no path that aborts an OpenCode or Pi session when the endpoint is unreachable
