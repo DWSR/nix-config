@@ -20,7 +20,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 1.5, 1.6, 2.4, 9.10_
 
 - [ ] 2. Explicit spec resolution and artifact readers
-- [ ] 2.1 (P) Resolve one spec directory from explicit inputs
+- [x] 2.1 (P) Resolve one spec directory from explicit inputs
   - Implement `SpecPaths::resolve(root, name)` joining `<root>/.kiro/specs/<name>`, with `--root` defaulting to `.` and no parent search or cwd inference.
   - Reject empty, `.`, `..`, absolute, `/`-containing, and NUL-containing names before joining; require an existing directory and report the joined path verbatim without canonicalisation.
   - Expose `directory()`, `name()`, `spec_json()`, `tasks_md()`, and `requirements_md()`; never derive an artifact path from a task ID.
