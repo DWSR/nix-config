@@ -1329,7 +1329,7 @@ for (const hostRole of ['personal']) {
       rendered.nixConfText,
       /^ssl-cert-file = \/etc\/ssl\/certs\/ca-certificates\.crt$/m,
     );
-    assert.ok(rendered.nixConfText.includes(localSubstituter));
+    assert.equal(new Set(rendered.nixConfText.split(/\s+/)).has(localSubstituter), true);
     assert.ok(rendered.nixConfText.includes(existingExtraSubstituter));
     assert.ok(rendered.nixConfText.includes(cachePublicKey));
     assert.ok(rendered.nixConfText.includes(existingCacheKey));
