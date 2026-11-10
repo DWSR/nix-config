@@ -2170,6 +2170,132 @@
             let
               vm = self.nixosConfigurations.fabro-vm.config;
               kernelConfig = builtins.readFile vm.boot.kernelPackages.kernel.configfile;
+              # Boot, supervision, and ordering contract for the guest's
+              # total-recall stack (install-total-recall-on-fabro-vm spec,
+              # task 9.1; requirements 9.1, 9.11; design "C3: Guest control
+              # plane" and "Guest boot and switch ordering"). The long-running
+              # runtime units share the `total-recall` service account and
+              # restart on any exit. `total-recall-migrate` (runs as
+              # `postgres`) and `total-recall-config` (a RemainAfterExit
+              # oneshot) are the documented oneshot exceptions: systemd
+              # refuses `Restart=always` for `Type=oneshot`. Every listed edge
+              # is `after`+`requires`, except the harness workers' edges to
+              # the iii registry workers, which the design specifies as
+              # `after` only.
+              totalRecallLongRunningUnits = [
+                "iii"
+                "iii-database"
+                "iii-queue"
+                "iii-cron"
+                "total-recall-harness-ingestion"
+                "total-recall-harness-event-persistence"
+                "total-recall-session-post-processing"
+              ];
+              totalRecallBootUnits = [
+                "total-recall-migrate"
+                "total-recall-config"
+                "tailscale-serve"
+              ]
+              ++ totalRecallLongRunningUnits;
+              totalRecallUnit = name: vm.systemd.services.${name};
+              totalRecallMissingUnits = builtins.filter (
+                name: !(builtins.hasAttr name vm.systemd.services)
+              ) totalRecallBootUnits;
+              totalRecallNotBootEnabled = builtins.filter (
+                name: !(builtins.elem "multi-user.target" (totalRecallUnit name).wantedBy)
+              ) totalRecallBootUnits;
+              totalRecallMisSupervised = builtins.filter (
+                name:
+                let
+                  inherit (totalRecallUnit name) serviceConfig;
+                in
+                (serviceConfig.User or null) != "total-recall"
+                || (serviceConfig.Group or null) != "total-recall"
+                || (serviceConfig.Restart or null) != "always"
+                || (serviceConfig.RestartSec or null) != 2
+              ) totalRecallLongRunningUnits;
+              totalRecallRequiredEdges = [
+                # postgresql -> total-recall-migrate -> iii-database
+                {
+                  unit = "total-recall-migrate";
+                  dependency = "postgresql.service";
+                }
+                {
+                  unit = "iii-database";
+                  dependency = "total-recall-migrate.service";
+                }
+                # total-recall-config -> iii
+                {
+                  unit = "iii";
+                  dependency = "total-recall-config.service";
+                }
+                # iii -> every worker unit
+                {
+                  unit = "iii-database";
+                  dependency = "iii.service";
+                }
+                {
+                  unit = "iii-queue";
+                  dependency = "iii.service";
+                }
+                {
+                  unit = "iii-cron";
+                  dependency = "iii.service";
+                }
+                {
+                  unit = "total-recall-harness-ingestion";
+                  dependency = "iii.service";
+                }
+                {
+                  unit = "total-recall-harness-event-persistence";
+                  dependency = "iii.service";
+                }
+                {
+                  unit = "total-recall-session-post-processing";
+                  dependency = "iii.service";
+                }
+              ];
+              totalRecallAfterEdges =
+                let
+                  harnessWorkers = [
+                    "total-recall-harness-ingestion"
+                    "total-recall-harness-event-persistence"
+                    "total-recall-session-post-processing"
+                  ];
+                  registryWorkers = [
+                    "iii-database.service"
+                    "iii-queue.service"
+                    "iii-cron.service"
+                  ];
+                in
+                builtins.concatMap (
+                  unit: builtins.map (dependency: { inherit unit dependency; }) registryWorkers
+                ) harnessWorkers;
+              describeRequiredEdge = edge: "${edge.unit}.service after+requires ${edge.dependency}";
+              describeAfterEdge = edge: "${edge.unit}.service after ${edge.dependency}";
+              totalRecallBrokenRequiredEdges = builtins.filter (
+                edge:
+                !(builtins.elem edge.dependency ((totalRecallUnit edge.unit).requires or [ ]))
+                || !(builtins.elem edge.dependency ((totalRecallUnit edge.unit).after or [ ]))
+              ) totalRecallRequiredEdges;
+              totalRecallBrokenAfterEdges = builtins.filter (
+                edge: !(builtins.elem edge.dependency ((totalRecallUnit edge.unit).after or [ ]))
+              ) totalRecallAfterEdges;
+              totalRecallServeWants = [
+                "iii.service"
+                "total-recall-harness-ingestion.service"
+                "total-recall-harness-event-persistence.service"
+                "total-recall-session-post-processing.service"
+              ];
+              totalRecallServeMissingWants = builtins.filter (
+                name: !(builtins.elem name (vm.systemd.services.tailscale-serve.wants or [ ]))
+              ) totalRecallServeWants;
+              totalRecallServeMissingAfter = builtins.filter (
+                name: !(builtins.elem name (vm.systemd.services.tailscale-serve.after or [ ]))
+              ) totalRecallServeWants;
+              totalRecallServeHardRequires = builtins.filter (
+                name: builtins.elem name (vm.systemd.services.tailscale-serve.requires or [ ])
+              ) totalRecallServeWants;
               guestReport =
                 assert pkgs.lib.assertMsg vm.services.lima.enable
                   "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
@@ -2451,6 +2577,56 @@
                   builtins.elem "tailscaled-autoconnect.service" vm.systemd.services.tailscale-serve.after
                   && builtins.elem "tailscaled-autoconnect.service" vm.systemd.services.tailscale-serve.requires
                 ) "fabro-vm: tailscale-serve must run after tailscaled registration completes.";
+                # total-recall guest unit coverage, supervision, and boot
+                # ordering (install-total-recall-on-fabro-vm spec, task 9.1;
+                # requirements 9.1, 9.11). Every message names the offending
+                # unit or edge so a regression fails evaluation with an
+                # actionable message.
+                assert pkgs.lib.assertMsg (totalRecallMissingUnits == [ ])
+                  "fabro-vm: missing total-recall units [ ${
+                    pkgs.lib.concatStringsSep ", " (map (name: "${name}.service") totalRecallMissingUnits)
+                  } ]; the guest's database, migration, engine, configuration, registry, and harness units are incomplete.";
+                assert pkgs.lib.assertMsg (totalRecallNotBootEnabled == [ ])
+                  "fabro-vm: total-recall units [ ${
+                    pkgs.lib.concatStringsSep ", " (map (name: "${name}.service") totalRecallNotBootEnabled)
+                  } ] must be wantedBy multi-user.target so they start at boot.";
+                assert pkgs.lib.assertMsg (totalRecallMisSupervised == [ ])
+                  "fabro-vm: total-recall runtime units [ ${
+                    pkgs.lib.concatStringsSep ", " (map (name: "${name}.service") totalRecallMisSupervised)
+                  } ] must run as total-recall/total-recall with Restart=always and RestartSec=2.";
+                assert pkgs.lib.assertMsg
+                  (
+                    (totalRecallUnit "total-recall-migrate").serviceConfig.Type == "oneshot"
+                    && (totalRecallUnit "total-recall-migrate").serviceConfig.User == "postgres"
+                  )
+                  "fabro-vm: total-recall-migrate.service must be a oneshot running as postgres (the migration runner owns the memory schema).";
+                assert pkgs.lib.assertMsg
+                  (
+                    let
+                      inherit (totalRecallUnit "total-recall-config") serviceConfig;
+                    in
+                    serviceConfig.Type == "oneshot"
+                    && (serviceConfig.RemainAfterExit or false)
+                    && serviceConfig.User == "total-recall"
+                  )
+                  "fabro-vm: total-recall-config.service must be a RemainAfterExit oneshot running as total-recall (it seeds the engine and worker config before iii starts).";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.services.postgresql.enable
+                    && builtins.elem "multi-user.target" (vm.systemd.targets.postgresql.wantedBy or [ ])
+                    && builtins.elem "postgresql.service" (vm.systemd.targets.postgresql.requires or [ ])
+                  )
+                  "fabro-vm: postgresql.service must be enabled at boot through postgresql.target (wantedBy multi-user.target, requires postgresql.service).";
+                assert pkgs.lib.assertMsg (totalRecallBrokenRequiredEdges == [ ])
+                  "fabro-vm: total-recall boot ordering is missing [ ${pkgs.lib.concatStringsSep ", " (map describeRequiredEdge totalRecallBrokenRequiredEdges)} ]; these edges must be after+requires so PostgreSQL, the migrations, the engine, and the workers start in order.";
+                assert pkgs.lib.assertMsg (totalRecallBrokenAfterEdges == [ ])
+                  "fabro-vm: total-recall boot ordering is missing [ ${pkgs.lib.concatStringsSep ", " (map describeAfterEdge totalRecallBrokenAfterEdges)} ]; the harness workers must start after the iii registry workers they register against.";
+                assert pkgs.lib.assertMsg (totalRecallServeMissingWants == [ ])
+                  "fabro-vm: tailscale-serve.service must want [ ${pkgs.lib.concatStringsSep ", " totalRecallServeMissingWants} ] (soft ordering: a worker outage must leave the existing svc:* advertisements applied).";
+                assert pkgs.lib.assertMsg (totalRecallServeMissingAfter == [ ])
+                  "fabro-vm: tailscale-serve.service must start after [ ${pkgs.lib.concatStringsSep ", " totalRecallServeMissingAfter} ] so the Serve handler is re-applied only once the memory units are up.";
+                assert pkgs.lib.assertMsg (totalRecallServeHardRequires == [ ])
+                  "fabro-vm: tailscale-serve.service must not require [ ${pkgs.lib.concatStringsSep ", " totalRecallServeHardRequires} ]; the memory units are wants only.";
                 assert pkgs.lib.assertMsg
                   (
                     builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
