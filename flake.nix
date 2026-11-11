@@ -3324,6 +3324,75 @@
 
                 printf 'kiro-spec-corpus: %s specs deterministic and unmodified\n' "$specs" > "$out"
               '';
+
+          # Host and sandbox-image wiring proof (spec
+          # rust-based-cli-for-interacting-with-kiro-specs, task 9.5;
+          # requirements 1.1, 1.2, 1.3; design "Testing Strategy → Packaging
+          # and Nix Checks"). Every host that imports the common Home Manager
+          # tree must carry a `kiro-spec` package whose pname and version match
+          # the overlay crate, and the fabro-vm sandbox image `contents` must
+          # carry the same linux package, down to the derivation the
+          # `packages.aarch64-linux.kiro-spec` output exposes. Hosts without a
+          # Home Manager import (mac-builder, the build machine) are named
+          # exclusions in the report, never silent passes. Each assertion runs
+          # at eval time with the host/user or image name in the message, so
+          # `nix eval .#checks.aarch64-darwin.kiro-spec-wiring.drvPath` fails
+          # too.
+          kiro-spec-wiring =
+            let
+              expectedPname = pkgs.kiro-spec.pname;
+              expectedVersion = pkgs.kiro-spec.version;
+              hosts = builtins.attrNames self.darwinConfigurations;
+              hasHomeManager =
+                hostName: builtins.hasAttr "home-manager" self.darwinConfigurations.${hostName}.config;
+              hmHosts = builtins.filter hasHomeManager hosts;
+              excludedHosts = builtins.filter (hostName: !(hasHomeManager hostName)) hosts;
+
+              checkHost =
+                hostName:
+                let
+                  hmUsers = self.darwinConfigurations.${hostName}.config.home-manager.users;
+                  userNames = builtins.attrNames hmUsers;
+                  checkUser =
+                    userName:
+                    let
+                      wired = builtins.filter (
+                        p: (p.pname or "") == expectedPname && (p.version or "") == expectedVersion
+                      ) hmUsers.${userName}.home.packages;
+                    in
+                    assert pkgs.lib.assertMsg (wired != [ ])
+                      "kiro-spec-wiring: host ${hostName} user ${userName} home.packages does not contain ${expectedPname}-${expectedVersion}; the common Home Manager kiro-spec import is missing or the package is not installed (Req 1.1).";
+                    "${hostName}:${userName}=${expectedPname}-${expectedVersion}";
+                in
+                assert pkgs.lib.assertMsg (userNames != [ ])
+                  "kiro-spec-wiring: host ${hostName} imports Home Manager but declares no home-manager.users, so its kiro-spec package cannot be verified (Req 1.1).";
+                pkgs.lib.concatMapStringsSep "," checkUser userNames;
+
+              hostReport = pkgs.lib.concatMapStringsSep "\n" checkHost hmHosts;
+
+              guestContents = self.nixosConfigurations.fabro-vm.config.fabro.sandboxImage.contents;
+              linuxPackage = self.packages.aarch64-linux.kiro-spec;
+              imageMatches = builtins.filter (
+                p: (p.pname or "") == expectedPname && (p.version or "") == expectedVersion
+              ) guestContents;
+
+              imageReport =
+                assert pkgs.lib.assertMsg (imageMatches != [ ])
+                  "kiro-spec-wiring: fabro-vm sandbox image contents do not contain ${expectedPname}-${expectedVersion}; the sandbox-image contents entry is missing (Req 1.2).";
+                assert pkgs.lib.assertMsg (builtins.any (p: p.drvPath == linuxPackage.drvPath) imageMatches)
+                  "kiro-spec-wiring: fabro-vm sandbox image contents contain ${expectedPname}-${expectedVersion} but not the packaged linux derivation (expected drvPath ${linuxPackage.drvPath}) (Req 1.2).";
+                "fabro-vm image contents=${expectedPname}-${expectedVersion}; drvPath=${builtins.unsafeDiscardStringContext linuxPackage.drvPath}";
+            in
+            pkgs.runCommand "kiro-spec-wiring"
+              {
+                inherit hostReport imageReport;
+                excludedHosts = pkgs.lib.concatStringsSep " " excludedHosts;
+              }
+              ''
+                printf 'kiro-spec-wiring: hosts=%s\n' "$hostReport" > "$out"
+                printf 'kiro-spec-wiring: excluded hosts without a Home Manager import=%s\n' "$excludedHosts" >> "$out"
+                printf 'kiro-spec-wiring: %s\n' "$imageReport" >> "$out"
+              '';
         }
         // pkgs.lib.optionalAttrs (builtins.elem system fabroSystems) {
           # Offline parse/validate of every committed workflow package. The
