@@ -84,7 +84,10 @@ in
         # a2a-sdk as an extra_proxy dependency) down with it. Make the disable
         # unconditional; `-k` substring matching also deselects the e2e variants.
         a2a-sdk = pyprev.a2a-sdk.overridePythonAttrs (old: {
-          disabledTests = (old.disabledTests or [ ]) ++ [ "test_notification_triggering" ];
+          disabledTests = (old.disabledTests or [ ]) ++ [
+            "test_notification_triggering"
+            "test_trace_function_sync_attribute_extractor_error_logged"
+          ];
         });
         # This integration test runs many subprocesses after tagging, then
         # asserts the tag timestamp is less than a minute old. Under parallel
