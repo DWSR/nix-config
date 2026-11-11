@@ -102,6 +102,23 @@ test('copyToRoot exposes the tools on /bin, the CA bundle, and /usr/bin/env', ()
   // ripgrep/gawk/jq/curl are the developer tools workflow agents expect, and
   // `fabro-sandbox-usr-bin-env` puts `/usr/bin/env` in the root so
   // `#!/usr/bin/env node` shims from npm-installed packages run.
+  // Requirement 1.2: the `kiro-spec` CLI must be on the image's command path.
+  // Assert the declared contents and the built root carry it explicitly (not
+  // only through the loop and the content/copy equality below), so dropping
+  // the `contents` entry fails with a message that names the missing package
+  // and prints the evaluated name lists.
+  assert.ok(
+    image.contentNames.some(
+      (candidate) => candidate === 'kiro-spec' || candidate.startsWith('kiro-spec-'),
+    ),
+    `contents must carry kiro-spec: ${JSON.stringify(image.contentNames)}`,
+  );
+  assert.ok(
+    image.copyToRootNames.some(
+      (candidate) => candidate === 'kiro-spec' || candidate.startsWith('kiro-spec-'),
+    ),
+    `copyToRoot must carry kiro-spec: ${JSON.stringify(image.copyToRootNames)}`,
+  );
   for (const name of [
     'bash',
     'git',
@@ -118,6 +135,7 @@ test('copyToRoot exposes the tools on /bin, the CA bundle, and /usr/bin/env', ()
     'gawk',
     'jq',
     'curl',
+    'kiro-spec',
     'fabro-sandbox-usr-bin-env',
   ]) {
     assert.ok(
