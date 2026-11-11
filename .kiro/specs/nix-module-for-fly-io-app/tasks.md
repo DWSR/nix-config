@@ -108,7 +108,7 @@
   - _Depends: 4.1_
   - _Boundary: `tests/fly-app/deploy.test.js`_
   - _Requirements: 3.1, 3.3, 3.4, 3.5, 3.8, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3_
-- [ ] 5.3 Verify two-stage deployment and failure propagation
+- [x] 5.3 Verify two-stage deployment and failure propagation
   - Extend deployment stubs for two consecutive CLI/API runs, full Machine fields, Pilot, ownership and counts, surplus/immutable errors, partial failures, and a caller script observing nonzero status.
   - Done when both runs preserve all declared Machine configs and rejected deployments never report success.
   - _Boundary: `tests/fly-app/deploy.test.js`_
