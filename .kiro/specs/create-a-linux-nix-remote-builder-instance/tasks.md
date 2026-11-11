@@ -88,7 +88,7 @@
   - _Boundary: Builder Host and Lima Render Tests_
   - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 5.1, 5.2_
 
-- [ ] 6.2 (P) Test Fabro machine rendering and no-local-build policy
+- [x] 6.2 (P) Test Fabro machine rendering and no-local-build policy
   - Add renderer tests for both machine records, Linux system/key/host-key fields, atomic output and permissions, and failures for missing or invalid inputs.
   - Evaluate Fabro to assert its Linux route, unchanged Darwin route, retained daemon ordering/substitute settings, and `max-jobs = 0`.
   - Done when tests fail for a missing Linux record, altered Darwin record, invalid key path, or nonzero Fabro local-job limit.

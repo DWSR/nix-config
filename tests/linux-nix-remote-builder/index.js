@@ -6,4 +6,5 @@
 // added by their own tasks and can be required here when the combined flake
 // check (task 6.4) is registered.
 require('./builder-host.test.js');
+require('./fabro-dispatch.test.js');
 require('./lima-render.test.js');
