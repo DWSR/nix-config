@@ -32,6 +32,9 @@ jobs:
             extra-substituters = https://nix-community.cachix.org
             extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
 
+      - name: Validate Lima config
+        run: nix build --no-link '.#checks.aarch64-darwin.lima-vm-config-validate'
+
       - name: Run builds as the runner user
         run: |
           # Several checks evaluate the flake again from inside their build
@@ -50,7 +53,7 @@ jobs:
           attrs=$(nix eval --raw .#checks.aarch64-darwin --apply 'attrs:
             let
               names = builtins.filter
-                (name: !(builtins.match "^(opencode|agentmemory-opencode).*" name != null))
+                (name: !(builtins.match "^(opencode|agentmemory-opencode|lima-vm-config-validate).*" name != null))
                 (builtins.attrNames attrs);
             in
             builtins.concatStringsSep " " (map (name: ".#checks.aarch64-darwin.${name}") names)')

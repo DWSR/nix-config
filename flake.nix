@@ -1968,6 +1968,7 @@
             pkgs.runCommand "omlx-service"
               {
                 nativeBuildInputs = [
+                  pkgs.git
                   pkgs.nix
                   pkgs.nodejs
                 ];
