@@ -13,7 +13,7 @@ set before the guest rebuild.
 
 ## Tasks
 
-- [ ] 1. Deployment catalog
+- [x] 1. Deployment catalog
 - [x] 1.1 Create `configurations/fabro-vm/litellm-catalog.nix` with the provider and logical-model tables
   - Declare providers `chatgpt` (prefix `chatgpt/`, no base URL or key var, allowlist `reasoning_effort`, no client-session-header requirement), `opencode-go` (`openai/`, `https://opencode.ai/zen/go/v1`, `OPENCODE_API_KEY`, requires the header), and `opencode-zen` (`openai/`, `https://opencode.ai/zen/v1`, `OPENCODE_API_KEY`, requires the header).
   - Declare the ten logical models and eleven deployments from the design's Initial Logical Model table, with `requestDefaults`, limits, weights, display names that drop the provider parenthetical, Fabro effort levels, and `smallDefault` on `deepseek-v4.1-flash`; `gpt-6-luna` is the only two-deployment group and both of its deployments pin `reasoning_effort = "xhigh"`.
@@ -41,7 +41,7 @@ set before the guest rebuild.
   - Observable: `nix eval` shows the same 10 keys on both surfaces, every Fabro record with `api_model` equal to its key and both capability flags true, and no `/` in any projected id.
   - _Requirements: 2.2, 2.8, 6.1, 6.2, 6.5, 6.8, 6.10_
 
-- [ ] 2. Session identity
+- [x] 2. Session identity
 - [x] 2.1 Implement the pure resolver `configurations/fabro-vm/litellm_session_identity.py`
   - `existing_session_id(metadata_dicts)` returns the first non-empty stringified `session_id`, else `None`; `producer_tag(user_agent)` takes the product token before `/`, lowercases it, keeps `[a-z0-9._-]` up to 32 characters, and falls back to `unknown`.
   - `derive_session_identity(prompt_cache_key, user_agent)` returns `None` unless the key is a string that is non-empty after stripping, at most 512 characters, and free of CR, LF, and NUL; otherwise it returns `bridge:v1:<producer>:<sha256 hex of the stripped key>`.
@@ -56,7 +56,7 @@ set before the guest rebuild.
   - _Requirements: 4.3, 4.4, 4.5, 4.9, 4.10, 4.11, 8.7_
   - _Depends: 2.1_
 
-- [ ] 3. Gateway configuration
+- [x] 3. Gateway configuration
 - [x] 3.1 Make `configurations/fabro-vm/litellm.nix` consume the catalog
   - Replace the hand-written `chatgpt/`/`opencode-go/`/`opencode-zen/` `model_list` with `catalog.modelList` and the `opencode-go/*`/`opencode-zen/*` prefix forwarding list with `catalog.forwardClientHeaders`; add no aliases, wildcards, or provider-scoped ids.
   - Keep `environmentFile`, `CHATGPT_TOKEN_DIR`, the health gate, the login wrapper, and the `os.environ/OPENCODE_API_KEY` references untouched, and rewrite the module header comment so it describes catalog sourcing, group-scoped forwarding, and the forwarded allowlist instead of provider-prefixed groups.
@@ -85,7 +85,7 @@ set before the guest rebuild.
   - _Requirements: 4.11_
   - _Depends: 2.2, 3.2, 3.3_
 
-- [ ] 4. Client surfaces
+- [x] 4. Client surfaces
 - [x] 4.1 (P) Point OpenCode at the catalog model map
   - Set `model = "opencode-litellm/${catalog.openCode.defaultModel}"` and `provider.opencode-litellm.models = catalog.openCode.models`; keep the provider id, `npm`, `baseURL`, and `apiKey` unchanged.
   - Add no `options.headers`, and rewrite the provider comment so forwarding is described as group-scoped and the session header as OpenCode's own.
@@ -102,7 +102,7 @@ set before the guest rebuild.
   - _Boundary: Fabro Model Surface_
   - _Depends: 1.4_
 
-- [ ] 5. Repository checks
+- [x] 5. Repository checks
 - [x] 5.1 (P) Create the routing test harness and the catalog suite
   - Add `tests/litellm-routing/{helpers.js,package.json,catalog.test.js}` reusing the `nixEvalJson`/`nixEvalFailure` pattern from `tests/litellm-service/helpers.js`, with a `main` field so `node --test` loads the directory.
   - Assert through `mkCatalog` fixtures that disagreeing `mode`, `requestDefaults`, `contextTokens`, or `maxOutputTokens`, a missing required field, an empty group, an unknown provider, a `/` or provider-token id, a duplicate id, and an invalid default model each fail with a message naming the logical model, the deployment, and the field.
@@ -152,7 +152,7 @@ set before the guest rebuild.
   - _Requirements: 1.1, 1.3, 2.2, 7.1, 7.6_
   - _Depends: 3.1_
 
-- [ ] 7. Operator documentation
+- [x] 7. Operator documentation
 - [x] 7.1 (P) Write `docs/litellm-routing-runbook.md`
   - Document how to add a provider, logical model, deployment, or weight in `litellm-catalog.nix`; where weights, `deployment_affinity_ttl_seconds`, `cooldown_time`, `num_retries`, and `max_fallbacks` live; and that `x-litellm-model-id` names `<logical>@<provider>` on each response.
   - State the forwarded-header allowlist (`x-*` except `x-stainless-*`, plus `anthropic-beta`), the session-identity rules (header precedence, `bridge:v1:<producer>:<sha256>` for body keys, the stable-`User-Agent` requirement, pins cleared by restart), and that 1.86.0 fails over on transport errors without entering cooldown.
@@ -176,7 +176,7 @@ set before the guest rebuild.
   - _Requirements: 8.10_
   - _Boundary: .kiro/specs/configure-litellm-load-balancing-across-existing/_
 
-- [ ] 8. Verification
+- [x] 8. Verification
 - [x] 8.1 Run the full deterministic verification set
   - Build `litellm-routing`, `litellm-affinity-bridge`, and the existing `litellm-service` checks, and evaluate `fabro-vm-guest-eval`, `nixosConfigurations.fabro-vm`, and the `opencode`/`fabro` guest settings.
   - Confirm the macOS Home Manager `programs.litellm` render tests still pass unchanged, no source file still names a removed provider-scoped id, and the generated config directory contains only `config.yaml` and the two Python modules.
