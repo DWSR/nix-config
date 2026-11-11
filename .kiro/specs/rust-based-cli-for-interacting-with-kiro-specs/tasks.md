@@ -149,7 +149,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 7.7, 7.8, 8.3, 8.6, 8.7, 8.8, 8.9, 10.6_
 
 - [ ] 8. Fixture-driven test suite
-- [ ] 8.1 Build the temp-tree test harness
+- [x] 8.1 Build the temp-tree test harness
   - Add `tests/support/mod.rs` building throwaway `.kiro/specs/<name>/` trees under `std::env::temp_dir()` from declarative inputs and invoking the binary via `env!("CARGO_BIN_EXE_kiro-spec")` to capture stdout, stderr, and exit status.
   - Provide helpers to copy a fixture tree into a temp directory, hash a tree before and after a run, and force a read-only spec directory.
   - Confirm a harness self-test round-trips a temporary spec tree and reports captured streams without writing under the repository.
