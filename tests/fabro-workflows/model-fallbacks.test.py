@@ -6,7 +6,6 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".fabro" / "workflows"
 FABRO_NIX = ROOT / "configurations" / "fabro-vm" / "fabro.nix"
-LITELLM_NIX = ROOT / "configurations" / "fabro-vm" / "litellm.nix"
 CATALOG_NIX = ROOT / "configurations" / "fabro-vm" / "litellm-catalog.nix"
 ONESHOT_GRAPH = WORKFLOW_DIR / "oneshot" / "workflow.fabro"
 ONESHOT_REVIEW = WORKFLOW_DIR / "oneshot" / "prompts" / "review.md"
@@ -33,20 +32,29 @@ def load_workflow(name):
 class ModelFallbackTests(unittest.TestCase):
     def test_fabro_default_model_is_deepseek_v4_1_flash(self):
         text = FABRO_NIX.read_text()
-        self.assertIn('default_model = "deepseek-v4.1-flash";', text)
+        self.assertIn("default_model = catalog.fabro.defaultModel;", text)
 
         cli = text.split("cli = {", 1)[1].split("target =", 1)[0]
-        self.assertIn('name = "deepseek-v4.1-flash";', cli)
+        self.assertIn("name = catalog.fabro.defaultModel;", cli)
 
         run = text.split("run = {", 1)[1].split("run_branch = {", 1)[0]
-        self.assertIn('model.name = "deepseek-v4.1-flash";', run)
+        self.assertIn("model.name = catalog.fabro.defaultModel;", run)
+
+        catalog = CATALOG_NIX.read_text()
+        self.assertIn('defaultModel = "deepseek-v4.1-flash";', catalog)
 
     def test_deepseek_default_routes_through_opencode_go(self):
-        text = FABRO_NIX.read_text()
+        # The Fabro record uses the provider-free logical id; the catalog
+        # deployment is what maps it to the OpenCode Go upstream.
+        text = CATALOG_NIX.read_text()
         _, _, tail = text.partition('"deepseek-v4.1-flash" = {')
-        self.assertTrue(tail, "deepseek-v4.1-flash fabro model is missing")
+        self.assertTrue(tail, "deepseek-v4.1-flash catalog group is missing")
         block = tail.split('"glm-5.3-flash" = {', 1)[0]
-        self.assertIn('api_model = "opencode-go/deepseek-v4.1-flash";', block)
+        self.assertIn('provider = "opencode-go";', block)
+        self.assertIn('upstreamModel = "deepseek-v4.1-flash";', block)
+
+        fabro = FABRO_NIX.read_text()
+        self.assertIn("models = catalog.fabro.models;", fabro)
 
     def test_workflow_nodes_inherit_the_deepseek_default(self):
         for path in sorted(WORKFLOW_DIR.glob("*/workflow.fabro")):
@@ -66,14 +74,16 @@ class ModelFallbackTests(unittest.TestCase):
     def test_no_run_level_controls_are_forced_on_the_fallback(self):
         # Run-level controls also apply to the fallback model, and
         # gpt-6-luna advertises only xhigh effort, so setting max there would
-        # break every failover call. DeepSeek gets its max effort and GPT-6
-        # Luna its xhigh effort from their litellm deployments instead.
+        # break every failover call. DeepSeek uses the wire default and GPT-6
+        # Luna its xhigh effort from the catalog deployments instead.
         for name in AGENT_WORKFLOWS:
             with self.subTest(workflow=name):
                 model = load_workflow(name)["run"]["model"]
                 self.assertNotIn("controls", model)
 
     def test_deepseek_deployment_uses_the_wire_default_effort(self):
+        # The catalog leaves deepseek's request defaults empty, so the
+        # OpenCode Go wire default applies; no effort is pinned.
         text = CATALOG_NIX.read_text()
         _, _, tail = text.partition('"deepseek-v4.1-flash" = {')
         self.assertTrue(tail, "deepseek-v4.1-flash catalog group is missing")
@@ -81,15 +91,19 @@ class ModelFallbackTests(unittest.TestCase):
         self.assertIn("requestDefaults = { };", block)
         self.assertNotIn("reasoning_effort", block)
 
-    def test_deepseek_model_advertises_max_effort(self):
-        text = FABRO_NIX.read_text()
+    def test_deepseek_model_advertises_no_effort_levels(self):
+        # With no effort levels, the Fabro projection omits
+        # capabilities.reasoning_effort for deepseek.
+        text = CATALOG_NIX.read_text()
         _, _, tail = text.partition('"deepseek-v4.1-flash" = {')
-        self.assertTrue(tail, "deepseek-v4.1-flash fabro model is missing")
+        self.assertTrue(tail, "deepseek-v4.1-flash catalog group is missing")
         block = tail.split('"glm-5.3-flash" = {', 1)[0]
-        self.assertIn("reasoning_effort = {", block)
-        self.assertIn("max = true;", block)
+        self.assertNotIn("reasoningEffortLevels", block)
 
     def test_gpt_6_luna_deployments_pin_xhigh_effort(self):
+        # The merged group keeps comparable thinking depth on both
+        # deployments without a run-level control: the effort travels with
+        # each deployment.
         text = CATALOG_NIX.read_text()
         _, _, tail = text.partition("gpt-6-luna = {")
         self.assertTrue(tail, "gpt-6-luna catalog group is missing")
