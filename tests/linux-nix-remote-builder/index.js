@@ -18,4 +18,5 @@ if (process.env.LINUX_NIX_REMOTE_BUILDER_DATA_FILE) {
   require('./readme-contract.test.js');
   require('./secret-sync.test.js');
   require('./flake-check.test.js');
+  require('./live-validate.test.js');
 }

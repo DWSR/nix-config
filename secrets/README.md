@@ -714,6 +714,22 @@ Run this after the builder is deployed, the pin is committed, both clients
 have switched, and the tailnet grants are active. Every check is read-only
 except the no-fallback check, which stops and restarts the builder.
 
+The checked-in `scripts/linux-builder-live-validate.nix` harness automates
+the sequence below and appends its observations to
+`.kiro/specs/create-a-linux-nix-remote-builder-instance/live-validation-7.md`.
+Run it on the personal Mac after the steps above:
+
+```sh
+nix build --impure --no-link --print-out-paths --expr 'let
+  flake = builtins.getFlake (toString ./.);
+  pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+in import ./scripts/linux-builder-live-validate.nix { inherit pkgs; }'
+# then run <result>/bin/linux-builder-live-validate --confirm-live-state-changes
+```
+
+The manual commands below remain the reviewable source of truth for each
+observation.
+
 **1. Linux build from the Fabro guest.** The Fabro guest cannot build
 `aarch64-linux` locally (`max-jobs = 0`), so a returned output proves the
 Linux route:
