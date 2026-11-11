@@ -137,7 +137,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Return a byte-identical no-op for an already completed entry and fail before any temp file for malformed, unknown, or ambiguous identifiers.
   - Unit tests cover pending-to-completed, blocked-to-completed with reason removal, idempotent completion, and byte equality of all untouched lines.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.9, 10.3, 11.3_
-- [ ] 7.3 Plan and apply `block`
+- [x] 7.3 Plan and apply `block`
   - Rewrite the entry to `[!]` (or `[!]*`) and insert `  - _Blocked: <reason>_` directly beneath the task line using that line's terminator.
   - Replace the text and continuation lines of an existing reason bullet in place so exactly one remains; treat an identical reason as a byte-identical no-op; reject a completed entry as an unsupported transition and expose no unblock command.
   - Unit tests cover pending-to-blocked, reason replacement, same-reason no-op, optional-marker preservation, completion-as-unblock, and CRLF insertion.
