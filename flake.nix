@@ -1972,6 +1972,8 @@
                   pkgs.nix
                   pkgs.nodejs
                 ];
+                GIT_SSL_CAINFO = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+                SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
               }
               ''
                 export HOME=$(mktemp -d)
