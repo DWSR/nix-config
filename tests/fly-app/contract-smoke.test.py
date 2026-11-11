@@ -21,6 +21,12 @@ HARNESS = Path(__file__).with_name("contract-smoke.sh")
 
 class FlyContractSmokeTests(unittest.TestCase):
     def setUp(self):
+        # The harness is documented for direct invocation, so the executable
+        # bit is part of its operator-facing contract.
+        self.assertTrue(
+            os.access(HARNESS, os.X_OK),
+            f"{HARNESS} must be executable for direct invocation",
+        )
         self.temp = tempfile.TemporaryDirectory(prefix="fly-contract-test-")
         self.root = Path(self.temp.name)
         self.bin = self.root / "bin"
@@ -149,7 +155,7 @@ fi
         )
         env.update(overrides or {})
         result = subprocess.run(
-            ["bash", str(HARNESS), "demo", "registry.fly.io/demo:smoke"],
+            [str(HARNESS), "demo", "registry.fly.io/demo:smoke"],
             check=False,
             capture_output=True,
             text=True,
@@ -305,7 +311,6 @@ fi
         env.update(overrides or {})
         result = subprocess.run(
             [
-                "bash",
                 str(HARNESS),
                 "--spec",
                 str(spec_path),
@@ -550,7 +555,7 @@ fi
         ):
             with self.subTest(args=args):
                 result = subprocess.run(
-                    ["bash", str(HARNESS), *args],
+                    [str(HARNESS), *args],
                     check=False,
                     capture_output=True,
                     text=True,
