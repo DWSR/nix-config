@@ -10,9 +10,10 @@ pub mod validate;
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::path::Path;
 
 use crate::cli::{Command, Invocation};
-use crate::error::{AppError, ErrorCategory};
+use crate::error::{AppError, ErrorCategory, SpecError};
 use crate::paths::SpecPaths;
 use crate::render::Format;
 use crate::tasks::{parse_tasks, TaskDocument};
@@ -84,6 +85,7 @@ fn dispatch(invocation: &Invocation) -> Outcome {
     let result = match invocation.command() {
         Command::Tasks => read_tasks(invocation),
         Command::Next => read_next(invocation),
+        Command::Status => read_status(invocation),
         _ => return Outcome::failure(not_yet_wired(invocation.command())),
     };
     match result {
@@ -110,8 +112,36 @@ fn read_next(invocation: &Invocation) -> Result<String, AppError> {
     ))
 }
 
+fn read_status(invocation: &Invocation) -> Result<String, AppError> {
+    let paths = SpecPaths::resolve(invocation.root(), invocation.spec())?;
+    let spec_json_path = paths.spec_json();
+    let value = spec_json::read_value(&spec_json_path)?;
+    let phase =
+        spec_json::phase_of(&value).map_err(|error| named_artifact(&spec_json_path, error))?;
+    let document = read_task_document_at(&paths)?;
+    Ok(render::render_status(
+        &phase,
+        &document.counts(),
+        paths.name(),
+        selected_format(invocation),
+    ))
+}
+
+fn named_artifact(path: &Path, error: SpecError) -> AppError {
+    AppError::new(
+        error.category(),
+        path.display().to_string(),
+        error.detail().to_string(),
+    )
+}
+
 fn read_task_document(invocation: &Invocation) -> Result<(SpecPaths, TaskDocument), AppError> {
     let paths = SpecPaths::resolve(invocation.root(), invocation.spec())?;
+    let document = read_task_document_at(&paths)?;
+    Ok((paths, document))
+}
+
+fn read_task_document_at(paths: &SpecPaths) -> Result<TaskDocument, AppError> {
     let path = paths.tasks_md();
     let context = path.display().to_string();
     let bytes = std::fs::read(&path).map_err(|error| {
@@ -128,7 +158,7 @@ fn read_task_document(invocation: &Invocation) -> Result<(SpecPaths, TaskDocumen
             "file is not valid UTF-8",
         )
     })?;
-    Ok((paths, parse_tasks(&text)))
+    Ok(parse_tasks(&text))
 }
 
 fn selected_format(invocation: &Invocation) -> Format {
@@ -208,10 +238,13 @@ mod tests {
             OsString::from("kiro-spec"),
             OsString::from("--spec"),
             OsString::from("demo"),
-            OsString::from("status"),
+            OsString::from("validate"),
         ]);
         assert_eq!(outcome.code(), 1);
         assert_eq!(outcome.stdout(), None);
-        assert_eq!(outcome.stderr(), Some("kiro-spec: status: not yet wired\n"));
+        assert_eq!(
+            outcome.stderr(),
+            Some("kiro-spec: validate: not yet wired\n")
+        );
     }
 }
