@@ -141,6 +141,30 @@ class ModelFallbackTests(unittest.TestCase):
         self.assertIn("temporary detached checkout", review)
         self.assertIn("explicitly non-blocking", review)
 
+    def test_oneshot_has_stage_timeouts_below_its_stall_watchdog(self):
+        graph = ONESHOT_GRAPH.read_text()
+        stall_timeout = 60
+        self.assertIn('stall_timeout="%dm"' % stall_timeout, graph)
+        expected = {
+            "prepare": 10,
+            "implement": 45,
+            "check": 5,
+            "simplify": 30,
+            "review": 30,
+        }
+        for node, minutes in expected.items():
+            with self.subTest(node=node):
+                block = graph.split("    %s [\n" % node, 1)[1].split("\n    ]", 1)[0]
+                self.assertIn('timeout="%dm"' % minutes, block)
+                self.assertLess(minutes, stall_timeout)
+                self.assertNotIn("goal_gate=true", block)
+                self.assertRegex(graph, r"(?m)^    %s -> fail(?: \[|$)" % node)
+        publish = graph.split("    publish [\n", 1)[1].split("\n    ]", 1)[0]
+        self.assertIn('timeout="15m"', publish)
+        self.assertLess(15, stall_timeout)
+        self.assertIn('publish -> exit [condition="outcome=succeeded"]', graph)
+        self.assertIn("publish -> fail", graph)
+
 
 if __name__ == "__main__":
     unittest.main()

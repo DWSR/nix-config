@@ -1,6 +1,7 @@
 digraph Oneshot {
     graph [
         goal="Implement GitHub issue {{ inputs.issue }} as a oneshot change: implement it, keep the Git diff under 1000 lines (simplifying at most twice), review it adversarially, and open a pull request whose body closes the issue.",
+        stall_timeout="60m",
     ]
     rankdir=LR
 
@@ -20,7 +21,7 @@ digraph Oneshot {
         label="Validate labels and prepare",
         shape=parallelogram,
         output_schema="routing",
-        goal_gate=true,
+        timeout="10m",
         script="test -f .git/oneshot-scripts/tools.py || { echo 'oneshot: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/oneshot-scripts/tools.py prepare {{ inputs.issue }}"
     ]
 
@@ -38,7 +39,8 @@ digraph Oneshot {
         output_schema="routing",
         max_visits=8,
         max_retries=2,
-        retry_policy="patient"
+        retry_policy="patient",
+        timeout="45m"
     ]
 
     check [
@@ -46,6 +48,7 @@ digraph Oneshot {
         shape=parallelogram,
         output_schema="routing",
         max_visits=6,
+        timeout="5m",
         script="python3 .git/oneshot-scripts/tools.py check"
     ]
 
@@ -55,7 +58,8 @@ digraph Oneshot {
         output_schema="routing",
         max_visits=5,
         max_retries=2,
-        retry_policy="patient"
+        retry_policy="patient",
+        timeout="30m"
     ]
 
     review [
@@ -64,7 +68,8 @@ digraph Oneshot {
         output_schema="routing",
         max_visits=8,
         max_retries=2,
-        retry_policy="patient"
+        retry_policy="patient",
+        timeout="30m"
     ]
 
     rework [
@@ -106,7 +111,7 @@ digraph Oneshot {
     publish [
         label="Publish pull request",
         shape=parallelogram,
-        goal_gate=true,
+        timeout="15m",
         script="python3 .git/oneshot-scripts/tools.py publish"
     ]
 
@@ -166,6 +171,7 @@ digraph Oneshot {
     rework -> fail
 
     salvage -> exit
-    publish -> exit
+    publish -> exit [condition="outcome=succeeded"]
+    publish -> fail
     fail -> exit
 }
