@@ -88,7 +88,7 @@
   - _Depends: 3.1, 3.5, 3.9_
   - _Boundary: `scripts/fly-app-deploy.nix`_
   - _Requirements: 3.8, 4.2, 4.3, 4.4, 5.1_
-- [ ] 4.2 Export reusable module, generator, and Linux deploy outputs
+- [x] 4.2 Export reusable module, generator, and Linux deploy outputs
   - Wire the public module/helper and deploy package into `flake.nix`; extend the fixture created in Task 3.1 to invoke two distinct app commands without SSH or NixOS activation.
   - Done when a consumer flake resolves and invokes each selected `deploy-<app>` output under Linux.
   - _Depends: 3.1, 4.1_

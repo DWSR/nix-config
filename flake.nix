@@ -256,6 +256,18 @@
     {
       formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
 
+      # Public, reusable Fly app surface for consumer flakes (spec
+      # nix-module-for-fly-io-app): the declaration module, the named-app
+      # generator, and the derivation-image helper. The Linux deployment
+      # runtime is exported separately as `packages.<system>.fly-app-deploy`,
+      # so a consumer passes the module's token-free app specifications to one
+      # `deploy-<app>` command per app without importing repository sources.
+      lib = {
+        flyAppModule = ./modules/fly-app.nix;
+        mkFlyAppImage = import ./lib/fly-app-image.nix;
+        mkFlyApps = import ./lib/fly-apps.nix;
+      };
+
       apps = forAllSystems (
         system:
         let
@@ -3459,6 +3471,25 @@
             inherit (vm) pkgs;
             inherit (cfg) name;
           };
+        };
+
+      # Per-app Fly deployment runtime (spec nix-module-for-fly-io-app).
+      # `lib.mkFlyApps` wraps this package as one `deploy-<app>` flake app per
+      # declared app; the wrapper fixes the selected app specification while
+      # this package reads the runtime `FLY_API_TOKEN` and orchestrates the
+      # publisher and reconciler. The pinned nix-snapshotter overlay supplies
+      # the publisher's `nix2container`; no token is part of the derivation.
+      packages.aarch64-linux.fly-app-deploy =
+        let
+          flyPkgs = import nixpkgs {
+            system = "aarch64-linux";
+            overlays = [ inputs.nix-snapshotter.overlays.default ];
+          };
+          publisher = flyPkgs.callPackage ./scripts/fly-app-publish.nix { };
+          reconciler = flyPkgs.callPackage ./scripts/fly-app-reconcile.nix { };
+        in
+        flyPkgs.callPackage ./scripts/fly-app-deploy.nix {
+          inherit publisher reconciler;
         };
 
       darwinConfigurations = {
