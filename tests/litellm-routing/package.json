@@ -2,6 +2,6 @@
   "name": "litellm-routing-tests",
   "version": "0.0.0",
   "private": true,
-  "main": "catalog.test.js",
-  "description": "Test suite entry point for the litellm routing checks. The main field lets node --test load this directory."
+  "main": "run.js",
+  "description": "Test suite entry point for the litellm routing checks. The main field lets node --test load every suite in this directory through run.js."
 }
