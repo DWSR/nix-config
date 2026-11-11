@@ -342,6 +342,25 @@ final: prev: {
     };
   };
 
+  # kiro-spec: Rust CLI for listing, validating, and mutating Kiro spec
+  # task documents. Built from the in-repo crate; `doCheck` runs its test
+  # suite offline (the corpus test is skipped when KIRO_SPEC_CORPUS is unset).
+  kiro-spec = final.rustPlatform.buildRustPackage {
+    pname = "kiro-spec";
+    version = "0.1.0";
+
+    src = final.lib.cleanSource ../scripts/kiro-spec;
+    cargoLock.lockFile = ../scripts/kiro-spec/Cargo.lock;
+
+    doCheck = true;
+
+    meta = {
+      description = "CLI for listing, validating, and mutating Kiro spec task documents";
+      mainProgram = "kiro-spec";
+      platforms = final.lib.platforms.unix;
+    };
+  };
+
   # Pin zellij to a specific version. nixpkgs unstable drifts silently
   # (e.g. 0.44.1 → 0.44.2 between channel bumps); pinning gives
   # reproducibility and avoids surprise version changes during routine
