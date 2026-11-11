@@ -3209,6 +3209,121 @@
                 limactl validate "$configYaml"
                 touch $out
               '';
+
+          # kiro-spec package and corpus proofs (spec
+          # rust-based-cli-for-interacting-with-kiro-specs, task 9.4;
+          # requirements 11.5, 11.6, 11.8; design "Testing Strategy →
+          # Packaging and Nix Checks"). `kiro-spec` is the overlay package; its
+          # `doCheck` runs `cargo test` during this check's build. The corpus
+          # check is the flake-level proof: it runs the PACKAGED binary over a
+          # writable copy of the committed `.kiro` tree, requires repeated read
+          # output to be identical, and fails if the copied tree's hash
+          # changes. Neither check sets KIRO_SPEC_CORPUS or touches the
+          # network.
+          inherit (pkgs) kiro-spec;
+
+          kiro-spec-corpus =
+            pkgs.runCommand "kiro-spec-corpus"
+              {
+                nativeBuildInputs = [
+                  pkgs.kiro-spec
+                  pkgs.bash
+                  pkgs.coreutils
+                  pkgs.diffutils
+                  pkgs.findutils
+                  pkgs.gnugrep
+                ];
+              }
+              ''
+                set -euo pipefail
+                export LC_ALL=C
+
+                # Copy the committed corpus out of the store so the packaged
+                # binary reads `<root>/.kiro/specs/<name>` from a writable
+                # tree and the before/after hash comparison is meaningful.
+                root="$(mktemp -d)"
+                mkdir -p "$root/.kiro"
+                cp -R ${./.kiro}/. "$root/.kiro/"
+                chmod -R u+w "$root/.kiro"
+
+                work="$(mktemp -d)"
+                first_out="$work/first.out"
+                first_err="$work/first.err"
+                second_out="$work/second.out"
+                second_err="$work/second.err"
+
+                fail() {
+                  printf 'kiro-spec-corpus: spec %s, command %s: %s\n' "$1" "$2" "$3" >&2
+                  if [ -s "$first_err" ]; then
+                    printf '%s\n' '--- stderr ---' >&2
+                    cat "$first_err" >&2
+                  fi
+                  exit 1
+                }
+
+                # Relative paths plus contents, so any rewrite of the copied
+                # corpus changes the digest.
+                hash_corpus() {
+                  (
+                    cd "$root/.kiro/specs"
+                    find . -type f -print0 | sort -z | xargs -0 -r sha256sum
+                  )
+                }
+
+                run_read_twice() {
+                  local spec="$1"
+                  local command="$2"
+                  local first_status=0
+                  local second_status=0
+
+                  kiro-spec --root "$root" --spec "$spec" "$command" \
+                    >"$first_out" 2>"$first_err" || first_status=$?
+                  kiro-spec --root "$root" --spec "$spec" "$command" \
+                    >"$second_out" 2>"$second_err" || second_status=$?
+
+                  if [ "$command" = validate ]; then
+                    case "$first_status" in
+                      0|1) ;;
+                      *) fail "$spec" "$command" "first run exited $first_status (expected 0 or 1)" ;;
+                    esac
+                  elif [ "$first_status" -ne 0 ]; then
+                    fail "$spec" "$command" "first run exited $first_status (expected 0)"
+                  fi
+
+                  [ -s "$first_out" ] || fail "$spec" "$command" "first run produced no stdout"
+                  [ ! -s "$first_err" ] || fail "$spec" "$command" "first run wrote to stderr"
+                  [ "$second_status" -eq "$first_status" ] || fail "$spec" "$command" "repeated runs disagree on exit status ($first_status vs $second_status)"
+                  [ ! -s "$second_err" ] || fail "$spec" "$command" "second run wrote to stderr"
+                  cmp -s "$first_out" "$second_out" || fail "$spec" "$command" "repeated runs disagree on stdout"
+                }
+
+                before="$(hash_corpus)"
+
+                specs=0
+                for spec_dir in "$root"/.kiro/specs/*/; do
+                  [ -d "$spec_dir" ] || continue
+                  spec="$(basename "$spec_dir")"
+                  for command in tasks next status validate; do
+                    run_read_twice "$spec" "$command"
+                  done
+                  specs=$((specs + 1))
+                done
+
+                if [ "$specs" -eq 0 ]; then
+                  printf 'kiro-spec-corpus: no spec directories under %s\n' "$root/.kiro/specs" >&2
+                  exit 1
+                fi
+
+                after="$(hash_corpus)"
+                if [ "$before" != "$after" ]; then
+                  printf 'kiro-spec-corpus: read commands modified the copied corpus\n' >&2
+                  printf '%s\n' '--- before ---' "$before" >&2
+                  printf '%s\n' '--- after ---' "$after" >&2
+                  exit 1
+                fi
+
+                printf 'kiro-spec-corpus: %s specs deterministic and unmodified\n' "$specs" > "$out"
+              '';
         }
         // pkgs.lib.optionalAttrs (builtins.elem system fabroSystems) {
           # Offline parse/validate of every committed workflow package. The
@@ -3417,6 +3532,14 @@
             inherit (cfg) name;
           };
         };
+
+      # kiro-spec Linux build (spec rust-based-cli-for-interacting-with-kiro-
+      # specs, task 9.4; requirements 11.6; design "Testing Strategy →
+      # Packaging and Nix Checks"). Bound to the guest's overlay package so
+      # `nix build .#packages.aarch64-linux.kiro-spec` builds the Linux binary
+      # (and runs its `doCheck` cargo tests) without a `checks` entry; the
+      # design gates the flake checks to the darwin systems.
+      packages.aarch64-linux.kiro-spec = self.nixosConfigurations.fabro-vm.pkgs.kiro-spec;
 
       darwinConfigurations = {
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
