@@ -207,7 +207,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Confirm the check passes with the wiring in place and fails when one host import or the image entry is removed locally.
   - _Requirements: 1.1, 1.2, 1.3_
   - _Depends: 9.2, 9.3_
-- [ ] 9.6 Assert image contents in the sandbox Node test
+- [x] 9.6 Assert image contents in the sandbox Node test
   - Extend `tests/fabro-sandbox/image.test.js` to assert `kiro-spec` appears in the evaluated image `contentNames` and `copyToRootNames`.
   - Keep the existing image assertions unchanged and run the suite with `node --test tests/fabro-sandbox/image.test.js`.
   - Confirm the new assertion fails when the `contents` entry is removed.
