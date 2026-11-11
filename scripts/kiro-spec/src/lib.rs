@@ -13,6 +13,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::cli::{Command, Invocation};
+use crate::edit::Change;
 use crate::error::{AppError, ErrorCategory, SpecError};
 use crate::paths::SpecPaths;
 use crate::render::Format;
@@ -87,7 +88,16 @@ fn dispatch(invocation: &Invocation) -> Outcome {
         Command::Next => read_next(invocation),
         Command::Status => read_status(invocation),
         Command::Validate => return run_validate(invocation),
-        _ => return Outcome::failure(not_yet_wired(invocation.command())),
+        Command::Complete { task } => return run_mutation(invocation, task, Change::Complete),
+        Command::Block { task, reason } => {
+            return run_mutation(
+                invocation,
+                task,
+                Change::Block {
+                    reason: reason.clone(),
+                },
+            )
+        }
     };
     match result {
         Ok(stdout) => Outcome::success(Some(stdout)),
@@ -104,6 +114,77 @@ fn run_validate(invocation: &Invocation) -> Outcome {
     let document = render::render_validation(&report, paths.name(), selected_format(invocation));
     let code = if report.has_errors() { 1 } else { 0 };
     Outcome::new(Some(document), None, code)
+}
+
+fn run_mutation(invocation: &Invocation, task: &str, change: Change) -> Outcome {
+    if let Err(error) = validate_task_id(task) {
+        return Outcome::failure(error);
+    }
+    let change = match change {
+        Change::Complete => Change::Complete,
+        Change::Block { reason } => match validate_reason(&reason) {
+            Ok(reason) => Change::Block { reason },
+            Err(error) => return Outcome::failure(error),
+        },
+    };
+    let paths = match SpecPaths::resolve(invocation.root(), invocation.spec()) {
+        Ok(paths) => paths,
+        Err(error) => return Outcome::failure(error.into()),
+    };
+    let document = match read_task_document_at(&paths) {
+        Ok(document) => document,
+        Err(error) => return Outcome::failure(error),
+    };
+    let plan = match edit::mutate(&document, task, change) {
+        Ok(plan) => plan,
+        Err(error) => return Outcome::failure(error.into()),
+    };
+    if let Some(bytes) = plan.bytes.as_deref() {
+        if let Err(error) = edit::write_atomic(&paths.tasks_md(), bytes) {
+            return Outcome::failure(error.into());
+        }
+    }
+    let mut result = format!("{} {}", plan.id, render::state_name(plan.state));
+    if plan.bytes.is_none() {
+        result.push_str(" (no change)");
+    }
+    result.push('\n');
+    Outcome::success(Some(result))
+}
+
+fn validate_task_id(task: &str) -> Result<(), AppError> {
+    let canonical = task.strip_suffix('.').unwrap_or(task);
+    let parts: Vec<&str> = canonical.split('.').collect();
+    let valid = !parts.is_empty()
+        && parts.len() <= 2
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::usage(
+            "usage",
+            format!("malformed task identifier `{task}`; expected `N` or `N.M`"),
+        ))
+    }
+}
+
+fn validate_reason(reason: &str) -> Result<String, AppError> {
+    let trimmed = reason.trim();
+    let has_line_break = trimmed.chars().any(|character| {
+        matches!(
+            character,
+            '\n' | '\r' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+        )
+    });
+    if trimmed.is_empty() || has_line_break {
+        return Err(AppError::usage(
+            "usage",
+            "invalid `--reason`: must be non-empty after trimming and contain no line break",
+        ));
+    }
+    Ok(trimmed.to_owned())
 }
 
 fn read_tasks(invocation: &Invocation) -> Result<String, AppError> {
@@ -179,15 +260,6 @@ fn selected_format(invocation: &Invocation) -> Format {
     } else {
         Format::Human
     }
-}
-
-fn not_yet_wired(command: &cli::Command) -> AppError {
-    let category = if command.is_mutating() {
-        ErrorCategory::MutationWrite
-    } else {
-        ErrorCategory::ArtifactRead
-    };
-    AppError::new(category, command.name(), "not yet wired")
 }
 
 pub fn run(args: impl IntoIterator<Item = OsString>) -> i32 {
