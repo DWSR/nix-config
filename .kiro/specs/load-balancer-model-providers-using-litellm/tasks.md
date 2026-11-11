@@ -129,7 +129,7 @@ set before the guest rebuild.
   - _Boundary: tests/litellm-routing/clients.test.js_
   - _Depends: 4.1, 4.2, 5.1_
 
-- [ ] 5.4 (P) Add `tests/litellm-affinity-bridge/test_session_identity.py`
+- [x] 5.4 (P) Add `tests/litellm-affinity-bridge/test_session_identity.py`
   - Cover header precedence over a body key, producer-scoped namespacing of the same raw key, `None` for an absent key, `None` for non-string, blank, over-512-character, and CR/LF/NUL-bearing keys, and a `bridge:v1:` result never equalling a `ses_...` header value.
   - Import the resolver through `PYTHONPATH=configurations/fabro-vm` using only the standard library and `unittest`.
   - Observable: `PYTHONPATH=configurations/fabro-vm python3 -m unittest discover -s tests/litellm-affinity-bridge` reports 5 passing tests.
