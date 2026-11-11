@@ -26,9 +26,19 @@ changed files where the diff is not enough. This diff is your primary input.
 Run the checks and use their results; do not rely on visual inspection where a command
 can decide.
 
-1. Regression safety: select checks from the changed paths, rather than running the full
-   canonical suite for every change. Derive changed paths from the baseline diff and
-   include untracked deliverable files; apply every matching rule:
+<<<<<<< HEAD
+1. Regression safety: read `baseline_results` in `.git/oneshot-state.json` and map each
+   result to the check it records. Derive changed paths from the baseline diff and include
+   untracked deliverable files. Run a check when its baseline status is `unknown`, when
+   the baseline result is missing or lacks a status, or when the diff touches files or
+   behavior that check covers. Do not rerun a known baseline failure for an unaffected
+   area; record its command, failure reason, status, and unrelated changed paths in
+   `review_findings` as explicitly non-blocking evidence. A touched failure rejects only
+   if the diff introduces or worsens it. If a check fails and no baseline result exists,
+   compare the same check at `baseline_sha` in a temporary detached checkout. If
+   `baseline_results` is missing or malformed, use that comparison fallback for every
+   failing canonical check that could reflect a code defect. Apply every matching path
+   rule:
    - For `flake.lock` or `flake.nix`, validate `flake.lock` as JSON with
      `python3 -m json.tool flake.lock >/dev/null` and run `nix flake check --no-build`.
      For `flake.lock`, use `nix eval` on the affected inputs' locked versions; for
@@ -57,6 +67,22 @@ can decide.
    non-blocking. In `review_mechanical`, record every selected check with the changed-path
    reason that selected it, along with universal checks and any required checks that could
    not run; do not report a bare pass/fail list.
+=======
+1. Regression safety: read `baseline_results` in `.git/oneshot-state.json` and map each
+   result to the check it records. Run a check when its baseline status is `unknown`, when
+   the baseline result is missing or lacks a status (including checks not collected by the
+   baseline stage), or when the diff touches files or behavior that check covers. Do not spend
+   time rerunning a known baseline failure for an area the diff cannot affect; record its
+   command, failure
+   reason, status, and the unrelated changed paths in `review_findings` as explicitly
+   non-blocking evidence. A touched failure rejects only if the diff introduces or worsens
+   it. If a check fails and no baseline result exists, compare the same check at
+   `baseline_sha` in a temporary detached checkout (for example, with `git worktree add
+   --detach`); do not alter the review worktree. Treat a failure as pre-existing only when
+   the same check fails for the same reason at baseline and the diff does not introduce or
+   worsen it. If `baseline_results` is missing or malformed, use that comparison fallback
+   for every failing canonical check that could reflect a code defect.
+>>>>>>> a191d191 (feat(oneshot): precompute baseline check results)
 2. Environmental failures: if a check cannot be evaluated because the sandbox cannot
    resolve a host or fetch a pinned source, such as `Could not resolve host: github.com`,
    `Temporary failure in name resolution`, DNS errors, or network timeouts, stop treating

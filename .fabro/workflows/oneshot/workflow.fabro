@@ -32,6 +32,16 @@ digraph Oneshot {
         script="python3 .git/oneshot-scripts/tools.py diagnose {{ inputs.issue }}"
     ]
 
+    baseline [
+        label="Precompute baseline checks",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="10m",
+        on_failure="exit",
+        max_retries=0,
+        script="python3 .git/oneshot-scripts/tools.py baseline"
+    ]
+
     implement [
         label="Implement issue",
         prompt="@prompts/implement.md",
@@ -132,6 +142,9 @@ digraph Oneshot {
     diagnose -> implement [condition="outcome=succeeded && context.preflight_status=READY"]
     diagnose -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED"]
     diagnose -> fail
+    diagnose -> baseline [condition="outcome=succeeded && context.preflight_status=READY"]
+    baseline -> implement [condition="outcome=succeeded"]
+    baseline -> fail
 
     implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
     implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]

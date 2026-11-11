@@ -10,8 +10,9 @@ pull request; a separate reviewer will adversarially re-check your work.
 
 - Issue content: `.git/oneshot-issue.md` (title, URL, labels, body). The issue is the
   contract: implement what it asks, nothing more.
-- Run state: `.git/oneshot-state.json` — `repo`, `trunk`, and `baseline_sha`. Your change
-  is measured with `git diff` against `baseline_sha` and must stay under 1000 changed
+- Run state: `.git/oneshot-state.json` — `repo`, `trunk`, `baseline_sha`, and baseline check
+  evidence in `baseline_results`. Your change is measured with `git diff` against
+  `baseline_sha` and must stay under 1000 changed
   lines, where a modified line counts as one addition plus one deletion. Keep the diff
   minimal: no drive-by refactors, formatting churn, or unrelated renames.
 - Repository conventions: read `AGENTS.md` / `CLAUDE.md`, `README*`, and `CONTRIBUTING*`,
