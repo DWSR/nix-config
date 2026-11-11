@@ -71,7 +71,7 @@
   - Done when sync behavior is testable with fixture credentials/recipients and declarations refer only to runtime secret paths; no real secret is needed to run the checks.
   - _Requirements: 1.3, 3.1, 3.2_
 
-- [ ] 5.2 Document bootstrap and external trust configuration
+- [x] 5.2 Document bootstrap and external trust configuration
   - Update `secrets/README.md` with the design's operator provisioning, bootstrap order, key sources, sync commands, and verification steps for builder and client secrets.
   - Document the Tailscale tag ownership and SSH-only grants for Fabro and the personal Mac, plus host-key pin verification; state the builder-specific Tailscale OAuth credential source, `auth_keys` scope, and runtime consumption; point to the design's `## Operator Provisioning` section.
   - Include the post-provisioning live acceptance sequence for Linux builds from both clients, preserved Darwin dispatch, unsupported-platform rejection, and Fabro's no-local-fallback behavior.
