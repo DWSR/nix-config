@@ -102,7 +102,7 @@
   - _Depends: 2.2, 4.2_
   - _Boundary: `tests/fly-app/module.test.nix`_
   - _Requirements: 1.1, 1.2, 2.1, 2.2, 3.6, 3.7, 4.1, 4.2, 6.1, 6.2_
-- [ ] 5.2 Verify publication, state, and secret safety
+- [x] 5.2 Verify publication, state, and secret safety
   - Stub registry/publisher to test first/changed/unchanged publication, wrong or missing digest with intact state, state loss, concurrency, and absent/invalid token with redacted diagnostics.
   - Done when failures return nonzero, no unchanged recorded image is republished, and fixture tokens appear in no stored artifact, argument, or log.
   - _Depends: 4.1_
