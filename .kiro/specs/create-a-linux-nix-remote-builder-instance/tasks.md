@@ -109,7 +109,7 @@
   - _Depends: 6.1, 6.2, 6.3_
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 7. Validate provisioned remote build behavior
+- [x] 7. Validate provisioned remote build behavior
   - After operator provisioning and deployment described in the design's `## Operator Provisioning`, verify the builder registers with Tailscale and the pinned SSH host identity matches the guest.
   - Submit an `aarch64-linux` derivation from Fabro and `Brandons-MacBook-Pro`; verify each output returns from the Linux builder and Darwin builds still use the existing Darwin endpoint.
   - Verify an unsupported platform is not accepted by the Linux machine entry and a Linux build with the endpoint unavailable fails on Fabro without a local build.
