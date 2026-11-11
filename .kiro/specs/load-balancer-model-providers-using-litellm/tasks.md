@@ -162,7 +162,7 @@ set before the guest rebuild.
   - _Boundary: docs/litellm-routing-runbook.md_
   - _Depends: 3.3_
 
-- [ ] 7.2 (P) Update `docs/opencode-fabro-vm-handoff.md` to the catalog ids
+- [x] 7.2 (P) Update `docs/opencode-fabro-vm-handoff.md` to the catalog ids
   - Replace the OpenCode model map, the Fabro model table, the header-forwarding section, the default-model examples, and the "add a model" steps with the catalog ids and group-scoped forwarding.
   - Explain the three session-identity sources (OpenCode's `x-opencode-session-id`, Fabro's bridged `prompt_cache_key`, and the static `x-opencode-session` not being an identity) and that the gateway and both clients move together.
   - Observable: `rg 'chatgpt/|opencode-go/|opencode-zen/' docs/opencode-fabro-vm-handoff.md` returns no model-id occurrence, with any historical note explicitly labelled as history.
