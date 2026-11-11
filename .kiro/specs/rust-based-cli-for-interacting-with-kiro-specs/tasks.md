@@ -91,7 +91,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Accept a flag or approval ahead of the phase and skip phase-dependent rules when `phase` is missing or unknown.
   - Unit tests cover each phase boundary, an approval ahead of its phase, and readiness without tasks approval.
   - _Requirements: 6.7, 6.8, 6.9, 6.10, 6.11, 6.12, 6.14_
-- [ ] 5.4 Report generated-versus-artifact presence once per artifact
+- [x] 5.4 Report generated-versus-artifact presence once per artifact
   - Emit one `spec.generated.artifact-missing` per absent artifact required by a phase or a true `generated` flag, treating a directory or unreadable path as missing and deduplicating when both rules point at one artifact.
   - Emit `requirements.artifact-missing` when `_Requirements:` bullets exist without requirements.md, and `requirements.unreadable` for undecodable files.
   - Unit tests cover flag-true-without-file, phase-required-without-file, deduplication, and a missing requirements.md that is still referenced.

@@ -3,9 +3,11 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+use crate::paths::SpecPaths;
 use crate::spec_json::Phase;
 
 pub const SPEC_JSON_FILE: &str = "spec.json";
+pub const DESIGN_MD_FILE: &str = "design.md";
 pub const TASKS_MD_FILE: &str = "tasks.md";
 pub const REQUIREMENTS_MD_FILE: &str = "requirements.md";
 
@@ -390,6 +392,86 @@ pub fn validate_phase_relationships(facts: &SpecJsonFacts) -> Vec<Finding> {
     }
 
     findings
+}
+
+fn artifact_for_stage(stage: &str) -> Option<&'static str> {
+    match stage {
+        "requirements" => Some(REQUIREMENTS_MD_FILE),
+        "design" => Some(DESIGN_MD_FILE),
+        "tasks" => Some(TASKS_MD_FILE),
+        _ => None,
+    }
+}
+
+pub fn artifact_present(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => std::fs::File::open(path).is_ok(),
+        _ => false,
+    }
+}
+
+pub fn validate_artifact_presence(
+    facts: &SpecJsonFacts,
+    paths: &SpecPaths,
+    has_requirement_refs: bool,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let phase = facts.phase().and_then(Phase::parse);
+
+    for (stage, required_at) in GENERATED_STAGE_PHASES {
+        let Some(artifact) = artifact_for_stage(stage) else {
+            continue;
+        };
+        let flag_is_true = facts.approval(stage, "generated") == Some(true);
+        let phase_requires = phase.is_some_and(|phase| phase.rank() >= required_at.rank());
+        if !(flag_is_true || phase_requires) {
+            continue;
+        }
+        if !artifact_present(&paths.directory().join(artifact)) {
+            findings.push(Finding::error(
+                "spec.generated.artifact-missing",
+                format!("required artifact `{artifact}` is missing"),
+                artifact,
+                None,
+            ));
+        }
+    }
+
+    if let Some(finding) = requirements_artifact_finding(paths, has_requirement_refs) {
+        findings.push(finding);
+    }
+
+    findings
+}
+
+fn requirements_artifact_finding(paths: &SpecPaths, has_requirement_refs: bool) -> Option<Finding> {
+    let path = paths.requirements_md();
+    match std::fs::metadata(&path) {
+        Ok(metadata) if metadata.is_file() => match std::fs::read(&path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(_) => None,
+                Err(_) => Some(Finding::error(
+                    "requirements.unreadable",
+                    "`requirements.md` is not valid UTF-8",
+                    REQUIREMENTS_MD_FILE,
+                    None,
+                )),
+            },
+            Err(error) => Some(Finding::error(
+                "requirements.unreadable",
+                format!("cannot read `requirements.md`: {error}"),
+                REQUIREMENTS_MD_FILE,
+                None,
+            )),
+        },
+        _ if has_requirement_refs => Some(Finding::error(
+            "requirements.artifact-missing",
+            "`requirements.md` is missing while `_Requirements:` references exist",
+            REQUIREMENTS_MD_FILE,
+            None,
+        )),
+        _ => None,
+    }
 }
 
 fn json_kind(value: &Value) -> &'static str {
@@ -1532,5 +1614,402 @@ mod tests {
         assert_eq!(facts.phase(), None);
         assert_eq!(facts.ready_for_implementation(), None);
         assert_eq!(facts.approval("design", "generated"), None);
+    }
+
+    fn spec_paths(temp: &TempDir) -> (SpecPaths, PathBuf) {
+        let directory = temp.path().join(".kiro").join("specs").join("demo");
+        fs::create_dir_all(&directory).expect("create spec directory");
+        let paths = SpecPaths::resolve(temp.path(), "demo").expect("resolve");
+        (paths, directory)
+    }
+
+    fn presence(value: &Value, paths: &SpecPaths, has_requirement_refs: bool) -> Vec<Finding> {
+        validate_artifact_presence(&SpecJsonFacts::new(value), paths, has_requirement_refs)
+    }
+
+    fn write_all_artifacts(directory: &Path) {
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            "### Requirement 1: One\n",
+        )
+        .expect("write requirements");
+        fs::write(directory.join(DESIGN_MD_FILE), "# Design\n").expect("write design");
+        fs::write(directory.join(TASKS_MD_FILE), "- [ ] 1. One\n").expect("write tasks");
+    }
+
+    fn assert_artifact_missing(finding: &Finding, artifact: &str) {
+        assert_eq!(finding.severity, Severity::Error, "{finding:?}");
+        assert_eq!(finding.code, "spec.generated.artifact-missing");
+        assert_eq!(finding.file, artifact, "{finding:?}");
+        assert_eq!(finding.line, None, "{finding:?}");
+        assert!(finding.message.contains(artifact), "{finding:?}");
+    }
+
+    #[test]
+    fn a_true_generated_flag_without_its_artifact_is_reported() {
+        let temp = TempDir::new("flag-missing");
+        let (paths, _) = spec_paths(&temp);
+        let value = spec_json(
+            "initialized",
+            [true, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, false);
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_artifact_missing(&findings[0], REQUIREMENTS_MD_FILE);
+    }
+
+    #[test]
+    fn a_true_generated_flag_is_reported_without_a_phase() {
+        let mut value = spec_json(
+            "initialized",
+            [false, false, true],
+            [false, false, false],
+            false,
+        );
+        value.as_object_mut().expect("object").remove("phase");
+        let temp = TempDir::new("flag-no-phase");
+        let (paths, _) = spec_paths(&temp);
+
+        let findings = presence(&value, &paths, false);
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_artifact_missing(&findings[0], TASKS_MD_FILE);
+    }
+
+    #[test]
+    fn a_phase_required_artifact_is_reported_while_its_flag_is_false() {
+        let temp = TempDir::new("phase-missing");
+        let (paths, _) = spec_paths(&temp);
+        let value = spec_json(
+            "requirements-generated",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, false);
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_artifact_missing(&findings[0], REQUIREMENTS_MD_FILE);
+    }
+
+    #[test]
+    fn every_phase_required_artifact_is_reported() {
+        let temp = TempDir::new("phase-missing-all");
+        let (paths, _) = spec_paths(&temp);
+        let value = spec_json(
+            "tasks-generated",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, false);
+
+        assert_eq!(findings.len(), 3, "{findings:?}");
+        let artifacts: Vec<&str> = findings
+            .iter()
+            .map(|finding| finding.file.as_str())
+            .collect();
+        assert_eq!(
+            artifacts,
+            vec![REQUIREMENTS_MD_FILE, DESIGN_MD_FILE, TASKS_MD_FILE]
+        );
+        for finding in &findings {
+            assert_eq!(finding.code, "spec.generated.artifact-missing");
+        }
+    }
+
+    #[test]
+    fn a_flag_and_a_phase_pointing_at_one_artifact_yield_one_finding() {
+        let temp = TempDir::new("dedupe");
+        let (paths, _) = spec_paths(&temp);
+        let value = spec_json(
+            "requirements-generated",
+            [true, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, false);
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_artifact_missing(&findings[0], REQUIREMENTS_MD_FILE);
+    }
+
+    #[test]
+    fn a_directory_in_place_of_an_artifact_counts_as_missing() {
+        let temp = TempDir::new("directory-artifact");
+        let (paths, directory) = spec_paths(&temp);
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            "### Requirement 1: One\n",
+        )
+        .expect("write requirements");
+        fs::create_dir(directory.join(DESIGN_MD_FILE)).expect("create design directory");
+        let value = spec_json(
+            "design-generated",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, false);
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_artifact_missing(&findings[0], DESIGN_MD_FILE);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_artifact_counts_as_missing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new("unreadable-artifact");
+        let (paths, directory) = spec_paths(&temp);
+        let tasks = directory.join(TASKS_MD_FILE);
+        fs::write(&tasks, "- [ ] 1. One\n").expect("write tasks");
+        fs::set_permissions(&tasks, fs::Permissions::from_mode(0o000)).expect("chmod");
+        if fs::File::open(&tasks).is_ok() {
+            fs::set_permissions(&tasks, fs::Permissions::from_mode(0o600)).expect("restore");
+            return;
+        }
+        let value = spec_json(
+            "initialized",
+            [false, false, true],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, false);
+
+        fs::set_permissions(&tasks, fs::Permissions::from_mode(0o600)).expect("restore");
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_artifact_missing(&findings[0], TASKS_MD_FILE);
+    }
+
+    #[test]
+    fn all_present_artifacts_produce_no_findings() {
+        let temp = TempDir::new("all-present");
+        let (paths, directory) = spec_paths(&temp);
+        write_all_artifacts(&directory);
+        let value = spec_json("implemented", [true, true, true], [true, true, true], false);
+
+        assert_eq!(presence(&value, &paths, true), Vec::new());
+    }
+
+    #[test]
+    fn requirement_references_without_requirements_md_report_one_artifact_missing() {
+        let temp = TempDir::new("refs-missing");
+        let (paths, _) = spec_paths(&temp);
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, true);
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].severity, Severity::Error);
+        assert_eq!(findings[0].code, "requirements.artifact-missing");
+        assert_eq!(findings[0].file, REQUIREMENTS_MD_FILE);
+        assert_eq!(findings[0].line, None);
+        assert!(
+            findings[0].message.contains(REQUIREMENTS_MD_FILE),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_directory_in_place_of_requirements_md_is_artifact_missing() {
+        let temp = TempDir::new("requirements-directory");
+        let (paths, directory) = spec_paths(&temp);
+        fs::create_dir(directory.join(REQUIREMENTS_MD_FILE)).expect("create directory");
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, true);
+
+        assert_eq!(codes(&findings), vec!["requirements.artifact-missing"]);
+        assert_eq!(findings[0].file, REQUIREMENTS_MD_FILE);
+    }
+
+    #[test]
+    fn a_missing_requirements_md_satisfies_both_independent_rules() {
+        let temp = TempDir::new("requirements-both-codes");
+        let (paths, _) = spec_paths(&temp);
+        let value = spec_json(
+            "requirements-generated",
+            [true, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, true);
+
+        let mut codes = codes(&findings);
+        codes.sort_unstable();
+        assert_eq!(
+            codes,
+            vec![
+                "requirements.artifact-missing",
+                "spec.generated.artifact-missing"
+            ]
+        );
+        assert_eq!(findings.len(), 2, "{findings:?}");
+        assert!(findings
+            .iter()
+            .all(|finding| finding.file == REQUIREMENTS_MD_FILE));
+    }
+
+    #[test]
+    fn no_references_and_no_requirements_md_report_nothing() {
+        let temp = TempDir::new("no-refs-missing");
+        let (paths, _) = spec_paths(&temp);
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        assert_eq!(presence(&value, &paths, false), Vec::new());
+    }
+
+    #[test]
+    fn a_non_utf8_requirements_md_is_unreadable() {
+        let temp = TempDir::new("non-utf8-requirements");
+        let (paths, directory) = spec_paths(&temp);
+        fs::write(directory.join(REQUIREMENTS_MD_FILE), [0xff, 0xfe, 0x00]).expect("write");
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, true);
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].severity, Severity::Error);
+        assert_eq!(findings[0].code, "requirements.unreadable");
+        assert_eq!(findings[0].file, REQUIREMENTS_MD_FILE);
+        assert_eq!(findings[0].line, None);
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.code == "requirements.artifact-missing"),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_utf8_requirements_md_is_unreadable_without_references() {
+        let temp = TempDir::new("non-utf8-requirements-no-refs");
+        let (paths, directory) = spec_paths(&temp);
+        fs::write(directory.join(REQUIREMENTS_MD_FILE), [0x80]).expect("write");
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, false);
+
+        assert_eq!(codes(&findings), vec!["requirements.unreadable"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unopenable_requirements_md_is_unreadable_not_artifact_missing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new("unopenable-requirements");
+        let (paths, directory) = spec_paths(&temp);
+        let requirements = directory.join(REQUIREMENTS_MD_FILE);
+        fs::write(&requirements, "### Requirement 1: One\n").expect("write");
+        fs::set_permissions(&requirements, fs::Permissions::from_mode(0o000)).expect("chmod");
+        if fs::File::open(&requirements).is_ok() {
+            fs::set_permissions(&requirements, fs::Permissions::from_mode(0o600)).expect("restore");
+            return;
+        }
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        let findings = presence(&value, &paths, true);
+
+        fs::set_permissions(&requirements, fs::Permissions::from_mode(0o600)).expect("restore");
+        assert_eq!(
+            codes(&findings),
+            vec!["requirements.unreadable"],
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_or_unknown_phase_skips_the_phase_required_artifacts() {
+        for phase in [None, Some("future-phase")] {
+            let temp = TempDir::new("phase-skip");
+            let (paths, _) = spec_paths(&temp);
+            let mut value = spec_json(
+                "initialized",
+                [false, false, false],
+                [false, false, false],
+                false,
+            );
+            match phase {
+                Some(phase) => value["phase"] = json!(phase),
+                None => {
+                    value.as_object_mut().expect("object").remove("phase");
+                }
+            }
+
+            assert_eq!(presence(&value, &paths, false), Vec::new(), "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn mistyped_generated_flags_skip_the_flag_rule_without_panicking() {
+        let temp = TempDir::new("mistyped-flags");
+        let (paths, _) = spec_paths(&temp);
+        let mut value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+        value["approvals"]["requirements"]["generated"] = json!("yes");
+        value["approvals"]["design"]["generated"] = json!(1);
+        value["approvals"]["tasks"]["generated"] = json!(null);
+
+        assert_eq!(presence(&value, &paths, false), Vec::new());
+    }
+
+    #[test]
+    fn artifact_presence_requires_a_readable_regular_file() {
+        let temp = TempDir::new("presence");
+        let present = temp.path().join("present.md");
+        fs::write(&present, "text").expect("write");
+        let directory = temp.path().join("directory.md");
+        fs::create_dir(&directory).expect("create directory");
+
+        assert!(artifact_present(&present));
+        assert!(!artifact_present(&directory));
+        assert!(!artifact_present(&temp.path().join("absent.md")));
     }
 }
