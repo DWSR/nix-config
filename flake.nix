@@ -3241,6 +3241,51 @@
               touch $out
             '';
         }
+        // pkgs.lib.optionalAttrs (system == "aarch64-linux") {
+          # Fly app checks (spec nix-module-for-fly-io-app, task 5.4;
+          # Requirements 3.2, 4.1, 4.2, 4.4). The pinned nix-snapshotter
+          # builder and the deployment runtime only exist on Linux, so these
+          # checks stay absent on the Darwin systems instead of claiming a
+          # native Darwin publisher. Each entry reuses the task fixture
+          # derivation rather than duplicating its assertions:
+          #   - module: declaration evaluation, option errors, serialization,
+          #     and token-free output isolation (tests/fly-app/module.test.nix);
+          #   - image: self-contained OCI closure and the pinned publisher
+          #     interface (tests/fly-app/image.test.nix);
+          #   - generator: the consumer fixture's own check, which invokes each
+          #     generated `deploy-<app>` command and proves it selects only its
+          #     declared app (tests/fly-app/fixture/flake.nix).
+          fly-app-module = import ./tests/fly-app/module.test.nix {
+            inherit pkgs;
+          };
+
+          fly-app-image =
+            let
+              # Match the deployment package's package set: the pinned
+              # nix-snapshotter overlay supplies `buildImage` and the
+              # `copyToRegistry` publisher interface this check inspects.
+              flyPkgs = import nixpkgs {
+                inherit system;
+                overlays = [ inputs.nix-snapshotter.overlays.default ];
+              };
+            in
+            import ./tests/fly-app/image.test.nix {
+              pkgs = flyPkgs;
+              nixSnapshotter = flyPkgs.nix-snapshotter;
+            };
+
+          # The consumer fixture consumes the repository's public `lib` and
+          # `packages.<system>.fly-app-deploy` outputs, exactly as an external
+          # flake would. Evaluating its `outputs` here keeps `nix flake check`
+          # pure (a `path:` flake reference is unlocked) while still building
+          # the fixture's two-app selection check.
+          fly-app-generator =
+            ((import ./tests/fly-app/fixture/flake.nix).outputs {
+              inherit self;
+              inherit (inputs) nixpkgs;
+              repo = self;
+            }).checks.${system}.fly-app-generator;
+        }
       );
 
       devShells = forAllSystems (
