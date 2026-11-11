@@ -26,6 +26,7 @@
     ./hammerspoon-keybindings
     ./hammerspoon-mic-mute
     ./hammerspoon-timezone-menubar
+    ./kiro-spec.nix
     ./launchd-activation.nix
     ./lima-mac-guest.nix
     ./lima-vm.nix
