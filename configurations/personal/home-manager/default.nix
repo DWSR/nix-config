@@ -35,6 +35,16 @@ in
 
     omlx.enable = true;
 
+    # Workstation client wiring for the central total-recall memory service
+    # on the Fabro guest. These two values are the single declaration: the
+    # OpenCode adapter, the Pi extension, and the mcpproxy upstream all
+    # derive their endpoint and connection name from them.
+    totalRecall = {
+      enable = true;
+      endpoint = "wss://total-recall.tuxedo-musical.ts.net";
+      databaseConnection = "memory";
+    };
+
     packages = with pkgs; [
       butane
       fastmail-mcp

@@ -129,6 +129,13 @@ let
     "XDG_DATA_HOME"
     "XDG_STATE_HOME"
   ]
+  # Workstation capture variables exported by the OpenCode wrapper
+  # (home-manager/common/total-recall.nix). NAMES only; the wrapper exports
+  # the values at launch. Harmless on hosts that never export them.
+  ++ lib.optionals (config.home.totalRecall.enable or false) [
+    "III_URL"
+    "HARNESS_EVENTS_BIN"
+  ]
   ++ lib.optionals agentmemory.enable [
     "AGENTMEMORY_SECRET"
     "AGENTMEMORY_URL"
