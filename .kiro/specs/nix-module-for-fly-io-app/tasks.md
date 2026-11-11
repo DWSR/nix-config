@@ -1,29 +1,29 @@
 # Implementation Plan
 
 - [ ] 1. Establish the external compatibility gates
-- [ ] 1.1 Prove the pinned self-contained OCI image contract on Linux
+- [x] 1.1 Prove the pinned self-contained OCI image contract on Linux
   - Add a build fixture using the pinned snapshotter `fromImage` with a complete `dockerTools` runtime closure; inspect the resulting OCI archive for runnable contents without a host store mount.
   - Done when the fixture builds and verifies the closure and pinned publisher interface; stop and request a requirement decision if the pinned hybrid path cannot produce it.
   - _Boundary: `tests/fly-app/image.test.nix`_
   - _Requirements: 3.2, 3.8_
-- [ ] 1.2 Create an executable Fly compatibility smoke harness
+- [x] 1.2 Create an executable Fly compatibility smoke harness
   - Set up an operator-token-only runner for an existing disposable Fly app, with redacted results and an initial image boot/registry check; later tasks add the full acceptance scenarios.
   - Done when the harness can probe Fly without storing or provisioning the token; live acceptance is required in Tasks 5.5 and 5.6.
   - _Boundary: `tests/fly-app/contract-smoke.sh`_
   - _Requirements: 1.3, 2.4, 3.2, 3.5, 4.4, 5.1_
 
 - [ ] 2. Build the declaration and image boundaries
-- [ ] 2.1 Define reusable app and Machine declarations
+- [x] 2.1 Define reusable app and Machine declarations
   - Provide app identity/settings, stable logical Machine keys, open JSON-compatible Machine fields, per-image existing-reference or derivation choice, and explicit deploy-container selection for multi-container Machines.
   - Done when a standalone module evaluation represents a single- and multi-container app without requiring a NixOS host.
   - _Boundary: `modules/fly-app.nix`_
   - _Requirements: 1.1, 1.2, 2.1, 2.2_
-- [ ] 2.2 Validate and serialize secret-free declarations
+- [x] 2.2 Validate and serialize secret-free declarations
   - Reject both or neither image sources where an image is required; preserve arbitrary supported Machine fields and keep the Fly token out of evaluation and generated specs.
   - Done when invalid choices fail evaluation and a valid declaration emits a store-safe app/Machine specification.
   - _Boundary: `modules/fly-app.nix`_
   - _Requirements: 2.2, 3.6, 3.7, 6.1, 6.2_
-- [ ] 2.3 (P) Produce local Fly-runnable OCI images
+- [x] 2.3 (P) Produce local Fly-runnable OCI images
   - Build a self-contained Linux base with `dockerTools` and feed it into the pinned `nix-snapshotter.buildImage`; expose the image/archive and publisher outputs without credential inputs.
   - Done when a derivation-backed fixture yields an OCI image whose runtime closure is present without host mounts.
   - _Depends: 1.1, 2.1_
@@ -31,64 +31,64 @@
   - _Requirements: 3.2, 6.1_
 
 - [ ] 3. Build per-app commands and deployment components
-- [ ] 3.1 Expose named Linux flake-app commands from the module
+- [x] 3.1 Expose named Linux flake-app commands from the module
   - Evaluate a named app map into `deploy-<app>` commands and create a two-app consumer flake fixture; reject name collisions and fix each command's app target.
   - Done when two independent apps are addressable through their own `nix run` outputs on Linux.
   - _Depends: 2.2_
   - _Boundary: `lib/fly-apps.nix`, `tests/fly-app/fixture/flake.nix`_
   - _Requirements: 4.1, 4.2_
-- [ ] 3.2 Supply runtime-only Fly credentials
+- [x] 3.2 Supply runtime-only Fly credentials
   - Read `FLY_API_TOKEN` after evaluation; reject missing/empty values and provide private temporary Docker-compatible credentials to the publisher with cleanup and redacted errors.
   - Done when a fixture token authenticates the runtime without appearing in derivations, persistent files, arguments, or diagnostics.
   - _Depends: 2.2_
   - _Boundary: `scripts/fly-app-deploy.nix`_
   - _Requirements: 5.1, 5.2, 5.3, 6.1, 6.2, 6.3_
-- [ ] 3.3 Publish and inspect content-addressed images
+- [x] 3.3 Publish and inspect content-addressed images
   - Resolve existing images without republishing; for derivation images publish via the pinned Linux publisher and inspect registry manifest digests with the runtime token.
   - Done when first publication yields a confirmed app-scoped reference and auth/network inspection errors never masquerade as missing images.
   - _Depends: 2.3, 3.2_
   - _Boundary: `scripts/fly-app-publish.nix`_
   - _Requirements: 3.1, 3.2, 3.4, 3.8, 5.1_
-- [ ] 3.4 Apply image-identity and publication-state rules
+- [x] 3.4 Apply image-identity and publication-state rules
   - Persist a non-secret per-app record with image identity/reference/digest; skip an unchanged confirmed digest, publish on change, and fail without a push for missing or wrong remote digest when state is intact.
   - Done when state loss permits automatic first publication while intact-state image disappearance returns failure without republishing.
   - _Boundary: `scripts/fly-app-publish.nix`_
   - _Requirements: 3.3, 3.4, 3.5, 3.8, 4.3, 6.2_
-- [ ] 3.5 Serialize concurrent publication for the same app
+- [x] 3.5 Serialize concurrent publication for the same app
   - Protect publication-state reads, registry verification, push, and state writes against overlapping commands targeting one app without blocking independent apps.
   - Done when concurrent same-app invocations avoid duplicate/conflicting publication and different apps proceed independently.
   - _Boundary: `scripts/fly-app-publish.nix`_
   - _Requirements: 3.3, 3.4, 4.2_
-- [ ] 3.6 (P) Apply app settings with the Fly CLI
+- [x] 3.6 (P) Apply app settings with the Fly CLI
   - Render secret-free `fly.toml`, select the declared primary deploy container/image, and deploy to the existing app without a Fly remote build; control first-deploy HA and later process-group counts.
   - Done when a stubbed CLI receives the selected app/config/image and Fly rejection yields nonzero status.
   - _Depends: 2.2, 3.2_
   - _Boundary: `scripts/fly-app-reconcile.nix`_
   - _Requirements: 1.2, 1.3, 1.4, 2.1, 4.3, 4.4_
-- [ ] 3.7 Match and verify the module-managed Machine set
+- [x] 3.7 Match and verify the module-managed Machine set
   - Map stable declaration identities to Fly Machine IDs after each CLI deploy; distinguish unrelated unmanaged Machines and reject ambiguous matches or surplus Fly Launch Machines without deleting them.
   - Done when existing Machines have unique matches, surplus managed Machines cause failure, and missing declared Machines are identified for Task 3.8 to create.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
   - _Requirements: 2.2, 2.4, 4.4_
-- [ ] 3.8 Apply full Machine configs through the API
+- [x] 3.8 Apply full Machine configs through the API
   - Create missing declared Machines where supported, fully update every declared Machine after CLI deploy, preserve Fly Launch ownership metadata and all supported fields, and re-read final configurations.
   - Done when two consecutive deployments retain multi-container and arbitrary API fields and the final managed Machine count matches the declaration.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 4.3_
-- [ ] 3.9 Handle immutable fields and retryable partial failure
+- [x] 3.9 Handle immutable fields and retryable partial failure
   - Reject Machine changes requiring replacement with a named error; re-enumerate stable identities after ambiguous or partial API failures rather than creating duplicates.
   - Done when a failed update returns nonzero and a retry resolves the same logical Machine without silent deletion.
   - _Boundary: `scripts/fly-app-reconcile.nix`_
   - _Requirements: 1.4, 2.3, 2.4, 4.4_
 
 - [ ] 4. Connect the app, publisher, and reconciler
-- [ ] 4.1 Orchestrate selected-app deployment synchronously
+- [x] 4.1 Orchestrate selected-app deployment synchronously
   - Pass the selected store-safe spec and runtime credentials to the publisher, then pass resolved images to the reconciler; propagate errors without deploying a different app.
   - Done when a caller script sees success only after registry and Fly API acceptance and nonzero on every stubbed failure.
   - _Depends: 3.1, 3.5, 3.9_
   - _Boundary: `scripts/fly-app-deploy.nix`_
   - _Requirements: 3.8, 4.2, 4.3, 4.4, 5.1_
-- [ ] 4.2 Export reusable module, generator, and Linux deploy outputs
+- [x] 4.2 Export reusable module, generator, and Linux deploy outputs
   - Wire the public module/helper and deploy package into `flake.nix`; extend the fixture created in Task 3.1 to invoke two distinct app commands without SSH or NixOS activation.
   - Done when a consumer flake resolves and invokes each selected `deploy-<app>` output under Linux.
   - _Depends: 3.1, 4.1_
