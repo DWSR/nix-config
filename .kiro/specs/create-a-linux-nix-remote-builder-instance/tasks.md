@@ -102,7 +102,7 @@
   - _Boundary: Personal Mac and Secret Boundary Tests_
   - _Requirements: 3.2, 3.3, 5.3, 5.5_
 
-- [ ] 6.4 Register and run the combined repository check
+- [x] 6.4 Register and run the combined repository check
   - Register `checks.<system>.linux-nix-remote-builder` in `flake.nix` for the focused test suite and add negative evaluation fixtures for builder capability, VM resources, client dispatch, and Fabro policy.
   - Ensure each missing or incorrect required setting causes its corresponding check to fail while the existing Darwin path remains independently asserted.
   - Done when the flake check runs the focused suite and all planned negative fixtures fail for their named invariant.
