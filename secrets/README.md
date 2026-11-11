@@ -428,13 +428,16 @@ previous step installed.
 
 4. **Sync the stores from 1Password.** This creates the builder and personal
    client stores from the values above, so every later activation can decrypt
-   what it declares (see "Syncing the stores from 1Password" below). Commit
-   the stores and the `.sops.yaml` change before continuing:
+   what it declares. The flake does not register a
+   `linux-builder-sync-from-1password` app yet, so run the builder sync with
+   the checkout invocation in "Syncing the stores from 1Password" below, then
+   the Fabro store sync:
 
    ```sh
-   nix run '.#linux-builder-sync-from-1password'
    nix run '.#fabro-sync-from-1password'
    ```
+
+   Commit the stores and the `.sops.yaml` change before continuing.
 
 5. **Start the instance and install the builder age key before the first
    switch.** The guest's `sops-install-secrets` pre-start check fails the
@@ -487,8 +490,8 @@ previous step installed.
 
 ### Syncing the stores from 1Password
 
-`nix run '.#linux-builder-sync-from-1password'` refreshes both Linux-builder
-stores in one gather-then-commit pass:
+The builder sync command `linux-builder-sync-from-1password` refreshes both
+Linux-builder stores in one gather-then-commit pass:
 
 1. It resolves the builder age key, the personal age key, the authorized-key
    note, the Tailscale OAuth secret, and the personal client key from the
@@ -503,7 +506,26 @@ stores in one gather-then-commit pass:
    `&host_personal`.
 
 The command never mints, generates, rotates, or prints a secret value. Run it
-from the repository checkout after `op signin`.
+from the repository checkout after `op signin`:
+
+```sh
+nix shell --impure --expr 'let
+  flake = builtins.getFlake (toString ./.);
+  pkgs = import flake.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    config.allowUnfree = true;
+  };
+in import ./scripts/linux-builder-sync-from-1password.nix { inherit pkgs; }' \
+  -c linux-builder-sync-from-1password
+```
+
+`config.allowUnfree = true` is required because the command's `_1password-cli`
+runtime input is unfree. The flake does not register
+`linux-builder-sync-from-1password` as an app yet, so this checkout invocation
+is the supported form; the design's `## Operator Provisioning` table names the
+builder sync as a flake app, and that app registration is tracked separately.
+The invocation above evaluates the same
+`scripts/linux-builder-sync-from-1password.nix` derivation the app will expose.
 
 `nix run '.#fabro-sync-from-1password'` separately mirrors the Fabro guest's
 `linux-builder-client-key` into `secrets/fabro.fabro.yaml` with the rest of
@@ -771,8 +793,8 @@ Then repeat check 1 to confirm the builder is serving builds again.
 
 - **Client key.** Generate a new dedicated keypair out of band, replace that
   client's private key in its 1Password SSH Key item, replace only that key's
-  public half in the authorized-keys note, and re-run
-  `nix run '.#linux-builder-sync-from-1password'` (plus
+  public half in the authorized-keys note, and re-run the builder sync from
+  "Syncing the stores from 1Password" above (plus
   `nix run '.#fabro-sync-from-1password'` when the Fabro key rotates). Then
   redeploy the guest and the affected client. Preserve every other authorized
   key and never drop the builder store's recipient.

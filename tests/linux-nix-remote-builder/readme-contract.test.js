@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -37,6 +38,21 @@ function assertContains(text, needles) {
   }
 }
 
+// Extract the builder sync invocation so the contract can resolve it instead
+// of trusting that the documented command text exists. The flake does not
+// register the builder sync as an app, so the runbook documents the checked-in
+// script through the pinned nixpkgs expression.
+function builderSyncInvocation() {
+  const text = linuxBuilderSection();
+  const match = text.match(/nix shell --impure --expr '([\s\S]*?)'\s*\\\n\s*-c (\S+)/);
+  assert.ok(
+    match,
+    'the Linux builder runbook must document the sync command as a ' +
+      '`nix shell --impure --expr` invocation that ends in `-c <program>`',
+  );
+  return { expression: match[1], program: match[2] };
+}
+
 test('documents the Linux builder store layout, sources, and recipients', () => {
   const text = linuxBuilderSection();
   assertContains(text, [
@@ -60,7 +76,8 @@ test('documents the Linux builder store layout, sources, and recipients', () => 
 test('documents the bootstrap order and the builder sync commands', () => {
   const text = linuxBuilderSection();
   assertContains(text, [
-    "nix run '.#linux-builder-sync-from-1password'",
+    'linux-builder-sync-from-1password',
+    'Syncing the stores from 1Password',
     "nix run '.#fabro-sync-from-1password'",
     'linux-builder-deploy',
     '/var/lib/sops-nix/key.txt',
@@ -76,6 +93,64 @@ test('documents the bootstrap order and the builder sync commands', () => {
     text,
     /(never|does not) (mints?|generates?|rotates?)/i,
     'the sync command must be documented as never minting or generating values',
+  );
+});
+
+test('the documented builder sync command resolves to the checked-in script', () => {
+  const { expression, program } = builderSyncInvocation();
+  assert.equal(
+    program,
+    'linux-builder-sync-from-1password',
+    'the documented command must run the builder sync program',
+  );
+  assert.match(
+    expression,
+    /scripts\/linux-builder-sync-from-1password\.nix/,
+    'the documented invocation must import the checked-in sync script',
+  );
+  assert.match(
+    expression,
+    /builtins\.getFlake/,
+    'the documented invocation must resolve the flake inputs',
+  );
+  assert.match(
+    expression,
+    /allowUnfree = true/,
+    'the documented invocation needs allowUnfree for the _1password-cli runtime input',
+  );
+  assert.doesNotMatch(
+    readme,
+    /nix run ['"]?\.#linux-builder-sync-from-1password/,
+    'the flake does not register a linux-builder-sync-from-1password app, ' +
+      'so the runbook must not document `nix run` for it',
+  );
+
+  // The script's derivation name is the program the documented -c runs; keep
+  // the two in lockstep, then let Nix resolve the documented expression.
+  const script = fs.readFileSync(
+    path.join(repoRoot, 'scripts/linux-builder-sync-from-1password.nix'),
+    'utf8',
+  );
+  assert.match(
+    script,
+    new RegExp(`name = "${program}";`),
+    `scripts/linux-builder-sync-from-1password.nix must produce ${program}`,
+  );
+
+  const resolved = childProcess.execFileSync(
+    'nix',
+    ['eval', '--raw', '--impure', '--expr', `(${expression}).meta.mainProgram`],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 180_000,
+    },
+  ).trim();
+  assert.equal(
+    resolved,
+    program,
+    'the documented invocation must resolve to the builder sync program',
   );
 });
 
