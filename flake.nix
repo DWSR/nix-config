@@ -2041,6 +2041,224 @@
                 touch $out
               '';
 
+          # Combined Linux remote-builder regression check (task 6.4). The
+          # check is deliberately a pure Node suite over a JSON snapshot that
+          # is evaluated here, at flake evaluation time: the aarch64-linux
+          # build sandbox has no flake-input cache or Darwin builder, so a
+          # nested `nix eval` of the personal Mac configuration cannot run
+          # there. Evaluating the snapshot at eval time keeps every fixture
+          # real (including the negative fixture modules) while the check
+          # itself stays hermetic and fast.
+          linux-nix-remote-builder =
+            let
+              inherit (pkgs) lib;
+              builderConfig = self.nixosConfigurations.linux-builder.config;
+              personalPinModule = {
+                nix-config.linuxBuilder.hostKeyPin = ./tests/linux-nix-remote-builder/fixtures/ssh_host_ed25519_key.pub;
+              };
+              personalConfig =
+                (self.darwinConfigurations."Brandons-MacBook-Pro".extendModules {
+                  modules = [ personalPinModule ];
+                }).config;
+              fabroConfig = self.nixosConfigurations.fabro-vm.config;
+              withBuilderFixture =
+                module:
+                (self.nixosConfigurations.linux-builder.extendModules {
+                  modules = [ module ];
+                }).config;
+              withPersonalFixture =
+                module:
+                (self.darwinConfigurations."Brandons-MacBook-Pro".extendModules {
+                  modules = [
+                    personalPinModule
+                    module
+                  ];
+                }).config;
+              withFabroFixture =
+                module:
+                (self.nixosConfigurations.fabro-vm.extendModules {
+                  modules = [ module ];
+                }).config;
+              buildersText =
+                cfg:
+                let
+                  value = cfg.nix.settings.builders;
+                in
+                if lib.hasPrefix "@" value then builtins.readFile (lib.removePrefix "@" value) else value;
+              builderSummary =
+                cfg:
+                let
+                  ssh = cfg.services.openssh;
+                  authorized = cfg.sops.secrets."builder-authorized-keys";
+                  oauth = cfg.sops.secrets."builder-tailscale-oauth-secret";
+                in
+                {
+                  hostPlatform = cfg.nixpkgs.hostPlatform.system;
+                  extraPlatforms = cfg.nix.settings.extra-platforms;
+                  maxJobs = cfg.nix.settings.max-jobs;
+                  trustedUsers = cfg.nix.settings.trusted-users;
+                  hostName = cfg.networking.hostName;
+                  ssh = {
+                    inherit (ssh)
+                      enable
+                      openFirewall
+                      hostKeys
+                      settings
+                      ;
+                  };
+                  authorizedKeys = {
+                    inherit (authorized) path owner mode;
+                  };
+                  tailscaleOauth = {
+                    inherit (oauth) path owner mode;
+                  };
+                  tailscale = {
+                    inherit (cfg.services.tailscale) enable openFirewall;
+                  };
+                  gc = {
+                    inherit (cfg.nix.gc) automatic dates options;
+                  };
+                  optimise = {
+                    inherit (cfg.nix.optimise) automatic dates;
+                  };
+                };
+              personalSummary =
+                cfg:
+                let
+                  builder = cfg.home-manager.users.brandonmcnama.virtualisation.limaLinuxBuilder;
+                  linuxSecret = cfg.sops.secrets."linux-builder-client-key";
+                  darwinSecret = cfg.sops.secrets."mac-builder-ssh-private-key";
+                in
+                {
+                  builder = {
+                    inherit (builder) cpus memory disk;
+                  };
+                  buildersText = buildersText cfg;
+                  maxJobs = cfg.nix.settings.max-jobs;
+                  distributedBuilds = cfg.nix.distributedBuilds;
+                  linuxSecret = {
+                    inherit (linuxSecret) path owner mode;
+                    sopsFile = toString linuxSecret.sopsFile;
+                  };
+                  darwinSecret = {
+                    inherit (darwinSecret) path owner mode;
+                    sopsFile = toString darwinSecret.sopsFile;
+                  };
+                };
+              fabroSummary =
+                cfg:
+                let
+                  dispatch = cfg.fabro.darwinBuilder;
+                  linuxSecret = cfg.sops.secrets."linux-builder-client-key";
+                in
+                {
+                  inherit (dispatch)
+                    machine
+                    linuxMachine
+                    clientKeyPath
+                    hostKeyPath
+                    linuxClientKeyPath
+                    ;
+                  maxJobs = cfg.nix.settings.max-jobs;
+                  distributedBuilds = cfg.nix.distributedBuilds;
+                  builders = cfg.nix.settings.builders;
+                  buildersUseSubstitutes = cfg.nix.settings.builders-use-substitutes;
+                  linuxSecret = {
+                    inherit (linuxSecret) path owner mode;
+                  };
+                };
+              checkData = {
+                builder = builderSummary builderConfig;
+                personal = personalSummary personalConfig;
+                fabro = fabroSummary fabroConfig;
+                negative = {
+                  builderWrongPlatform = builderSummary (
+                    withBuilderFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/builder-capability.nix {
+                        hostPlatform = "x86_64-linux";
+                      }
+                    )
+                  );
+                  builderExtraPlatform = builderSummary (
+                    withBuilderFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/builder-capability.nix {
+                        extraPlatforms = [ "x86_64-linux" ];
+                      }
+                    )
+                  );
+                  vmCpus = personalSummary (
+                    withPersonalFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/vm-resources.nix {
+                        cpus = 2;
+                      }
+                    )
+                  );
+                  vmMemory = personalSummary (
+                    withPersonalFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/vm-resources.nix {
+                        memory = "4GiB";
+                      }
+                    )
+                  );
+                  vmDisk = personalSummary (
+                    withPersonalFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/vm-resources.nix {
+                        disk = "64GiB";
+                      }
+                    )
+                  );
+                  fabroUnsupportedSystem = fabroSummary (
+                    withFabroFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/fabro-client-dispatch.nix {
+                        system = "aarch64-darwin";
+                      }
+                    )
+                  );
+                  fabroInvalidKeyPath = fabroSummary (
+                    withFabroFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/fabro-client-dispatch.nix {
+                        clientKeyPath = "/tmp/linux-builder-client-key";
+                      }
+                    )
+                  );
+                  fabroNonzeroMaxJobs = fabroSummary (
+                    withFabroFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/fabro-policy.nix {
+                        maxJobs = 2;
+                      }
+                    )
+                  );
+                  personalUnsupportedSystem = personalSummary (
+                    withPersonalFixture (
+                      import ./tests/linux-nix-remote-builder/fixtures/personal-client-dispatch.nix {
+                        system = "aarch64-darwin";
+                      }
+                    )
+                  );
+                };
+              };
+              checkDataFile = pkgs.writeText "linux-nix-remote-builder-check-data.json" (
+                builtins.toJSON checkData
+              );
+            in
+            pkgs.runCommand "linux-nix-remote-builder"
+              {
+                nativeBuildInputs = [
+                  pkgs.nodejs
+                  pkgs.coreutils
+                ];
+                LINUX_NIX_REMOTE_BUILDER_DATA_FILE = checkDataFile;
+              }
+              ''
+                set -eu
+                export HOME=$(mktemp -d)
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/linux-nix-remote-builder/
+                touch $out
+              '';
+
           fabro-darwin-builds =
             let
               guest = self.nixosConfigurations.fabro-vm.config;

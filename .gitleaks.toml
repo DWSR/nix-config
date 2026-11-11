@@ -78,6 +78,7 @@ paths = [
   '''scripts/fabro-sync-from-1password\.nix''',
   '''tests/linux-nix-remote-builder/personal-dispatch\.test\.js''',
   '''tests/linux-nix-remote-builder/combined-check\.test\.js''',
+  '''tests/linux-nix-remote-builder/negative-fixtures\.test\.js''',
   '''tests/linux-nix-remote-builder/fixtures/personal-client-dispatch\.nix''',
   '''\.kiro/specs/caffeinate-hammerspoon-migration/design\.md''',
   '''home-manager/common/hammerspoon-caffeinate/caffeinate\.lua''',
