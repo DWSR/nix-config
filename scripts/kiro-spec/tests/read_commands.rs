@@ -506,3 +506,221 @@ fn status_does_not_disturb_tasks_or_next() {
     );
     assert_eq!(success_stdout(fixture.run(&["status"])).lines().count(), 6);
 }
+
+const VALID_SPEC_JSON: &[u8] = br#"{
+  "feature_name": "demo",
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-02T00:00:00Z",
+  "language": "en",
+  "phase": "initialized",
+  "approvals": {
+    "requirements": {"generated": false, "approved": false},
+    "design": {"generated": false, "approved": false},
+    "tasks": {"generated": false, "approved": false}
+  },
+  "ready_for_implementation": false
+}"#;
+
+const VALID_TASKS: &str = "# Implementation Plan\n\n- [ ] 1. Foundation\n- [x] 1.1 Pin inputs\n";
+const DUPLICATE_TASKS: &str = "- [ ] 1. Foundation\n- [ ] 1. Duplicate\n";
+const WARNING_TASKS: &str = "- [ ] 1. Numbered\n- [ ] Has no identifier\n";
+
+fn valid_fixture(tag: &str) -> Fixture {
+    let fixture = Fixture::new(tag, Some(VALID_TASKS));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+    fixture
+}
+
+fn assert_no_ansi_or_root(text: &str, root: &Path) {
+    assert!(!text.contains('\u{1b}'), "ANSI escape in output: {text:?}");
+    assert!(
+        !text.contains(&root.display().to_string()),
+        "root path in output: {text}"
+    );
+}
+
+#[test]
+fn validate_human_reports_a_clean_spec_as_zero_errors() {
+    let fixture = valid_fixture("validate-human-clean");
+    let output = fixture.run(&["validate"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert_eq!(stdout, "0 errors, 0 warnings\n");
+    assert_no_ansi_or_root(&stdout, &fixture.root);
+}
+
+#[test]
+fn validate_json_emits_one_complete_valid_document() {
+    let fixture = valid_fixture("validate-json-clean");
+    let stdout = success_stdout(fixture.run(&["--json", "validate"]));
+    let document = parse_document(&stdout);
+
+    assert_eq!(document["schema_version"].as_u64(), Some(1));
+    assert_eq!(document["spec"].as_str(), Some("demo"));
+    assert_eq!(document["valid"].as_bool(), Some(true));
+    assert_eq!(
+        document["findings"].as_array().map(|findings| findings.len()),
+        Some(0)
+    );
+    for pair in [
+        ("\"schema_version\"", "\"spec\""),
+        ("\"spec\"", "\"valid\""),
+        ("\"valid\"", "\"findings\""),
+    ] {
+        assert!(
+            stdout.find(pair.0) < stdout.find(pair.1),
+            "{} must precede {}:\n{stdout}",
+            pair.0,
+            pair.1
+        );
+    }
+    assert!(stdout.ends_with("}\n"), "{stdout}");
+    assert!(!stdout.ends_with("}\n\n"), "{stdout}");
+    assert_no_ansi_or_root(&stdout, &fixture.root);
+}
+
+#[test]
+fn validate_reports_error_findings_on_stdout_and_exits_one() {
+    let fixture = Fixture::new("validate-human-error", Some(DUPLICATE_TASKS));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+
+    let output = fixture.run(&["validate"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(
+        stdout.contains("tasks.md:2: error [tasks.id.duplicate]"),
+        "{stdout}"
+    );
+    assert!(stdout.ends_with("1 error, 0 warnings\n"), "{stdout}");
+    assert_no_ansi_or_root(&stdout, &fixture.root);
+}
+
+#[test]
+fn validate_json_reports_invalid_findings_and_still_exits_one() {
+    let fixture = Fixture::new("validate-json-error", Some(DUPLICATE_TASKS));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+
+    let output = fixture.run(&["--json", "validate"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    let document = parse_document(&stdout);
+    assert_eq!(document["schema_version"].as_u64(), Some(1));
+    assert_eq!(document["spec"].as_str(), Some("demo"));
+    assert_eq!(document["valid"].as_bool(), Some(false));
+    let findings = document["findings"].as_array().expect("findings array");
+    assert_eq!(findings.len(), 1, "{stdout}");
+    assert_eq!(findings[0]["severity"].as_str(), Some("error"));
+    assert_eq!(findings[0]["code"].as_str(), Some("tasks.id.duplicate"));
+    assert_eq!(findings[0]["file"].as_str(), Some("tasks.md"));
+    assert_eq!(findings[0]["line"].as_u64(), Some(2));
+    assert_no_ansi_or_root(&stdout, &fixture.root);
+}
+
+#[test]
+fn validate_warnings_only_exit_zero_and_keep_findings_as_result_data() {
+    let fixture = Fixture::new("validate-warnings", Some(WARNING_TASKS));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+
+    let human = fixture.run(&["validate"]);
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    assert_eq!(human.status.code(), Some(0), "stderr: {stderr}");
+    assert!(human.stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8(human.stdout).expect("utf-8 stdout"),
+        "tasks.md:2: warning [tasks.line.unnumbered] checkbox line has no numeric task identifier\n0 errors, 1 warning\n"
+    );
+
+    let json = fixture.run(&["--json", "validate"]);
+    let stderr = String::from_utf8_lossy(&json.stderr);
+    assert_eq!(json.status.code(), Some(0), "stderr: {stderr}");
+    assert!(json.stderr.is_empty(), "stderr: {stderr}");
+    let document = parse_document(&String::from_utf8(json.stdout).expect("utf-8 stdout"));
+    assert_eq!(document["valid"].as_bool(), Some(true));
+    let findings = document["findings"].as_array().expect("findings array");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["severity"].as_str(), Some("warning"));
+    assert_eq!(findings[0]["code"].as_str(), Some("tasks.line.unnumbered"));
+    assert_eq!(findings[0]["line"].as_u64(), Some(2));
+}
+
+#[test]
+fn validate_exit_status_matches_with_and_without_json() {
+    let clean = valid_fixture("validate-status-clean");
+    assert_eq!(clean.run(&["validate"]).status.code(), Some(0));
+    assert_eq!(clean.run(&["--json", "validate"]).status.code(), Some(0));
+
+    let broken = Fixture::new("validate-status-broken", Some(DUPLICATE_TASKS));
+    broken.write_spec_json(VALID_SPEC_JSON);
+    assert_eq!(broken.run(&["validate"]).status.code(), Some(1));
+    assert_eq!(broken.run(&["--json", "validate"]).status.code(), Some(1));
+}
+
+#[test]
+fn validate_without_a_spec_directory_uses_the_failure_path() {
+    let fixture = valid_fixture("validate-missing-spec-dir");
+    fs::remove_dir_all(&fixture.spec).expect("remove fixture spec directory");
+    let path = fixture.spec.display().to_string();
+
+    for args in [&["validate"][..], &["--json", "validate"][..]] {
+        let output = fixture.run(args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+        assert!(stderr.starts_with("kiro-spec: "), "{args:?}: {stderr}");
+        assert!(stderr.contains(&path), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
+fn validate_reports_missing_artifacts_as_findings_without_stderr() {
+    let fixture = Fixture::new("validate-missing-artifacts", None);
+
+    for args in [&["validate"][..], &["--json", "validate"][..]] {
+        let output = fixture.run(args);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(output.stderr.is_empty(), "{args:?}: {stderr}");
+        let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+        assert!(
+            stdout.contains("spec.json.missing"),
+            "{args:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn validate_reports_non_utf8_tasks_as_a_finding_not_a_diagnostic() {
+    let fixture = valid_fixture("validate-non-utf8-tasks");
+    fs::write(fixture.spec.join("tasks.md"), [0xff, 0xfe]).expect("write invalid utf-8");
+
+    let output = fixture.run(&["validate"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("utf-8 stdout");
+    assert!(stdout.contains("error [tasks.unreadable]"), "{stdout}");
+}
+
+#[test]
+fn validate_leaves_the_fixture_tree_unchanged_in_both_formats() {
+    for (tag, tasks) in [
+        ("validate-read-only-clean", VALID_TASKS),
+        ("validate-read-only-broken", DUPLICATE_TASKS),
+    ] {
+        let fixture = Fixture::new(tag, Some(tasks));
+        fixture.write_spec_json(VALID_SPEC_JSON);
+        let before = tree_hash(&fixture.root);
+
+        for args in [&["validate"][..], &["--json", "validate"][..]] {
+            fixture.run(args);
+        }
+
+        assert_eq!(tree_hash(&fixture.root), before, "{tag}");
+    }
+}
