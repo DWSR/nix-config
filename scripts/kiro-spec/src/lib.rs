@@ -86,12 +86,24 @@ fn dispatch(invocation: &Invocation) -> Outcome {
         Command::Tasks => read_tasks(invocation),
         Command::Next => read_next(invocation),
         Command::Status => read_status(invocation),
+        Command::Validate => return run_validate(invocation),
         _ => return Outcome::failure(not_yet_wired(invocation.command())),
     };
     match result {
         Ok(stdout) => Outcome::success(Some(stdout)),
         Err(error) => Outcome::failure(error),
     }
+}
+
+fn run_validate(invocation: &Invocation) -> Outcome {
+    let paths = match SpecPaths::resolve(invocation.root(), invocation.spec()) {
+        Ok(paths) => paths,
+        Err(error) => return Outcome::failure(error.into()),
+    };
+    let report = validate::validate(&paths);
+    let document = render::render_validation(&report, paths.name(), selected_format(invocation));
+    let code = if report.has_errors() { 1 } else { 0 };
+    Outcome::new(Some(document), None, code)
 }
 
 fn read_tasks(invocation: &Invocation) -> Result<String, AppError> {
@@ -237,14 +249,16 @@ mod tests {
         let outcome = execute([
             OsString::from("kiro-spec"),
             OsString::from("--spec"),
-            OsString::from("demo"),
+            OsString::from(".."),
             OsString::from("validate"),
         ]);
         assert_eq!(outcome.code(), 1);
         assert_eq!(outcome.stdout(), None);
         assert_eq!(
             outcome.stderr(),
-            Some("kiro-spec: validate: not yet wired\n")
+            Some(
+                "kiro-spec: --spec \"..\": requires a relative single path component (`--spec <name>`)\n"
+            )
         );
     }
 }

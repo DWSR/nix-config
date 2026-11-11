@@ -170,11 +170,10 @@ fn usage_diagnostics_name_the_offending_flag_or_command() {
 }
 
 #[test]
-fn valid_invocations_are_not_yet_wired_and_leave_the_fixture_unchanged() {
+fn unwired_mutations_are_not_yet_wired_and_leave_the_fixture_unchanged() {
     let fixture = Fixture::new();
     let before = fixture.snapshot();
     let cases: &[&[&str]] = &[
-        &["--spec", "demo", "validate"],
         &["--spec", "demo", "complete", "1"],
         &["--spec", "demo", "block", "1", "--reason", "waiting"],
     ];
