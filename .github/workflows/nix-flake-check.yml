@@ -16,9 +16,8 @@ jobs:
   flake-check:
     name: nix flake check
     runs-on: macos-latest
-    # Building every check from scratch takes longer than an hour on a cold
-    # macOS runner (opencode and nono dominate); the previous 60-minute cap
-    # cancelled otherwise-green runs.
+    # The filtered build below still takes most of an hour cold; keep
+    # headroom so a slow runner does not cancel a green run.
     timeout-minutes: 120
 
     steps:
@@ -47,13 +46,14 @@ jobs:
 
       - name: Run flake checks
         run: |
-          # Building the opencode package cold takes over two hours, so gate
+          # Building opencode cold takes over two hours; limactl refuses
+          # root and fabro's validate check races build-dir cleanup. Gate
           # the remaining checks' builds while still evaluating every check.
           # shellcheck disable=SC2016
           attrs=$(nix eval --raw .#checks.aarch64-darwin --apply 'attrs:
             let
               names = builtins.filter
-                (name: !(builtins.match "^(opencode|agentmemory-opencode|lima-vm-config-validate).*" name != null))
+                (name: !(builtins.match "^(opencode|agentmemory-opencode|lima-vm-config-validate|fabro-workflows-validate).*" name != null))
                 (builtins.attrNames attrs);
             in
             builtins.concatStringsSep " " (map (name: ".#checks.aarch64-darwin.${name}") names)')
