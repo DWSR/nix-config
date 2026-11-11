@@ -220,7 +220,8 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Confirm each documented example matches the packaged binary's output and that the doc names every finding code `validate` can emit.
   - _Requirements: 9.5, 11.7_
 
-- [ ] 11. Run the offline acceptance gate
+- [!] 11. Run the offline acceptance gate
+  - _Blocked: no aarch64-linux builder is configured (only aarch64-darwin); the Linux package build and cross-platform output comparison cannot run_
   - Run `cargo test --locked` in `scripts/kiro-spec/`, then `nix build .#checks.aarch64-darwin.kiro-spec`, `.#checks.aarch64-darwin.kiro-spec-corpus`, `.#checks.aarch64-darwin.kiro-spec-wiring`, and `.#packages.aarch64-linux.kiro-spec` through the configured Linux builder.
   - Run the `tests/fabro-sandbox` Node suite and walk all six subcommands against a temp spec tree in both formats.
   - Compare one fixture's output and exit status between the darwin package and the guest's linux package, and confirm the repository's `.kiro/specs/` tree hash is unchanged.
