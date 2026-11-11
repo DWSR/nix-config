@@ -119,7 +119,7 @@
   - _Depends: 4.2, 5.1, 5.3_
   - _Boundary: `flake.nix`_
   - _Requirements: 3.2, 4.1, 4.2, 4.4_
-- [ ] 5.5 Prove live image and two-stage Machine compatibility
+- [x] 5.5 Prove live image and two-stage Machine compatibility
   - Extend and run the smoke harness with an operator-supplied token and existing disposable app; boot the hybrid image, then apply app and multi-container settings twice and inspect full configs and managed counts.
   - Done only when live observations match both deployments; if access is unavailable, leave the task blocked. Do not provision or record token values.
   - _Depends: 1.2, 4.2, 5.4_
