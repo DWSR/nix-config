@@ -14,7 +14,7 @@ set before the guest rebuild.
 ## Tasks
 
 - [ ] 1. Deployment catalog
-- [ ] 1.1 Create `configurations/fabro-vm/litellm-catalog.nix` with the provider and logical-model tables
+- [x] 1.1 Create `configurations/fabro-vm/litellm-catalog.nix` with the provider and logical-model tables
   - Declare providers `chatgpt` (prefix `chatgpt/`, no base URL or key var, allowlist `reasoning_effort`, no client-session-header requirement), `opencode-go` (`openai/`, `https://opencode.ai/zen/go/v1`, `OPENCODE_API_KEY`, requires the header), and `opencode-zen` (`openai/`, `https://opencode.ai/zen/v1`, `OPENCODE_API_KEY`, requires the header).
   - Declare the ten logical models and eleven deployments from the design's Initial Logical Model table, with `requestDefaults`, limits, weights, display names that drop the provider parenthetical, Fabro effort levels, and `smallDefault` on `deepseek-v4.1-flash`; `gpt-6-luna` is the only two-deployment group and both of its deployments pin `reasoning_effort = "xhigh"`.
   - Keep the module pure data: no host paths, secrets, or derivations; credentials appear only as environment-variable names, and the table default is `deepseek-v4.1-flash`.
