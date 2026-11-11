@@ -139,10 +139,9 @@ digraph Oneshot {
     prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]
     prepare -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED", weight=10]
     prepare -> fail
-    diagnose -> implement [condition="outcome=succeeded && context.preflight_status=READY"]
+    diagnose -> baseline [condition="outcome=succeeded && context.preflight_status=READY"]
     diagnose -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED"]
     diagnose -> fail
-    diagnose -> baseline [condition="outcome=succeeded && context.preflight_status=READY"]
     baseline -> implement [condition="outcome=succeeded"]
     baseline -> fail
 
