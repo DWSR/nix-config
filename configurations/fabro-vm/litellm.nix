@@ -153,6 +153,23 @@ in
       # explicit `model_info.id` naming the deployment, and an explicit
       # `weight` for placement.
       model_list = catalog.modelList;
+
+      # Placement: weighted `simple-shuffle` across the healthy deployments
+      # of a logical model, so a new conversation is placed by weight and
+      # deployment availability alone. `session_affinity` turns on the
+      # router's pin, keyed by logical model and session identity (the
+      # header or body key the session bridge resolves); the six-hour TTL is
+      # an idle expiry refreshed by every routed request. Pins live in the
+      # router's in-process cache, so a gateway restart — which also
+      # restarts Fabro via its hard Requires — clears them and the next
+      # request is a fresh placement. No `deployment_affinity`, `rpm`, or
+      # `tpm` is declared: caller keys and request rates do not influence
+      # placement.
+      router_settings = {
+        routing_strategy = "simple-shuffle";
+        optional_pre_call_checks = [ "session_affinity" ];
+        deployment_affinity_ttl_seconds = 21600;
+      };
     };
   };
 
