@@ -2,7 +2,7 @@
 # pure constructor: no host paths, derivations, or secret values — provider
 # credentials appear only as environment-variable names. `mkCatalog` is
 # exported so routing checks can validate fixture tables; the gateway and
-# client projections consume the validated catalog in later units.
+# client projections are derived from the validated catalog.
 { lib }:
 let
   # Upstream providers. `modelPrefix` and `apiBase` shape a deployment's
@@ -456,6 +456,53 @@ let
         in
         if size > acc then size else acc
       ) 0 logicalIds;
+
+      mkOpenCodeRecord = _logicalId: model: {
+        name = model.displayName;
+      };
+
+      openCode = {
+        inherit defaultModel;
+        models = lib.mapAttrs mkOpenCodeRecord normalizedLogicalModels;
+      };
+
+      mkFabroRecord =
+        logicalId: model:
+        let
+          deployment = builtins.head model.deployments;
+          effortLevels = model.reasoningEffortLevels or [ ];
+        in
+        {
+          display_name = model.displayName;
+          api_model = logicalId;
+          limits = {
+            context_tokens = deployment.limits.contextTokens;
+            max_output_tokens = deployment.limits.maxOutputTokens;
+          };
+          capabilities = {
+            text = true;
+            tools = true;
+            reasoning = true;
+            caching = true;
+            cache_routing = true;
+          }
+          // lib.optionalAttrs (effortLevels != [ ]) {
+            reasoning_effort = builtins.listToAttrs (
+              map (level: {
+                name = level;
+                value = true;
+              }) effortLevels
+            );
+          };
+        }
+        // lib.optionalAttrs (model.smallDefault or false) {
+          small_default = true;
+        };
+
+      fabro = {
+        inherit defaultModel;
+        models = lib.mapAttrs mkFabroRecord normalizedLogicalModels;
+      };
     in
     builtins.seq (validateAll normalizedLogicalModels) (
       if !(builtins.hasAttr defaultModel normalizedLogicalModels) then
@@ -467,6 +514,8 @@ let
             forwardClientHeaders
             logicalIds
             maxGroupSize
+            openCode
+            fabro
             ;
           tables = {
             inherit providers;
