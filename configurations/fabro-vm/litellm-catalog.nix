@@ -405,12 +405,69 @@ let
 
       validateAll =
         tables: builtins.all (logicalId: builtins.isAttrs tables.${logicalId}) (lib.attrNames tables);
+
+      logicalIds = lib.attrNames normalizedLogicalModels;
+
+      mkGatewayRecord =
+        logicalId: deployment:
+        let
+          provider = providers.${deployment.provider};
+        in
+        {
+          model_name = logicalId;
+          model_info = {
+            id = deploymentId logicalId deployment;
+            inherit (deployment) mode;
+            max_input_tokens = deployment.limits.contextTokens;
+            max_output_tokens = deployment.limits.maxOutputTokens;
+          };
+          litellm_params = {
+            model = "${provider.modelPrefix}${deployment.upstreamModel}";
+          }
+          // lib.optionalAttrs (provider.apiBase != null) {
+            api_base = provider.apiBase;
+          }
+          // lib.optionalAttrs (provider.apiKeyEnvVar != null) {
+            api_key = "os.environ/${provider.apiKeyEnvVar}";
+          }
+          // deployment.requestDefaults
+          // {
+            allowed_openai_params = provider.allowedOpenAIParams;
+            inherit (deployment) weight;
+          };
+        };
+
+      modelList = builtins.concatMap (
+        logicalId: map (mkGatewayRecord logicalId) normalizedLogicalModels.${logicalId}.deployments
+      ) logicalIds;
+
+      requiresClientSessionHeader =
+        logicalId:
+        lib.any (
+          deployment: providers.${deployment.provider}.requiresClientSessionHeader
+        ) normalizedLogicalModels.${logicalId}.deployments;
+
+      forwardClientHeaders = builtins.filter requiresClientSessionHeader logicalIds;
+
+      maxGroupSize = lib.foldl' (
+        acc: logicalId:
+        let
+          size = builtins.length normalizedLogicalModels.${logicalId}.deployments;
+        in
+        if size > acc then size else acc
+      ) 0 logicalIds;
     in
     builtins.seq (validateAll normalizedLogicalModels) (
       if !(builtins.hasAttr defaultModel normalizedLogicalModels) then
         fail "default model '${defaultModel}' is not a logical model"
       else
         {
+          inherit
+            modelList
+            forwardClientHeaders
+            logicalIds
+            maxGroupSize
+            ;
           tables = {
             inherit providers;
             logicalModels = normalizedLogicalModels;

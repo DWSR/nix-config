@@ -28,7 +28,7 @@ set before the guest rebuild.
   - Observable: a fixture omitting `limits.contextTokens` fails naming the deployment and field, and a two-deployment fixture with differing `mode` fails naming both deployment ids.
   - _Requirements: 1.2, 1.4, 1.8, 2.4, 2.5, 2.6, 8.3, 8.6_
 
-- [ ] 1.3 Generate the gateway `modelList`, `forwardClientHeaders`, and catalog metadata
+- [x] 1.3 Generate the gateway `modelList`, `forwardClientHeaders`, and catalog metadata
   - Emit one entry per deployment, ordered by sorted logical id then deployment order, with `model_name` = logical id, `model_info.id` = `<logical>@<provider>`, mode and token limits, and `litellm_params` combining the provider prefix, upstream id, `api_base`/`api_key` only when the provider declares them, the deployment's request defaults, the provider allowlist, and an explicit `weight`.
   - Emit `forwardClientHeaders` as the sorted logical ids whose deployment set contains a provider with `requiresClientSessionHeader = true`, plus `maxGroupSize` and sorted `logicalIds`.
   - Preserve provider-field omission instead of emitting nulls, and keep projection output identical across repeated evaluations.
