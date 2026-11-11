@@ -76,10 +76,11 @@ in
         gawk
         jq
         curl
+        kiro-spec
         usrBinEnv
       ];
       defaultText = lib.literalExpression ''
-        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep gnused python3 nix util-linux cacert ripgrep gawk jq curl usrBinEnv ]
+        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep gnused python3 nix util-linux cacert ripgrep gawk jq curl kiro-spec usrBinEnv ]
       '';
       description = ''
         Packages the image exposes in its root: the `/bin` command path
@@ -104,6 +105,9 @@ in
         `imageConfig.Env` points at it. ripgrep, gawk, jq, and curl are for
         workflow agents that expect the usual developer tools and otherwise
         burn turns on `rg: command not found` / `awk: command not found`.
+        The `kiro-spec` CLI must stay on the image's `/bin` command path:
+        `/bin` is the image's only `PATH` entry, and the sandbox driver and
+        workflow command nodes invoke it by name.
       '';
     };
 
