@@ -71,7 +71,7 @@ set before the guest rebuild.
   - _Requirements: 3.1, 3.3, 3.4, 3.7, 4.1, 4.7, 4.8, 4.9, 4.12_
   - _Depends: 1.3_
 
-- [ ] 3.3 Add within-group failover and cooldown router settings
+- [x] 3.3 Add within-group failover and cooldown router settings
   - Set `num_retries = 0`, `enable_weighted_failover = true`, `allowed_fails = 0`, `cooldown_time = 60`, and `max_fallbacks = catalog.maxGroupSize - 1` derived from the catalog.
   - Declare no `fallbacks`, `context_window_fallbacks`, or `model_group_alias`, so a retry never crosses a logical model and the attempt count stays bounded by the largest group.
   - Observable: `nix eval` shows the five values with `max_fallbacks = 1`, none of the three fallback keys present, and a third `gpt-6-luna` deployment re-evaluating to `max_fallbacks = 2`.

@@ -169,6 +169,23 @@ in
         routing_strategy = "simple-shuffle";
         optional_pre_call_checks = [ "session_affinity" ];
         deployment_affinity_ttl_seconds = 21600;
+
+        # Failover inside the group: `num_retries = 0` sends the first
+        # failure into the async weighted-failover path instead of
+        # retrying the same deployment, and `enable_weighted_failover`
+        # re-picks a sibling inside the same logical model (the async
+        # proxy path is the one that honors it). `allowed_fails = 0` +
+        # `cooldown_time = 60` take a failed deployment out of placement
+        # and affinity selection for 60 seconds; `max_fallbacks` is
+        # derived from the largest group (`catalog.maxGroupSize - 1`), so
+        # the attempt count stays bounded by the group size. No
+        # `fallbacks`, `context_window_fallbacks`, or `model_group_alias`
+        # is declared, so a retry never crosses a logical model.
+        num_retries = 0;
+        enable_weighted_failover = true;
+        allowed_fails = 0;
+        cooldown_time = 60;
+        max_fallbacks = catalog.maxGroupSize - 1;
       };
     };
   };
