@@ -108,7 +108,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 2.8, 6.1, 6.22_
 
 - [ ] 6. Read subcommands
-- [ ] 6.1 Wire `tasks` and `next`
+- [x] 6.1 Wire `tasks` and `next`
   - Dispatch both over `SpecPaths` and `parse_tasks`, reading only `tasks.md`, rendering through the selected `Format`, and requiring no `spec.json`.
   - Keep `tasks` in document order with subtasks beneath their grouping entry; have `next` report the actionable entry with blocked state and reason, or the no-incomplete-task result, and never select a grouping entry.
   - Confirm a fixture tree yields identical repeated output in both formats and hash-equal files after runs of both commands.
