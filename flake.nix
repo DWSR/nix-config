@@ -2986,6 +2986,39 @@
                 touch $out
               '';
 
+          litellm-routing =
+            pkgs.runCommand "litellm-routing"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/litellm-routing/
+                touch $out
+              '';
+
+          litellm-affinity-bridge =
+            pkgs.runCommand "litellm-affinity-bridge"
+              {
+                nativeBuildInputs = [ pkgs.python3 ];
+              }
+              ''
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                export PYTHONPATH=configurations/fabro-vm
+                export PYTHONDONTWRITEBYTECODE=1
+                python3 -m unittest discover -s tests/litellm-affinity-bridge
+                touch $out
+              '';
+
           rtk-opencode-tests =
             pkgs.runCommand "rtk-opencode-tests"
               {
