@@ -131,7 +131,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Reassemble bytes from `TaskDocument` so untouched lines keep their original terminators; equal bytes produce `EditPlan { bytes: None }` with no filesystem write.
   - Unit test (skipped when the process can still write, for example as root) proves a write failure leaves `tasks.md` unchanged and returns a mutation error.
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
-- [ ] 7.2 Plan and apply `complete`
+- [x] 7.2 Plan and apply `complete`
   - Replace only the target line's checkbox state character with `x`, preserving identifier, description, optional marker, indentation, metadata bullets, and line terminator.
   - Remove every `_Blocked:` bullet and its continuation lines in that entry block, and leave parent, child, and sibling entries untouched.
   - Return a byte-identical no-op for an already completed entry and fail before any temp file for malformed, unknown, or ambiguous identifiers.
