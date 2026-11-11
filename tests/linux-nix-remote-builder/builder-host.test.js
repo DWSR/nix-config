@@ -7,13 +7,16 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const repoRoot = path.resolve(__dirname, '../..');
+const { nixEvalJson, repoRoot } = require('./helpers');
 
-function evalBuilder() {
+function evalBuilder(extraModule = null) {
+  const host = extraModule
+    ? `flake.nixosConfigurations.linux-builder.extendModules { modules = [ (${extraModule}) ]; }`
+    : `flake.nixosConfigurations.linux-builder`;
   const expression = `
     let
       flake = builtins.getFlake (toString ${JSON.stringify(repoRoot)});
-      host = flake.nixosConfigurations.linux-builder;
+      host = ${host};
       cfg = host.config;
     in
     {
@@ -51,6 +54,7 @@ function evalBuilder() {
       };
       tailscale = {
         enable = cfg.services.tailscale.enable;
+        openFirewall = cfg.services.tailscale.openFirewall;
         authKeyFile = cfg.services.tailscale.authKeyFile;
       };
       tailscaleAuthService = {
@@ -87,31 +91,40 @@ function evalBuilder() {
         dates = cfg.nix.optimise.dates;
       };
       hostName = cfg.networking.hostName;
+      # The portable host must not depend on the personal host's Lima modules.
+      hasLimaVM = cfg.virtualisation ? limaVM;
+      hasLimaMacGuest = cfg.virtualisation ? limaMacGuest;
     }
   `;
 
-  return JSON.parse(childProcess.execFileSync(
-    'nix',
-    ['eval', '--json', '--impure', '--expr', expression],
-    {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
-    },
-  ));
+  return nixEvalJson(expression);
+}
+
+// Shared invariant checks so a test-only overlay can prove that a perturbed
+// host render is rejected instead of silently passing the suite.
+function assertNativeBuilderPlatform(cfg) {
+  assert.equal(
+    cfg.hostPlatform,
+    'aarch64-linux',
+    'linux-builder must evaluate as a native aarch64-linux NixOS host (Requirements 1.1, 1.3, 5.1)',
+  );
+  assert.deepEqual(
+    cfg.extraPlatforms,
+    [],
+    'linux-builder must not advertise any extra execution platform (Requirement 1.2)',
+  );
 }
 
 test('linux-builder is a native, standalone NixOS remote builder', () => {
   const cfg = evalBuilder();
 
-  assert.equal(cfg.hostPlatform, 'aarch64-linux');
+  assertNativeBuilderPlatform(cfg);
   assert.equal(cfg.nixEnabled, true);
   assert.ok(cfg.experimentalFeatures.includes('nix-command'));
   assert.ok(cfg.experimentalFeatures.includes('flakes'));
-  assert.deepEqual(cfg.extraPlatforms, []);
   assert.equal(cfg.maxJobs, 4);
   assert.equal(cfg.buildUsersGroup, 'nixbld');
+  // Only the dedicated non-root builder account is trusted for remote builds.
   assert.deepEqual(cfg.trustedUsers, ['builder']);
   assert.equal(cfg.hostName, 'linux-builder');
   assert.equal(cfg.builderUser.isNormalUser, true);
@@ -119,6 +132,20 @@ test('linux-builder is a native, standalone NixOS remote builder', () => {
   assert.equal(cfg.builderUser.group, 'builder');
   assert.equal(cfg.builderUser.createHome, true);
   assert.deepEqual(cfg.builderUser.extraGroups ?? [], []);
+});
+
+test('a wrong builder platform is rejected', () => {
+  const cfg = evalBuilder(`{ lib, ... }: {
+    nixpkgs.hostPlatform = lib.mkForce "x86_64-linux";
+  }`);
+
+  // The fixture must really change the platform before the invariant is run.
+  assert.equal(cfg.hostPlatform, 'x86_64-linux');
+
+  assert.throws(
+    () => assertNativeBuilderPlatform(cfg),
+    /native aarch64-linux/,
+  );
 });
 
 test('SSH authorization and host identity are delivered outside the Nix store', () => {
@@ -132,6 +159,7 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   assert.deepEqual(cfg.ssh.settings.AllowUsers, ['builder']);
   assert.equal(cfg.ssh.settings.PermitRootLogin, 'no');
   assert.equal(cfg.ssh.settings.PasswordAuthentication, false);
+  assert.equal(cfg.ssh.settings.KbdInteractiveAuthentication, false);
   assert.equal(cfg.builderSecret.path, '/run/secrets/builder-authorized-keys');
   assert.match(cfg.builderSecret.sopsFile, /linux-builder-(unprovisioned-secrets|remote-builder\.linux-builder\.yaml)\.yaml$/);
   assert.equal(cfg.builderSecret.owner, 'root');
@@ -206,6 +234,7 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
   const cfg = evalBuilder();
 
   assert.equal(cfg.tailscale.enable, true);
+  assert.equal(cfg.tailscale.openFirewall, true);
   assert.equal(cfg.tailscale.authKeyFile, null);
   assert.ok(cfg.tailscaleAuthService.after.includes('sops-install-secrets.service'));
   assert.ok(cfg.tailscaleAuthService.requires.includes('sops-install-secrets.service'));
@@ -258,10 +287,19 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
   }
 
   assert.equal(cfg.garbageCollection.automatic, true);
+  assert.deepEqual(cfg.garbageCollection.dates, ['daily']);
+  assert.equal(cfg.garbageCollection.options, '--delete-older-than 7d');
   assert.equal(cfg.optimisation.automatic, true);
+  assert.deepEqual(cfg.optimisation.dates, ['daily']);
+
+  // Lima provisioning and lifecycle belong to the personal host, never to the
+  // portable builder host: neither Lima module's options exist here.
+  assert.equal(cfg.hasLimaVM, false);
+  assert.equal(cfg.hasLimaMacGuest, false);
 
   const source = fs.readFileSync(path.join(repoRoot, 'configurations/linux-builder/default.nix'), 'utf8');
   assert.doesNotMatch(source, /lima/i);
+  assert.doesNotMatch(source, /limactl/);
   assert.doesNotMatch(source, /builtins\.readFile/);
   assert.doesNotMatch(source, /authorizedKeys\.keys/);
 });
