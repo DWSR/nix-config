@@ -219,6 +219,7 @@
   - Completed when dropping an extension, a role, a migration, a shared variable, or the placeholder fails with a message naming the element
   - _Requirements: 2.2, 2.4, 3.5, 5.2, 5.3, 5.4, 9.3, 9.4, 9.9_
   - _Depends: 9.2_
+  - _Blocked: 9.3's flake.nix deliverable is reverted because the 9.3 entry claims no flake group; unblock by rerunning from a baseline whose 9.3 entry names flake.nix._
 
 - [ ] 9.4 Assert the guest capture plugin and the excluded components
   - Assert the guest OpenCode config-tree derivation contains `plugins/total-recall-harness-events.js` and the unit carries the loopback `III_URL` and `HARNESS_EVENTS_BIN`
