@@ -96,7 +96,7 @@
   - _Requirements: 1.1, 4.1, 4.2_
 
 - [ ] 5. Verify behavior and register checks
-- [ ] 5.1 Verify module options and output isolation
+- [x] 5.1 Verify module options and output isolation
   - Test app/settings serialization, arbitrary Machine fields, per-container sources, missing/conflicting image errors, and two distinct named flake-app outputs.
   - Done when fixtures evaluate as declared and invalid choices fail with option-specific errors without a token in outputs.
   - _Depends: 2.2, 4.2_
