@@ -497,6 +497,22 @@ function toolResultText(result) {
     .join('\n');
 }
 
+async function waitForToolDiscovery(client, serverName, toolName) {
+  const deadline = Date.now() + 30_000;
+  let last = '';
+
+  while (Date.now() < deadline) {
+    const result = await client.callTool('retrieve_tools', {
+      query: `${serverName} ${toolName}`,
+    });
+    last = toolResultText(result);
+    if (last.includes(`${serverName}:${toolName}`)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  assert.fail(`tool discovery did not expose ${serverName}:${toolName}: ${last}`);
+}
+
 test('fixture finalization removes temporary state without replacing the primary failure', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-mcp-finalizer-regression-'));
   const primaryError = new Error('primary regression failure');
@@ -907,6 +923,7 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
     await Promise.all([waitForFile(gitOwnershipPath), waitForFile(siblingOwnershipPath)]);
     client = new McpClient(`http://127.0.0.1:${port}/mcp`);
     await client.connect();
+    await waitForToolDiscovery(client, 'git-failing', 'git_commit');
     continuityRecords = discoverOwnershipRecords(root, sessionToken)
       .filter((record) => continuityRoles.has(record.role));
     assert.deepEqual(
