@@ -33,11 +33,16 @@ branch `main`, HEAD `8765bac` ("chore(fabro): bump to 0.386.0-nightly.0").
    that assumes the mac's nono sandbox / mcpproxy / AgentMemory. `git`/`gh`/
    `nix` must be allowed in the bash tool (the common config denies `git`
    because git-mcp is the mac path; there is no git-mcp on the guest).
-3. **Provider: local LiteLLM**, declarative, no `auth.json`.
-4. **Session header: dynamic, never static.** The provider id must start with
-   `opencode` so opencode itself sends `x-opencode-session: <real session id>`;
-   LiteLLM forwards client `x-*` headers for the `opencode-go/*` and
-   `opencode-zen/*` model groups. Do **not** add provider `options.headers`.
+3. **Provider: local LiteLLM**, declarative, no OpenCode `auth.json` (the
+   provider key comes from the rendered env file; the gateway keeps the
+   upstream credentials).
+4. **Session headers: dynamic, never static.** The provider id must start
+   with `opencode` so OpenCode itself sends `x-opencode-session` and
+   `x-opencode-session-id` for every request. Forwarding is group-scoped:
+   the gateway forwards client headers to a logical model's group when the
+   catalog marks any of its deployments' providers with
+   `requiresClientSessionHeader`. Do **not** add static provider
+   `options.headers`.
 5. **Server password** via sops (`OPENCODE_SERVER_PASSWORD`), in addition to
    the tailnet ACL.
 6. **GitHub token**: new sops secret `opencode-github-token` sourced from
@@ -57,7 +62,9 @@ bun-compiled). The provider-request header logic is:
 ```js
 headers: {
   "x-opencode-session-id": o.sessionID,
-  ...(o.parentSessionID ? {"x-opencode-parent-session-id": o.parentSessionID} : {}),
+  ...(o.parentSessionID
+    ? {"x-opencode-parent-session-id": o.parentSessionID}
+    : {}),
   ...(o.model.providerID.startsWith("opencode")
     ? { ...(W ? {"x-opencode-project": W} : {}),
         "x-opencode-session": o.sessionID,
@@ -80,12 +87,26 @@ list ordering, prompt-cache-key default, model suggestion priority).
 
 ### LiteLLM header forwarding
 
-`configurations/fabro-vm/litellm.nix` sets
-`litellm_settings.model_group_settings.forward_client_headers_to_llm_api = [ "opencode-go/*" "opencode-zen/*" ]`,
-which forwards client `x-*` headers (except `x-stainless-*`) upstream for those
-model groups. The forwarding matches on the request's model name, which stays
-the litellm model id (e.g. `opencode-go/deepseek-v4.1-flash`), so opencode's
-per-session header reaches the gateway unchanged.
+`configurations/fabro-vm/litellm.nix` drives
+`litellm_settings.model_group_settings.forward_client_headers_to_llm_api`
+from the catalog:
+
+```nix
+litellm_settings.model_group_settings.forward_client_headers_to_llm_api =
+  catalog.forwardClientHeaders;
+```
+
+The catalog lists a logical model in that setting when any of its
+deployments' providers sets `requiresClientSessionHeader = true`; every
+sibling in the group then forwards the same headers, including a ChatGPT
+sibling of a unified group. The allowlist is every `x-*` header except
+`x-stainless-*`, plus `anthropic-beta`. LiteLLM strips `Authorization` and
+its special authentication headers before forwarding, so credentials and
+content-type never leave the gateway.
+
+Forwarding matches on the logical model name, which is provider-free (e.g.
+`deepseek-v4.1-flash`), so OpenCode's per-session headers reach the
+OpenCode Go/Zen upstream unchanged.
 
 ### systemd facts
 
@@ -145,9 +166,17 @@ Home Manager installs `programs.gh.extensions` as
   3. `ln -sfn ${pkgs.unstable.gh-stack}/bin /var/lib/opencode/share/gh/extensions/gh-stack`
   4. `install -m 0644 ${opencodeGitconfig} /var/lib/opencode/.gitconfig`
   5. `install -m 0600 "$CREDENTIALS_DIRECTORY/opencode-signing-key" /var/lib/opencode/.ssh/opencode_signing_key`
-  6. `sh -c '${pkgs.openssh}/bin/ssh-keygen -y -f /var/lib/opencode/.ssh/opencode_signing_key > /var/lib/opencode/.ssh/opencode_signing_key.pub'`
-     (a redirect needs a shell — systemd Exec lines do not run via sh).
-- `ExecStart = "${pkgs.opencode-pinned}/bin/opencode serve --hostname 127.0.0.1 --port 4096"`.
+  6. Derive the public key (a redirect needs a shell — systemd Exec lines
+     do not run via sh):
+
+     ```sh
+     sh -c '${pkgs.openssh}/bin/ssh-keygen -y \
+       -f /var/lib/opencode/.ssh/opencode_signing_key \
+       > /var/lib/opencode/.ssh/opencode_signing_key.pub'
+     ```
+
+- `ExecStart` runs `${pkgs.opencode-pinned}/bin/opencode serve` with
+  `--hostname 127.0.0.1 --port 4096`.
 - `ExecStartPost` health gate (mirror `fabroHealthGate`/`litellmHealthGate`
   style, ~30 attempts): accept HTTP 200 **or 401** from
   `http://127.0.0.1:4096/` as "listening" (401 = basic auth active; do not put
@@ -161,8 +190,8 @@ Home Manager installs `programs.gh.extensions` as
 
 ### Filesystem layout (`/var/lib/opencode`)
 
-```
-config/            declaratively reinstalled each start (settings, AGENTS.md, agents/, skills/)
+```text
+config/            regenerated each start (settings, agents, skills)
 share/gh/extensions/gh-stack -> ${gh-stack}/bin
 cache/, state/
 workspace/         service cwd; repos cloned here
@@ -178,7 +207,7 @@ recreated** — GitHub is the source of truth.
 ```nix
 {
   "$schema" = "https://opencode.ai/config.json";
-  model = "opencode-litellm/opencode-go/deepseek-v4.1-flash";
+  model = "opencode-litellm/deepseek-v4.1-flash";
   subagent_depth = 10;
   snapshot = false;        # parity with the mac config; git is the rollback path
   autoupdate = false;      # binary is nix-pinned
@@ -197,17 +226,16 @@ recreated** — GitHub is the source of truth.
       apiKey = "{env:LITELLM_MASTER_KEY}";
     };
     models = {
-      "chatgpt/gpt-6-luna" = { name = "GPT-6 Luna (ChatGPT, xhigh)"; };
-      "chatgpt/gpt-6-luna-none" = { name = "GPT-6 Luna (ChatGPT, no thinking)"; };
-      "chatgpt/gpt-6-astra" = { name = "GPT-6 Astra (ChatGPT, xhigh)"; };
-      "chatgpt/gpt-6.1-sol" = { name = "GPT-6.1 Sol (ChatGPT, xhigh)"; };
-      "opencode-go/gpt-6-luna" = { name = "GPT-6 Luna (OpenCode Go)"; };
-      "opencode-go/deepseek-v4.1-flash" = { name = "DeepSeek V4.1 Flash (OpenCode Go)"; };
-      "opencode-go/glm-5.3-flash" = { name = "GLM-5.3 Flash (OpenCode Go)"; };
-      "opencode-go/beam-free" = { name = "Beam Free (OpenCode Go)"; };
-      "opencode-go/omen-alpha" = { name = "Omen Alpha (OpenCode Go)"; };
-      "opencode-go/longcat-2.0" = { name = "LongCat 2.0 (OpenCode Go)"; };
-      "opencode-zen/big-pickle" = { name = "Big Pickle (OpenCode Zen)"; };
+      "gpt-6-luna" = { name = "GPT-6 Luna (xhigh)"; };
+      "gpt-6-luna-none" = { name = "GPT-6 Luna (no thinking)"; };
+      "gpt-6-astra" = { name = "GPT-6 Astra (xhigh)"; };
+      "gpt-6.1-sol" = { name = "GPT-6.1 Sol (xhigh)"; };
+      "deepseek-v4.1-flash" = { name = "DeepSeek V4.1 Flash"; };
+      "glm-5.3-flash" = { name = "GLM-5.3 Flash"; };
+      "beam-free" = { name = "Beam Free"; };
+      "omen-alpha" = { name = "Omen Alpha"; };
+      "longcat-2.0" = { name = "LongCat 2.0"; };
+      "big-pickle" = { name = "Big Pickle"; };
     };
   };
 }
@@ -215,14 +243,80 @@ recreated** — GitHub is the source of truth.
 
 Notes:
 
-- The provider id **must start with `opencode`** (hence `opencode-litellm`);
-  that is the entire mechanism for the dynamic session header. Do not rename
+- The model map is `catalog.openCode.models` and the default is
+  `catalog.openCode.defaultModel`, both generated from
+  `configurations/fabro-vm/litellm-catalog.nix`. Do not hand-edit the map:
+  a catalog edit reaches `opencode.json` at the next service restart.
+- The provider id **must start with `opencode`** (hence
+  `opencode-litellm`); that is the entire mechanism for OpenCode's dynamic
+  `x-opencode-session` and `x-opencode-session-id` headers. Do not rename
   it to `litellm` and do not pin a static session id at the provider level.
-- `chatgpt/*` deployments are declared in litellm but not loaded in the guest
-  until the ChatGPT OAuth credentials are provisioned via the existing
-  in-guest `litellm-chatgpt-login` procedure. Calls to them fail until then;
-  the `opencode-go/*` models work immediately.
-- Model ids in the picker will read `opencode-litellm/<model-id>`.
+- The ChatGPT OAuth login is a precondition for gateway startup, not just
+  for ChatGPT calls: LiteLLM 1.86 holds proxy startup in the device-code
+  flow while loading each ChatGPT deployment. Without `auth.json` in
+  `CHATGPT_TOKEN_DIR`, `/health/liveliness` never answers and
+  `litellm.service` fails its health gate. Run the in-guest
+  `litellm-chatgpt-login` procedure before starting the gateway; once it
+  completes, every catalog model works, including the OpenCode Go and Zen
+  deployments.
+- Model ids in the picker read `opencode-litellm/<logical-id>`.
+
+### Fabro model surface
+
+`configurations/fabro-vm/fabro.nix` sets
+`llm.providers.litellm.models = catalog.fabro.models`. Each record is keyed
+by a provider-free logical id and carries:
+
+- `api_model` equal to its key, with no provider prefix;
+- `limits` from the group's deployments;
+- `capabilities.caching` and `capabilities.cache_routing` set to `true` on
+  every record, which is what makes Fabro emit its conversational
+  `prompt_cache_key`;
+- `reasoning_effort` from the catalog's effort-level map where present.
+
+`default_model`, `cli.exec.model.name`, and `run.model.name` all use
+`catalog.fabro.defaultModel`, which is `deepseek-v4.1-flash` today. The
+provider-level `default_headers."x-opencode-session" = "fabro-litellm"`
+satisfies the OpenCode Go upstream requirement; it is not the affinity
+identity (see "Session identity").
+
+### Adding a model
+
+Add the model to `configurations/fabro-vm/litellm-catalog.nix`. Both client
+surfaces are generated projections of the validated catalog: OpenCode reads
+`catalog.openCode.models` and Fabro reads `catalog.fabro.models`, so each
+client picks the model up on its next service restart. Do not add it to
+`configurations/fabro-vm/opencode.nix` or
+`configurations/fabro-vm/fabro.nix` by hand, and do not update only one
+client: the two surfaces move together. The full catalog edit procedure is
+in `docs/litellm-routing-runbook.md`.
+
+### Session identity
+
+Affinity pins are keyed by logical model plus session identity. The gateway
+takes the identity from one of three request sources:
+
+- **OpenCode's `x-opencode-session-id`.** OpenCode sends it per session;
+  LiteLLM writes it to `metadata.session_id` before the request reaches
+  the router, so a header always wins over a body key. No client
+  configuration is involved.
+- **Fabro's `prompt_cache_key`.** Fabro emits a per-conversation key for
+  every catalog record because each record sets `caching` and
+  `cache_routing`. The in-process bridge in
+  `configurations/fabro-vm/litellm_affinity_bridge.py` hashes the key to
+  `bridge:v1:<producer>:<sha256>`, using the `User-Agent` product token as
+  the producer, then drops the key from the outbound body.
+- **The static `x-opencode-session: fabro-litellm`.** Fabro attaches it at
+  the provider level to satisfy the OpenCode Go upstream requirement. It
+  is not an identity: it does not match LiteLLM's session-header pattern,
+  so a Fabro request carrying it still derives its identity from the cache
+  key.
+
+Pins are in-process, keyed by logical model and identity, and expire after
+6 hours idle. A gateway restart clears every pin; Fabro restarts with the
+gateway because of its hard dependency. When ids change, the gateway and
+both clients move together in the same change; there are no aliases for
+removed ids.
 
 ### `AGENTS.md` (server variant)
 
@@ -261,27 +355,27 @@ no nono/mcpproxy/AgentMemory references). The server chunk must state:
 
 ```ini
 [user]
-	name = Brandon McNama
-	email = brandonmcnama@outlook.com
-	signingkey = /var/lib/opencode/.ssh/opencode_signing_key.pub
+  name = Brandon McNama
+  email = brandonmcnama@outlook.com
+  signingkey = /var/lib/opencode/.ssh/opencode_signing_key.pub
 [init]
-	defaultBranch = main
+  defaultBranch = main
 [pull]
-	rebase = true
+  rebase = true
 [push]
-	autoRemoteSetup = true
+  autoRemoteSetup = true
 [credential "https://github.com"]
-	helper = !gh auth git-credential
+  helper = !gh auth git-credential
 [url "https://github.com/"]
-	insteadOf = "git@github.com:"
+  insteadOf = "git@github.com:"
 [commit]
-	gpgsign = true
+  gpgsign = true
 [gpg]
-	format = ssh
+  format = ssh
 [branch]
-	sort = -committerdate
+  sort = -committerdate
 [rerere]
-	enabled = true
+  enabled = true
 ```
 
 `ssh-keygen` (openssh, already on PATH) is the default signer; no
@@ -293,7 +387,7 @@ registration must match the private key exactly.
 Add a third line to `systemd.services.tailscale-serve` ExecStart in
 `configurations/fabro-vm/tailscale.nix`:
 
-```
+```text
 ${lib.getExe cfg.package} serve --service=svc:opencode --https=443 http://127.0.0.1:4096
 ```
 
@@ -306,16 +400,19 @@ action) or the command fails until it does (the unit retries via
 Three new sops secrets in `secrets/fabro.fabro.yaml` (same store, same
 `&host_fabro` recipient; `.sops.yaml` unchanged):
 
-| sops key | 1Password source | consumer |
-| --- | --- | --- |
-| `opencode-github-token` | `op://Private/GitHub/Tokens/OpenCode` | `GITHUB_TOKEN` + `GH_TOKEN` for the service |
-| `opencode-server-password` | `op://Private/OpenCode/Server Password` | `OPENCODE_SERVER_PASSWORD` (basic auth user defaults to `opencode`) |
-| `opencode-signing-key` | `op://Private/OpenCode Signing Key/private key` (SSH Key item; field-id form `privateKey` as fallback) | installed as the git SSH signing key |
+- `opencode-github-token` from `op://Private/GitHub/Tokens/OpenCode`:
+  used for `GITHUB_TOKEN` + `GH_TOKEN` in the service.
+- `opencode-server-password` from
+  `op://Private/OpenCode/Server Password`: used for
+  `OPENCODE_SERVER_PASSWORD` (basic auth user defaults to `opencode`).
+- `opencode-signing-key` from
+  `op://Private/OpenCode Signing Key/private key` (SSH Key item; field-id
+  form `privateKey` as fallback): installed as the git SSH signing key.
 
 New template `sops.templates."opencode-env"` (mode default 0400 root is fine —
 systemd reads EnvironmentFile as root):
 
-```
+```text
 GITHUB_TOKEN=${config.sops.placeholder."opencode-github-token"}
 GH_TOKEN=${config.sops.placeholder."opencode-github-token"}
 LITELLM_MASTER_KEY=${config.sops.placeholder."litellm-master-key"}
@@ -416,7 +513,13 @@ second template is fine.
 3. After the user completes the 1Password items:
    `nix run .#fabro-sync-from-1password` (requires `op signin`). Round-trip
    check the key:
-   `nix shell nixpkgs#sops --command sops -d --extract '["opencode-signing-key"]' secrets/fabro.fabro.yaml | ssh-keygen -l -f /dev/stdin`.
+
+   ```sh
+   nix shell nixpkgs#sops --command sops -d \
+     --extract '["opencode-signing-key"]' secrets/fabro.fabro.yaml \
+     | ssh-keygen -l -f /dev/stdin
+   ```
+
 4. `lima-vm-deploy` from the repo root (streams the tree into the guest and
    runs `nixos-rebuild switch --flake .#fabro-vm` in-guest; the mac has no
    Linux builder). The first switch builds `opencode-pinned` for
@@ -441,8 +544,8 @@ Through the web console (`https://opencode.tuxedo-musical.ts.net`, basic auth
 
 - `gh auth status` (token present), `gh stack --help` (extension resolves),
 - `gh repo clone <repo>` and a `git commit` → shows **Verified** on GitHub,
-- a prompt against `opencode-litellm/opencode-go/deepseek-v4.1-flash`
-  (validates provider + dynamic session header end-to-end),
+- a prompt against `opencode-litellm/deepseek-v4.1-flash`
+  (validates provider + dynamic session headers end-to-end),
 - `nix build` of a small derivation.
 
 ## Risks and fallbacks
