@@ -1,16 +1,19 @@
 'use strict';
 
 /*
- * End-to-end publication, state, and credential-safety tests for the Fly app
- * deployment runtime (spec nix-module-for-fly-io-app, Task 5.2; Requirements
- * 3.1, 3.3, 3.4, 3.5, 3.8, 4.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3).
+ * End-to-end publication, state, credential-safety, and two-stage deployment
+ * tests for the Fly app deployment runtime (spec nix-module-for-fly-io-app,
+ * Tasks 5.2 and 5.3; Requirements 1.3, 1.4, 2.1-2.4, 3.1, 3.3-3.5, 3.8, 4.3,
+ * 4.4, 5.1-5.3, 6.1-6.3).
  *
- * The real `scripts/fly-app-deploy.nix` wrapper and the real
- * `scripts/fly-app-publish.nix` publisher run against an in-process fake Fly
- * registry, a stub `nix2container` image publisher, and a stub reconciler.
- * That keeps publication, state, and credential handling real while stubbing
- * the two external interfaces the task names (the Fly registry and the image
- * publisher). No Fly account, token, or network access is used.
+ * The real `scripts/fly-app-deploy.nix` wrapper, the real
+ * `scripts/fly-app-publish.nix` publisher, and the real
+ * `scripts/fly-app-reconcile.nix` reconciler run against an in-process fake
+ * Fly registry, a stub `nix2container` image publisher, a stub `flyctl`, and
+ * an in-process Machines API. That keeps publication, state, credential
+ * handling, CLI deployment, and full Machine reconciliation real while
+ * stubbing only the external Fly interfaces. No Fly account, token, or network
+ * access is used.
  */
 
 const { after, before, test } = require('node:test');
@@ -26,6 +29,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 const fixture = path.join(repoRoot, 'tests/fly-app/fixture');
 const deployScript = path.join(repoRoot, 'scripts/fly-app-deploy.nix');
 const publishScript = path.join(repoRoot, 'scripts/fly-app-publish.nix');
+const reconcileScript = path.join(repoRoot, 'scripts/fly-app-reconcile.nix');
 
 const TOKEN = 'fly-app-test-token-not-a-real-credential-4c81a2';
 const AUTH = 'Basic ' + Buffer.from('x:' + TOKEN).toString('base64');
@@ -201,6 +205,125 @@ if (status !== 0) {
 }
 `;
 
+/*
+ * Stub Fly CLI for the two-stage deployment tests. `machine list` reads the
+ * same in-process Machines API the reconciler uses, so the CLI stage and the
+ * direct API stage observe one Machine set. `deploy` records the rendered
+ * fly.toml and selected image but deliberately does not mutate the API, which
+ * models flyctl's lossy Machine conversion and leaves the full declared
+ * configuration to the direct API reconciliation.
+ */
+const STUB_FLYCTL = `
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+
+const args = process.argv.slice(2);
+const token = process.env.FLY_API_TOKEN || '';
+const log = process.env.FLY_TEST_CLI_LOG;
+
+function record(entry) {
+  fs.appendFileSync(log, JSON.stringify(entry) + '\\n');
+}
+
+function fail(message, status) {
+  process.stderr.write('stub flyctl: ' + message + '\\n');
+  process.exit(status);
+}
+
+function listMachines(app, callback) {
+  const base = (process.env.FLY_MACHINES_API || '').replace(/\\/$/, '');
+  if (!base) {
+    fail('FLY_MACHINES_API is not set', 64);
+  }
+  const url = new URL(
+    base + '/v1/apps/' + encodeURIComponent(app) + '/machines'
+  );
+  const request = http.get(
+    url,
+    {
+      headers: {
+        Authorization: 'Bearer ' + token,
+        Accept: 'application/json',
+      },
+    },
+    (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => {
+        body += chunk;
+      });
+      response.on('end', () => {
+        if (response.statusCode !== 200) {
+          fail('machine list failed with HTTP ' + response.statusCode, 65);
+        }
+        callback(body);
+      });
+    }
+  );
+  request.on('error', (error) => {
+    fail('machine list failed: ' + error.message, 65);
+  });
+}
+
+if (args[0] === 'machine' && args[1] === 'list') {
+  if (args.length !== 5 || args[2] !== '--app' || args[4] !== '--json') {
+    fail('unexpected machine list arguments', 64);
+  }
+  const app = args[3];
+  record({
+    command: 'machine-list',
+    app: app,
+    args: args,
+    token_present: Boolean(token),
+    token_in_argv:
+      token.length > 0 && args.some((argument) => argument.includes(token)),
+  });
+  listMachines(app, (body) => {
+    process.stdout.write(body);
+    process.exit(0);
+  });
+} else if (args[0] === 'deploy' && args[1] === '--app') {
+  const app = args[2];
+  const configIndex = args.indexOf('--config');
+  const imageIndex = args.indexOf('--image');
+  if (configIndex === -1 || imageIndex === -1) {
+    fail('deploy is missing config or image', 64);
+  }
+  const configPath = args[configIndex + 1];
+  record({
+    command: 'deploy',
+    app: app,
+    args: args,
+    config_path: configPath,
+    config: fs.readFileSync(configPath, 'utf8'),
+    config_mode: fs.statSync(configPath).mode & 0o777,
+    config_directory_mode: fs.statSync(path.dirname(configPath)).mode & 0o777,
+    image: args[imageIndex + 1],
+    ha_disabled: args.includes('--ha=false'),
+    update_only: args.includes('--update-only'),
+    token_present: Boolean(token),
+    token_in_argv:
+      token.length > 0 && args.some((argument) => argument.includes(token)),
+  });
+  if (process.env.FLY_TEST_DEPLOY_FAIL) {
+    process.stdout.write(
+      'stub flyctl: simulated Fly rejection token=' + token + '\\n'
+    );
+    process.stderr.write(
+      'stub flyctl: simulated Fly rejection auth=' +
+        Buffer.from('x:' + token).toString('base64') +
+        '\\n'
+    );
+    process.exit(Number(process.env.FLY_TEST_DEPLOY_STATUS || '7'));
+  }
+  process.stdout.write('deploy accepted for ' + app + '\\n');
+  process.exit(0);
+} else {
+  fail('unexpected arguments: ' + JSON.stringify(args), 64);
+}
+`;
+
 function nixLiteral(value) {
   return JSON.stringify(value);
 }
@@ -240,8 +363,8 @@ function runNixBuild(expression) {
   return lines[lines.length - 1];
 }
 
-function buildDeployPackage(registryHost) {
-  const expression = `
+function deployPackageExpression(registryHost, reconcilerBindings) {
+  return `
     let
       flake = builtins.getFlake ${nixLiteral('path:' + fixture)};
       pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
@@ -259,14 +382,37 @@ function buildDeployPackage(registryHost) {
         registryScheme = "http";
         registryHost = ${nixLiteral(registryHost)};
       };
+      ${reconcilerBindings}
+    in
+    import ${deployScript} { inherit pkgs publisher reconciler; }
+  `;
+}
+
+function buildDeployPackage(registryHost) {
+  const reconcilerBindings = `
       reconcilerProgram = pkgs.writeText "stub-reconciler.js" ${nixLiteral(STUB_RECONCILER)};
       reconciler = pkgs.writeShellScriptBin "fly-app-reconcile" ''
         exec \${pkgs.nodejs}/bin/node \${reconcilerProgram} "$@"
       '';
-    in
-    import ${deployScript} { inherit pkgs publisher reconciler; }
   `;
-  return path.join(runNixBuild(expression), 'bin/fly-app-deploy');
+  return path.join(
+    runNixBuild(deployPackageExpression(registryHost, reconcilerBindings)),
+    'bin/fly-app-deploy'
+  );
+}
+
+function buildTwoStageDeployPackage(registryHost) {
+  const reconcilerBindings = `
+      flyctlProgram = pkgs.writeText "stub-flyctl.js" ${nixLiteral(STUB_FLYCTL)};
+      flyctl = pkgs.writeShellScriptBin "flyctl" ''
+        exec \${pkgs.nodejs}/bin/node \${flyctlProgram} "$@"
+      '';
+      reconciler = import ${reconcileScript} { inherit pkgs flyctl; };
+  `;
+  return path.join(
+    runNixBuild(deployPackageExpression(registryHost, reconcilerBindings)),
+    'bin/fly-app-deploy'
+  );
 }
 
 function buildArchive(name, marker) {
@@ -379,6 +525,166 @@ class FakeRegistry {
   }
 }
 
+class StubMachinesApi {
+  constructor() {
+    this.machines = new Map();
+    this.requests = [];
+    this.failUpdate = null;
+    this.failUpdateKey = null;
+    this.createdCount = 0;
+    this.server = http.createServer((request, response) => {
+      this.handle(request, response);
+    });
+  }
+
+  async start() {
+    await new Promise((resolve, reject) => {
+      this.server.once('error', reject);
+      this.server.listen(0, '127.0.0.1', () => {
+        this.server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    this.url = 'http://127.0.0.1:' + this.server.address().port;
+  }
+
+  async stop() {
+    if (this.server.listening) {
+      await new Promise((resolve, reject) => {
+        this.server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  }
+
+  reset(machines = []) {
+    this.machines = new Map();
+    for (const machine of machines) {
+      this.machines.set(machine.id, JSON.parse(JSON.stringify(machine)));
+    }
+    this.requests = [];
+    this.failUpdate = null;
+    this.failUpdateKey = null;
+    this.createdCount = 0;
+  }
+
+  snapshot() {
+    return Array.from(this.machines.values()).map((machine) =>
+      JSON.parse(JSON.stringify(machine))
+    );
+  }
+
+  creations() {
+    return this.requests.filter(
+      (request) => request.method === 'POST' && request.machineId === null
+    );
+  }
+
+  updates() {
+    return this.requests.filter(
+      (request) => request.method === 'POST' && request.machineId !== null
+    );
+  }
+
+  respond(response, status, payload) {
+    const body =
+      payload === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(payload));
+    response.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Content-Length': String(body.length),
+    });
+    response.end(body);
+  }
+
+  readBody(request, response, callback) {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+    });
+    request.on('end', () => {
+      if (body.trim().length === 0) {
+        callback(null);
+        return;
+      }
+      try {
+        callback(JSON.parse(body));
+      } catch (error) {
+        this.respond(response, 400, { error: 'invalid JSON' });
+      }
+    });
+  }
+
+  handle(request, response) {
+    const url = new URL(
+      request.url,
+      'http://' + (request.headers.host || 'localhost')
+    );
+    const parts = url.pathname.split('/').filter((part) => part.length > 0);
+    const machineId = parts.length > 4 ? parts[4] : null;
+    const entry = {
+      method: request.method,
+      path: url.pathname,
+      machineId: machineId,
+      authorization: request.headers.authorization,
+      body: null,
+    };
+    this.requests.push(entry);
+    if (
+      parts[0] !== 'v1' ||
+      parts[1] !== 'apps' ||
+      parts[3] !== 'machines' ||
+      parts.length > 5
+    ) {
+      this.respond(response, 404, { error: 'unexpected path' });
+      return;
+    }
+    if (request.method === 'GET' && machineId === null) {
+      this.respond(response, 200, { machines: this.snapshot() });
+      return;
+    }
+    if (request.method === 'GET' && machineId !== null) {
+      const machine = this.machines.get(machineId);
+      this.respond(response, machine ? 200 : 404, machine || { error: 'missing' });
+      return;
+    }
+    if (request.method !== 'POST') {
+      this.respond(response, 405, { error: 'method not allowed' });
+      return;
+    }
+    this.readBody(request, response, (body) => {
+      entry.body = body;
+      if (machineId === null) {
+        this.createdCount += 1;
+        const machine = {
+          id: 'machine-created-' + this.createdCount,
+          region: (body && body.region) || 'ord',
+          config: (body && body.config) || {},
+        };
+        this.machines.set(machine.id, machine);
+        this.respond(response, 200, machine);
+        return;
+      }
+      const config = (body && body.config) || {};
+      const metadata = config.metadata || {};
+      const wantedKey = metadata.fly_app_module_key;
+      if (
+        this.failUpdate &&
+        (this.failUpdateKey === null || this.failUpdateKey === wantedKey)
+      ) {
+        this.respond(response, this.failUpdate, { error: 'update rejected' });
+        return;
+      }
+      const machine = this.machines.get(machineId);
+      if (!machine) {
+        this.respond(response, 404, { error: 'missing' });
+        return;
+      }
+      machine.config = JSON.parse(JSON.stringify(config));
+      this.respond(response, 200, machine);
+    });
+  }
+}
+
 function makeWorkspace() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fly-app-deploy-test-'));
   workspaces.push(root);
@@ -387,6 +693,7 @@ function makeWorkspace() {
     specPath: path.join(root, 'spec.json'),
     pushLog: path.join(root, 'push.log'),
     reconcileLog: path.join(root, 'reconcile.log'),
+    cliLog: path.join(root, 'cli.log'),
     stateDir: path.join(root, 'state'),
   };
 }
@@ -409,6 +716,7 @@ function deployEnvironment(workspace, options = {}) {
     FLY_APP_STATE_DIR: workspace.stateDir,
     FLY_TEST_PUSH_LOG: workspace.pushLog,
     FLY_TEST_RECONCILE_LOG: workspace.reconcileLog,
+    FLY_TEST_CLI_LOG: workspace.cliLog,
     FLY_TEST_REGISTRY_DIR: registry.manifestsDir,
     FLY_TEST_TOKEN_SENTINEL: TOKEN,
   };
@@ -430,15 +738,23 @@ function startDeploy(workspace, options = {}) {
   if (options.spec !== undefined) {
     writeSpec(workspace, options.spec);
   }
-  const child = childProcess.spawn(
-    deployPackage,
+  return runProgram(
+    options.program || deployPackage,
     ['--spec', workspace.specPath],
     {
       cwd: workspace.root,
       env: deployEnvironment(workspace, options),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: options.timeout,
     }
   );
+}
+
+function runProgram(program, args, options = {}) {
+  const child = childProcess.spawn(program, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');
@@ -549,15 +865,264 @@ function derivationSpec(archive, app = 'fly-alpha') {
   };
 }
 
+/*
+ * Full two-stage fixture: a multi-container web Machine (Pilot dependencies
+ * and health checks), a scheduled worker, arbitrary Machines API fields, and
+ * app settings that must be rendered into fly.toml.
+ */
+function fullDeploySpec(app = 'fly-alpha') {
+  return {
+    name: app,
+    settings: {
+      primary_region: 'ord',
+      kill_signal: 'SIGTERM',
+      kill_timeout: 30,
+      env: { LOG_LEVEL: 'info', FEATURE_FLAGS: 'one,two' },
+      http_service: {
+        internal_port: 8080,
+        force_https: true,
+        auto_stop_machines: 'stop',
+        concurrency: { type: 'requests', soft_limit: 200, hard_limit: 250 },
+      },
+      services: [
+        {
+          internal_port: 8080,
+          protocol: 'tcp',
+          ports: [{ handlers: ['http'], port: 80 }],
+        },
+      ],
+      checks: {
+        alive: {
+          type: 'http',
+          port: 8080,
+          path: '/healthz',
+          interval: '15s',
+          timeout: '2s',
+        },
+      },
+    },
+    machines: {
+      web: {
+        deployContainer: 'app',
+        config: {
+          guest: { cpu_kind: 'shared', cpus: 2, memory_mb: 1024 },
+          env: { APP_MODE: 'web' },
+          services: [
+            {
+              internal_port: 8080,
+              protocol: 'tcp',
+              ports: [{ port: 80, handlers: ['http'] }],
+            },
+          ],
+          restart: { policy: 'on-failure', max_retries: 3 },
+          init: { exec: ['/app/web'] },
+          metadata: { owner: 'platform' },
+        },
+        containers: {
+          app: {
+            config: {
+              env: { PORT: '8080' },
+              entrypoint: ['/app/web'],
+              depends_on: [{ name: 'sidecar', condition: 'healthy' }],
+              healthchecks: [
+                {
+                  http: {
+                    port: 8080,
+                    method: 'GET',
+                    path: '/healthz',
+                    scheme: 'http',
+                  },
+                  interval: 10,
+                  timeout: 5,
+                  grace_period: 5,
+                  success_threshold: 2,
+                  failure_threshold: 3,
+                },
+              ],
+            },
+            image: { derivation: archiveOne },
+          },
+          sidecar: {
+            config: {
+              env: { SIDECAR: 'enabled' },
+              entrypoint: ['/bin/sidecar'],
+              user: '1000',
+              healthchecks: [{ tcp: { port: 6379 } }],
+            },
+            image: { derivation: archiveTwo },
+          },
+        },
+      },
+      worker: {
+        config: {
+          guest: { cpu_kind: 'performance', cpus: 1, memory_mb: 2048 },
+          env: { APP_MODE: 'worker' },
+          schedule: 'hourly',
+          metadata: { owner: 'platform' },
+        },
+        image: { derivation: archiveOne },
+      },
+    },
+  };
+}
+
+function flyMachine(id, options = {}) {
+  const metadata = { ...(options.metadata || {}) };
+  if (options.processGroup !== undefined) {
+    metadata.fly_process_group = options.processGroup;
+  }
+  if (options.moduleKey !== undefined) {
+    metadata.fly_app_module_key = options.moduleKey;
+  }
+  const config = { ...(options.config || {}) };
+  if (Object.keys(metadata).length > 0) {
+    config.metadata = metadata;
+  }
+  return { id, region: options.region || 'ord', config };
+}
+
+function launchMachines() {
+  return [
+    flyMachine('machine-web', {
+      processGroup: 'web',
+      metadata: { fly_platform_version: 'v2', fly_release_id: 'release-1' },
+      config: { image: 'registry.fly.io/fly-alpha:previous-web' },
+    }),
+    flyMachine('machine-worker', {
+      processGroup: 'worker',
+      metadata: { fly_platform_version: 'v2', fly_release_id: 'release-1' },
+      config: { image: 'registry.fly.io/fly-alpha:previous-worker' },
+    }),
+  ];
+}
+
+function managedMachines(api) {
+  return api
+    .snapshot()
+    .filter(
+      (machine) =>
+        machine.config.metadata &&
+        typeof machine.config.metadata.fly_app_module_key === 'string'
+    );
+}
+
+function machineByKey(api, key) {
+  const matches = managedMachines(api).filter(
+    (machine) => machine.config.metadata.fly_app_module_key === key
+  );
+  assert.equal(matches.length, 1, 'expected one Machine for ' + key);
+  return matches[0];
+}
+
+function containerByName(machine, name) {
+  const containers = machine.config.containers || [];
+  const matches = containers.filter((container) => container.name === name);
+  assert.equal(matches.length, 1, 'expected one container named ' + name);
+  return matches[0];
+}
+
+function imageReferences() {
+  return {
+    app: referenceOf('fly-alpha', archiveOne),
+    sidecar: referenceOf('fly-alpha', archiveTwo),
+    worker: referenceOf('fly-alpha', archiveOne),
+  };
+}
+
+function assertWebMachine(machine, spec, references, options = {}) {
+  const config = machine.config;
+  assert.deepEqual(config.guest, spec.machines.web.config.guest);
+  assert.deepEqual(config.env, { APP_MODE: 'web' });
+  assert.deepEqual(config.services, spec.machines.web.config.services);
+  assert.deepEqual(config.restart, spec.machines.web.config.restart);
+  assert.deepEqual(config.init, spec.machines.web.config.init);
+  assert.equal(config.metadata.owner, 'platform');
+  assert.equal(config.metadata.fly_app_module_key, 'web');
+  if (options.launchOwnership) {
+    assert.equal(config.metadata.fly_process_group, 'web');
+    assert.equal(config.metadata.fly_platform_version, 'v2');
+    assert.equal(config.metadata.fly_release_id, 'release-1');
+  }
+  assert.equal(config.image, undefined);
+  assert.deepEqual(
+    (config.containers || []).map((container) => container.name).sort(),
+    ['app', 'sidecar']
+  );
+  const app = containerByName(machine, 'app');
+  assert.equal(app.image, references.app);
+  assert.deepEqual(app.env, { PORT: '8080' });
+  assert.deepEqual(app.entrypoint, ['/app/web']);
+  assert.deepEqual(app.depends_on, [{ name: 'sidecar', condition: 'healthy' }]);
+  assert.deepEqual(
+    app.healthchecks,
+    spec.machines.web.containers.app.config.healthchecks
+  );
+  const sidecar = containerByName(machine, 'sidecar');
+  assert.equal(sidecar.image, references.sidecar);
+  assert.deepEqual(sidecar.env, { SIDECAR: 'enabled' });
+  assert.deepEqual(sidecar.entrypoint, ['/bin/sidecar']);
+  assert.equal(sidecar.user, '1000');
+  assert.deepEqual(sidecar.healthchecks, [{ tcp: { port: 6379 } }]);
+}
+
+function assertWorkerMachine(machine, spec, references, options = {}) {
+  const config = machine.config;
+  assert.deepEqual(config.guest, spec.machines.worker.config.guest);
+  assert.deepEqual(config.env, { APP_MODE: 'worker' });
+  assert.equal(config.schedule, 'hourly');
+  assert.equal(config.metadata.owner, 'platform');
+  assert.equal(config.metadata.fly_app_module_key, 'worker');
+  if (options.launchOwnership) {
+    assert.equal(config.metadata.fly_process_group, 'worker');
+    assert.equal(config.metadata.fly_platform_version, 'v2');
+    assert.equal(config.metadata.fly_release_id, 'release-1');
+  }
+  assert.equal(config.image, references.worker);
+}
+
+function assertManagedSet(api, spec, options = {}) {
+  const managed = managedMachines(api);
+  assert.equal(managed.length, 2);
+  assert.deepEqual(
+    managed.map((machine) => machine.id).sort(),
+    (options.expectedIds || ['machine-web', 'machine-worker']).slice().sort()
+  );
+  const references = imageReferences();
+  assertWebMachine(machineByKey(api, 'web'), spec, references, options);
+  assertWorkerMachine(machineByKey(api, 'worker'), spec, references, options);
+  assert.ok(!api.requests.some((request) => request.method === 'DELETE'));
+}
+
+function cliEntries(workspace, command) {
+  return readJsonLines(workspace.cliLog).filter(
+    (entry) => entry.command === command
+  );
+}
+
+async function runTwoStageDeploy(workspace, api, spec, options = {}) {
+  return runDeploy(workspace, {
+    ...options,
+    spec,
+    program: twoStageDeployPackage,
+    extraEnv: {
+      FLY_MACHINES_API: api.url,
+      ...(options.extraEnv || {}),
+    },
+  });
+}
+
+
 const registry = new FakeRegistry();
 const workspaces = [];
 let deployPackage;
+let twoStageDeployPackage;
 let archiveOne;
 let archiveTwo;
 
 before(async () => {
   await registry.start();
   deployPackage = buildDeployPackage(registry.host);
+  twoStageDeployPackage = buildTwoStageDeployPackage(registry.host);
   archiveOne = buildArchive('fly-app-test-archive-one', 'archive-one');
   archiveTwo = buildArchive('fly-app-test-archive-two', 'archive-two');
 });
@@ -1012,6 +1577,297 @@ test('deployments for different apps do not serialize on one app lock', async ()
     readJsonLines(betaWorkspace.reconcileLog)[0].images.app,
     'fly-beta'
   );
+});
+
+test('two consecutive deployments preserve full multi-container Machine configs, Pilot dependencies, ownership metadata, and counts', async () => {
+  registry.reset();
+  const api = new StubMachinesApi();
+  await api.start();
+  try {
+    api.reset(launchMachines());
+    const workspace = makeWorkspace();
+    const spec = fullDeploySpec();
+
+    const first = await runTwoStageDeploy(workspace, api, spec);
+    assert.equal(first.status, 0, first.stderr);
+    assertNoToken(first.stdout + first.stderr, 'first two-stage deploy output');
+    assert.equal(readJsonLines(workspace.pushLog).length, 2);
+    assert.equal(cliEntries(workspace, 'machine-list').length, 2);
+    const firstDeploys = cliEntries(workspace, 'deploy');
+    assert.equal(firstDeploys.length, 1);
+    assert.equal(firstDeploys[0].app, 'fly-alpha');
+    assert.equal(firstDeploys[0].ha_disabled, true);
+    assert.equal(firstDeploys[0].update_only, true);
+    assert.equal(firstDeploys[0].image, imageReferences().app);
+    assert.equal(firstDeploys[0].token_present, true);
+    assert.equal(firstDeploys[0].token_in_argv, false);
+    assert.equal(firstDeploys[0].config_mode, 0o600);
+    assert.equal(firstDeploys[0].config_directory_mode, 0o700);
+    assert.match(firstDeploys[0].config, /primary_region = "ord"/);
+    assert.match(firstDeploys[0].config, /kill_signal = "SIGTERM"/);
+    assert.match(firstDeploys[0].config, /\[http_service\]/);
+    assert.match(firstDeploys[0].config, /\[\[services\]\]/);
+    assert.match(firstDeploys[0].config, /\[checks\.alive\]/);
+    assertManagedSet(api, spec, { launchOwnership: true });
+    assert.equal(api.creations().length, 0);
+    assert.equal(api.updates().length, 2);
+    assert.ok(api.requests.length > 0);
+    assert.ok(
+      api.requests.every(
+        (request) => request.authorization === 'Bearer ' + TOKEN
+      )
+    );
+
+    const changedSpec = fullDeploySpec();
+    changedSpec.settings.primary_region = 'sjc';
+    changedSpec.settings.kill_timeout = 45;
+    const second = await runTwoStageDeploy(workspace, api, changedSpec);
+    assert.equal(second.status, 0, second.stderr);
+    assertNoToken(
+      second.stdout + second.stderr,
+      'second two-stage deploy output'
+    );
+    assert.equal(readJsonLines(workspace.pushLog).length, 2);
+    assert.equal(cliEntries(workspace, 'machine-list').length, 4);
+    const deploys = cliEntries(workspace, 'deploy');
+    assert.equal(deploys.length, 2);
+    assert.equal(deploys[1].ha_disabled, true);
+    assert.equal(deploys[1].update_only, true);
+    assert.equal(deploys[1].image, imageReferences().app);
+    assert.match(deploys[1].config, /primary_region = "sjc"/);
+    assert.match(deploys[1].config, /kill_timeout = 45/);
+    assertManagedSet(api, changedSpec, { launchOwnership: true });
+    assert.equal(api.creations().length, 0);
+    assert.equal(api.updates().length, 4);
+    assertWorkspaceSecretFree(workspace.root, 'two-stage deployment workspace');
+  } finally {
+    await api.stop();
+  }
+});
+
+test('a first deployment disables HA and a later deployment retains the declared process-group counts', async () => {
+  registry.reset();
+  const api = new StubMachinesApi();
+  await api.start();
+  try {
+    api.reset([]);
+    const workspace = makeWorkspace();
+    const spec = fullDeploySpec();
+
+    const first = await runTwoStageDeploy(workspace, api, spec);
+    assert.equal(first.status, 0, first.stderr);
+    const firstDeploys = cliEntries(workspace, 'deploy');
+    assert.equal(firstDeploys.length, 1);
+    assert.equal(firstDeploys[0].ha_disabled, true);
+    assert.equal(firstDeploys[0].update_only, false);
+    assert.equal(api.creations().length, 2);
+    assert.equal(api.updates().length, 0);
+    assertManagedSet(api, spec, {
+      expectedIds: ['machine-created-1', 'machine-created-2'],
+    });
+    assert.equal(managedMachines(api).length, 2);
+
+    const second = await runTwoStageDeploy(workspace, api, spec);
+    assert.equal(second.status, 0, second.stderr);
+    const deploys = cliEntries(workspace, 'deploy');
+    assert.equal(deploys.length, 2);
+    assert.equal(deploys[1].ha_disabled, true);
+    assert.equal(deploys[1].update_only, true);
+    assert.equal(api.creations().length, 2);
+    assert.equal(api.updates().length, 2);
+    assertManagedSet(api, spec, {
+      expectedIds: ['machine-created-1', 'machine-created-2'],
+    });
+    assert.equal(managedMachines(api).length, 2);
+    assertWorkspaceSecretFree(workspace.root, 'first-deploy workspace');
+  } finally {
+    await api.stop();
+  }
+});
+
+test('a surplus managed Machine fails without reporting success or deleting it', async () => {
+  registry.reset();
+  const api = new StubMachinesApi();
+  await api.start();
+  try {
+    api.reset([
+      ...launchMachines(),
+      flyMachine('machine-cron', {
+        processGroup: 'cron',
+        metadata: { fly_platform_version: 'v2' },
+      }),
+    ]);
+    const workspace = makeWorkspace();
+    const result = await runTwoStageDeploy(workspace, api, fullDeploySpec());
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /surplus module-managed Machine 'machine-cron'/);
+    assert.match(result.stderr, /never deletes Machines/);
+    assert.ok(!result.stderr.includes('fly-app-reconcile: deployed app'));
+    assert.equal(api.snapshot().length, 3);
+    assert.ok(api.snapshot().some((machine) => machine.id === 'machine-cron'));
+    assert.equal(api.updates().length, 0);
+    assert.equal(api.creations().length, 0);
+    assert.ok(!api.requests.some((request) => request.method === 'DELETE'));
+    assert.equal(cliEntries(workspace, 'deploy').length, 1);
+    assertNoToken(result.stdout + result.stderr, 'surplus rejection output');
+  } finally {
+    await api.stop();
+  }
+});
+
+test('an immutable volume change fails with replacement-required and no mutation', async () => {
+  registry.reset();
+  const api = new StubMachinesApi();
+  await api.start();
+  try {
+    const spec = {
+      name: 'fly-alpha',
+      settings: { primary_region: 'ord' },
+      machines: {
+        web: {
+          config: {
+            mounts: [{ volume: 'vol-new', path: '/data' }],
+            guest: { cpu_kind: 'shared', cpus: 1, memory_mb: 256 },
+          },
+          image: { existingImage: 'registry.fly.io/fly-alpha:web' },
+        },
+      },
+    };
+    api.reset([
+      flyMachine('machine-web', {
+        processGroup: 'web',
+        metadata: { fly_platform_version: 'v2' },
+        config: {
+          mounts: [{ volume: 'vol-old', path: '/data' }],
+          image: 'registry.fly.io/fly-alpha:web',
+        },
+      }),
+    ]);
+    const workspace = makeWorkspace();
+    const result = await runTwoStageDeploy(workspace, api, spec);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /replacement-required/);
+    assert.match(result.stderr, /requires replacement/);
+    assert.match(result.stderr, /'mounts'/);
+    assert.ok(!result.stderr.includes('fly-app-reconcile: deployed app'));
+    assert.equal(api.updates().length, 0);
+    assert.equal(api.creations().length, 0);
+    const machine = api.snapshot()[0];
+    assert.deepEqual(machine.config.mounts, [
+      { volume: 'vol-old', path: '/data' },
+    ]);
+    assert.equal(machine.config.metadata.fly_app_module_key, undefined);
+    assert.ok(!api.requests.some((request) => request.method === 'DELETE'));
+    assert.equal(cliEntries(workspace, 'deploy').length, 1);
+    assertNoToken(result.stdout + result.stderr, 'replacement rejection output');
+  } finally {
+    await api.stop();
+  }
+});
+
+test('a partial Machine update fails, and a retry reuses the same Machines without duplicates', async () => {
+  registry.reset();
+  const api = new StubMachinesApi();
+  await api.start();
+  try {
+    api.reset(launchMachines());
+    const workspace = makeWorkspace();
+    const spec = fullDeploySpec();
+    api.failUpdate = 500;
+    api.failUpdateKey = 'worker';
+
+    const first = await runTwoStageDeploy(workspace, api, spec);
+    assert.notEqual(first.status, 0);
+    assert.match(first.stderr, /Machine 'worker'/);
+    assert.match(first.stderr, /no rollback/);
+    assert.match(first.stderr, /HTTP 500/);
+    assert.ok(!first.stderr.includes('fly-app-reconcile: deployed app'));
+    assertNoToken(first.stdout + first.stderr, 'partial failure output');
+    const afterFailure = api.snapshot();
+    assert.equal(afterFailure.length, 2);
+    const failedWorker = afterFailure.find(
+      (machine) => machine.id === 'machine-worker'
+    );
+    assert.equal(failedWorker.config.env, undefined);
+    assert.equal(failedWorker.config.metadata.fly_app_module_key, undefined);
+    const updatedWeb = afterFailure.find(
+      (machine) => machine.id === 'machine-web'
+    );
+    assert.deepEqual(updatedWeb.config.env, { APP_MODE: 'web' });
+    assert.equal(api.creations().length, 0);
+    const failedUpdateCount = api.updates().length;
+    assert.equal(failedUpdateCount, 2);
+
+    api.failUpdate = null;
+    api.failUpdateKey = null;
+    const retry = await runTwoStageDeploy(workspace, api, spec);
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.match(retry.stderr, /deployed app 'fly-alpha'/);
+    assertManagedSet(api, spec, { launchOwnership: true });
+    assert.equal(api.creations().length, 0);
+    assert.ok(api.updates().length > failedUpdateCount);
+    assert.equal(api.snapshot().length, 2);
+    assertWorkspaceSecretFree(workspace.root, 'retried deployment workspace');
+  } finally {
+    await api.stop();
+  }
+});
+
+test('a caller script observes a rejected Fly deployment as nonzero', async () => {
+  registry.reset();
+  const api = new StubMachinesApi();
+  await api.start();
+  try {
+    api.reset(launchMachines());
+    const workspace = makeWorkspace();
+    writeSpec(workspace, {
+      name: 'fly-alpha',
+      settings: { primary_region: 'ord' },
+      machines: {
+        web: {
+          image: { existingImage: 'registry.fly.io/fly-alpha:web' },
+        },
+      },
+    });
+    const caller = path.join(workspace.root, 'caller.sh');
+    const statusFile = path.join(workspace.root, 'caller.status');
+    fs.writeFileSync(
+      caller,
+      '#!/bin/sh\n' +
+        'set -u\n' +
+        'status=0\n' +
+        '"$1" --spec "$2" || status=$?\n' +
+        'printf \'%s\\n\' "$status" > "$3"\n' +
+        'exit "$status"\n'
+    );
+    fs.chmodSync(caller, 0o755);
+    const run = runProgram(
+      caller,
+      [twoStageDeployPackage, workspace.specPath, statusFile],
+      {
+        cwd: workspace.root,
+        env: deployEnvironment(workspace, {
+          extraEnv: {
+            FLY_MACHINES_API: api.url,
+            FLY_TEST_DEPLOY_FAIL: '1',
+          },
+        }),
+      }
+    );
+    const result = await run.done;
+    assert.notEqual(result.status, 0);
+    assert.equal(
+      fs.readFileSync(statusFile, 'utf8').trim(),
+      String(result.status)
+    );
+    assert.match(result.stderr, /Fly rejected deployment/);
+    assert.ok(!result.stderr.includes('fly-app-reconcile: deployed app'));
+    assert.equal(api.updates().length, 0);
+    assert.equal(api.creations().length, 0);
+    assertNoToken(result.stdout + result.stderr, 'caller script rejection output');
+  } finally {
+    await api.stop();
+  }
 });
 
 test('the built deployment program embeds no fixture token', async () => {
