@@ -95,7 +95,7 @@
   - _Boundary: Fabro Dispatch Tests_
   - _Requirements: 3.1, 3.3, 4.1, 4.2, 4.3, 5.3, 5.4, 5.5_
 
-- [ ] 6.3 (P) Test personal Mac dispatch and secret boundaries
+- [x] 6.3 (P) Test personal Mac dispatch and secret boundaries
   - Evaluate `Brandons-MacBook-Pro` and assert both machine records, the dedicated SOPS runtime key path, existing Darwin behavior, and unchanged cache policy.
   - Add poisoned-value checks for generated machine data and secret wiring; assert private key and OAuth values never appear in Nix store paths or rendered settings.
   - Done when tests reject a missing/wrong Linux machine or key path and detect any injected secret value.
