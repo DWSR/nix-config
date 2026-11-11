@@ -86,7 +86,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Emit `spec.feature-name.mismatch` when `feature_name` differs from the spec directory and `spec.phase.unknown` for a value outside the six phases; skip dependent rules when a field is absent or mistyped.
   - Unit tests cover one case per code and messages that name the offending field.
   - _Requirements: 6.3, 6.4, 6.5, 6.6, 11.2_
-- [ ] 5.3 Enforce phase-to-approval and readiness relationships
+- [x] 5.3 Enforce phase-to-approval and readiness relationships
   - Treat the phase as a minimum: require each stage's `generated` flag at or below the phase (`spec.phase.generated-false`), require all three approvals at `tasks-approved` or later (`spec.phase.approved-false`), and emit `spec.approval.without-generated` and `spec.ready.without-tasks-approval`.
   - Accept a flag or approval ahead of the phase and skip phase-dependent rules when `phase` is missing or unknown.
   - Unit tests cover each phase boundary, an approval ahead of its phase, and readiness without tasks approval.
