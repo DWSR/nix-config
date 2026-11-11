@@ -7,6 +7,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".fabro" / "workflows"
 FABRO_NIX = ROOT / "configurations" / "fabro-vm" / "fabro.nix"
 LITELLM_NIX = ROOT / "configurations" / "fabro-vm" / "litellm.nix"
+CATALOG_NIX = ROOT / "configurations" / "fabro-vm" / "litellm-catalog.nix"
 ONESHOT_GRAPH = WORKFLOW_DIR / "oneshot" / "workflow.fabro"
 ONESHOT_REVIEW = WORKFLOW_DIR / "oneshot" / "prompts" / "review.md"
 
@@ -72,12 +73,13 @@ class ModelFallbackTests(unittest.TestCase):
                 model = load_workflow(name)["run"]["model"]
                 self.assertNotIn("controls", model)
 
-    def test_deepseek_deployment_pins_max_effort(self):
-        text = LITELLM_NIX.read_text()
-        _, _, tail = text.partition('model_name = "opencode-go/deepseek-v4.1-flash";')
-        self.assertTrue(tail, "opencode-go/deepseek-v4.1-flash deployment is missing")
-        block = tail.split("model_name =", 1)[0]
-        self.assertIn('reasoning_effort = "max";', block)
+    def test_deepseek_deployment_uses_the_wire_default_effort(self):
+        text = CATALOG_NIX.read_text()
+        _, _, tail = text.partition('"deepseek-v4.1-flash" = {')
+        self.assertTrue(tail, "deepseek-v4.1-flash catalog group is missing")
+        block = tail.split('"glm-5.3-flash" = {', 1)[0]
+        self.assertIn("requestDefaults = { };", block)
+        self.assertNotIn("reasoning_effort", block)
 
     def test_deepseek_model_advertises_max_effort(self):
         text = FABRO_NIX.read_text()
@@ -87,14 +89,14 @@ class ModelFallbackTests(unittest.TestCase):
         self.assertIn("reasoning_effort = {", block)
         self.assertIn("max = true;", block)
 
-    def test_gpt_6_luna_deployment_pins_xhigh_effort(self):
-        # The fallback keeps comparable thinking depth without a run-level
-        # control: the effort travels with its deployment.
-        text = LITELLM_NIX.read_text()
-        _, _, tail = text.partition('model_name = "chatgpt/gpt-6-luna";')
-        self.assertTrue(tail, "chatgpt/gpt-6-luna deployment is missing")
-        block = tail.split("model_name =", 1)[0]
-        self.assertIn('reasoning_effort = "xhigh";', block)
+    def test_gpt_6_luna_deployments_pin_xhigh_effort(self):
+        text = CATALOG_NIX.read_text()
+        _, _, tail = text.partition("gpt-6-luna = {")
+        self.assertTrue(tail, "gpt-6-luna catalog group is missing")
+        block = tail.split("gpt-6-luna-none = {", 1)[0]
+        self.assertEqual(block.count('reasoning_effort = "xhigh";'), 2)
+        self.assertIn('provider = "chatgpt";', block)
+        self.assertIn('provider = "opencode-go";', block)
 
     def test_oneshot_routes_non_approval_paths_to_salvage(self):
         graph = ONESHOT_GRAPH.read_text()

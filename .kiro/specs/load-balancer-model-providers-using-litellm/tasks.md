@@ -57,7 +57,7 @@ set before the guest rebuild.
   - _Depends: 2.1_
 
 - [ ] 3. Gateway configuration
-- [ ] 3.1 Make `configurations/fabro-vm/litellm.nix` consume the catalog
+- [x] 3.1 Make `configurations/fabro-vm/litellm.nix` consume the catalog
   - Replace the hand-written `chatgpt/`/`opencode-go/`/`opencode-zen/` `model_list` with `catalog.modelList` and the `opencode-go/*`/`opencode-zen/*` prefix forwarding list with `catalog.forwardClientHeaders`; add no aliases, wildcards, or provider-scoped ids.
   - Keep `environmentFile`, `CHATGPT_TOKEN_DIR`, the health gate, the login wrapper, and the `os.environ/OPENCODE_API_KEY` references untouched, and rewrite the module header comment so it describes catalog sourcing, group-scoped forwarding, and the forwarded allowlist instead of provider-prefixed groups.
   - Observable: `nix eval` of the guest's `services.litellm.settings` shows the 11 catalog entries and 7-id forwarding list, and no provider-scoped model id or `opencode-go/*` glob remains in the module.
@@ -190,3 +190,8 @@ set before the guest rebuild.
   - Observable: the recorded observations show both `gpt-6-luna@chatgpt` and `gpt-6-luna@opencode-go` across 20 fresh sessions, one stable deployment inside a conversation, and a successful sibling response during the forced failure.
   - _Requirements: 3.6, 4.8, 5.5, 8.8_
   - _Depends: 8.1_
+
+## Implementation Notes
+
+- 3.1 also moved the fabro-vm assertion in `tests/litellm-service/hm-render.test.js` to the catalog shape; the spec's "unchanged" premise predates that test being repurposed from the macOS render suite. The macOS render tests themselves are untouched.
+- The full `tests/litellm-service/` suite forces `pkgs.litellm` to build on the mac remote builder; the harness's 120s `nix eval` timeout can trip while copying the store path (environment-blocked, not a code failure). Targeted assertions and guest evals are the local gate; the flake check remains the CI gate.

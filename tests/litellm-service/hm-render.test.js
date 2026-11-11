@@ -340,20 +340,20 @@ test('disabled configuration registers no launchd agent', () => {
   assert.equal(rendered.wrapperText, null);
 });
 
-// The fabro-vm is the deployed LiteLLM consumer. litellm 1.86's per-provider
-// param allowlists predate its model ids, so without per-deployment
-// `allowed_openai_params` the proxy rejects `reasoning_effort` at its param
-// gate — for a consumer's request value AND for each chatgpt deployment's
-// pinned default, which left the chatgpt models un-callable outright.
-test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
+// The fabro-vm is the deployed LiteLLM consumer. Its model_list and forwarding
+// list are generated from configurations/fabro-vm/litellm-catalog.nix, so this
+// check asserts the served catalog shape: provider-free model names, unique
+// <logical>@<provider> deployment ids, and group-scoped forwarding.
+test('fabro-vm serves the catalog ids with dynamic session forwarding', () => {
   const rendered = nixEvalJson(`
     let
       flake = builtins.getFlake (toString ${repoRoot});
       vm = flake.nixosConfigurations.fabro-vm.config;
       modelList = vm.services.litellm.settings.model_list;
       deploymentStatus = builtins.listToAttrs (builtins.map (deployment: {
-        name = deployment.model_name;
+        name = deployment.model_info.id;
         value = {
+          modelName = deployment.model_name;
           allowsReasoningEffort = builtins.elem "reasoning_effort"
             (deployment.litellm_params.allowed_openai_params or [ ]);
           defaultEffort = deployment.litellm_params.reasoning_effort or null;
@@ -365,20 +365,21 @@ test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
       }) modelList);
     in
     {
-      modelNames = builtins.attrNames deploymentStatus;
+      modelNames = builtins.map (deployment: deployment.model_name) modelList;
+      deploymentIds = builtins.attrNames deploymentStatus;
       allAllowReasoningEffort =
         builtins.all (d: d.allowsReasoningEffort) (builtins.attrValues deploymentStatus);
-      chatgptLuna = deploymentStatus."chatgpt/gpt-6-luna";
-      chatgptLunaNone = deploymentStatus."chatgpt/gpt-6-luna-none";
-      chatgptAstra = deploymentStatus."chatgpt/gpt-6-astra";
-      chatgptSol = deploymentStatus."chatgpt/gpt-6.1-sol";
-      goBeam = deploymentStatus."opencode-go/beam-free";
-      goOmen = deploymentStatus."opencode-go/omen-alpha";
-      goLongcat = deploymentStatus."opencode-go/longcat-2.0";
-      goDeepseek = deploymentStatus."opencode-go/deepseek-v4.1-flash";
-      goLuna = deploymentStatus."opencode-go/gpt-6-luna";
-      goGlm = deploymentStatus."opencode-go/glm-5.3-flash";
-      zenBigPickle = deploymentStatus."opencode-zen/big-pickle";
+      chatgptLuna = deploymentStatus."gpt-6-luna@chatgpt";
+      goLuna = deploymentStatus."gpt-6-luna@opencode-go";
+      chatgptLunaNone = deploymentStatus."gpt-6-luna-none@chatgpt";
+      chatgptAstra = deploymentStatus."gpt-6-astra@chatgpt";
+      chatgptSol = deploymentStatus."gpt-6.1-sol@chatgpt";
+      goBeam = deploymentStatus."beam-free@opencode-go";
+      goOmen = deploymentStatus."omen-alpha@opencode-go";
+      goLongcat = deploymentStatus."longcat-2.0@opencode-go";
+      goDeepseek = deploymentStatus."deepseek-v4.1-flash@opencode-go";
+      goGlm = deploymentStatus."glm-5.3-flash@opencode-go";
+      zenBigPickle = deploymentStatus."big-pickle@opencode-zen";
       forwarding =
         vm.services.litellm.settings.litellm_settings.model_group_settings.forward_client_headers_to_llm_api;
       settingsText = builtins.toJSON vm.services.litellm.settings;
@@ -386,30 +387,44 @@ test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
   `);
 
   assert.deepEqual(rendered.modelNames.sort(), [
-    'chatgpt/gpt-6-astra',
-    'chatgpt/gpt-6-luna',
-    'chatgpt/gpt-6-luna-none',
-    'chatgpt/gpt-6.1-sol',
-    'opencode-go/beam-free',
-    'opencode-go/deepseek-v4.1-flash',
-    'opencode-go/glm-5.3-flash',
-    'opencode-go/gpt-6-luna',
-    'opencode-go/longcat-2.0',
-    'opencode-go/omen-alpha',
-    'opencode-zen/big-pickle',
+    'beam-free',
+    'big-pickle',
+    'deepseek-v4.1-flash',
+    'glm-5.3-flash',
+    'gpt-6-astra',
+    'gpt-6-luna',
+    'gpt-6-luna',
+    'gpt-6-luna-none',
+    'gpt-6.1-sol',
+    'longcat-2.0',
+    'omen-alpha',
+  ]);
+  assert.deepEqual(rendered.deploymentIds.sort(), [
+    'beam-free@opencode-go',
+    'big-pickle@opencode-zen',
+    'deepseek-v4.1-flash@opencode-go',
+    'glm-5.3-flash@opencode-go',
+    'gpt-6-astra@chatgpt',
+    'gpt-6-luna-none@chatgpt',
+    'gpt-6-luna@chatgpt',
+    'gpt-6-luna@opencode-go',
+    'gpt-6.1-sol@chatgpt',
+    'longcat-2.0@opencode-go',
+    'omen-alpha@opencode-go',
   ]);
   assert.equal(rendered.allAllowReasoningEffort, true);
 
-  // The pinned deployment defaults survive the allowance merge.
+  // The catalog defaults survive group validation.
   assert.equal(rendered.chatgptLuna.defaultEffort, 'xhigh');
   assert.equal(rendered.chatgptLuna.mode, 'responses');
+  assert.equal(rendered.goLuna.defaultEffort, 'xhigh');
+  assert.equal(rendered.goLuna.mode, 'responses');
   assert.equal(rendered.chatgptLunaNone.defaultEffort, 'none');
   assert.equal(rendered.chatgptLunaNone.mode, 'responses');
   assert.equal(rendered.chatgptAstra.defaultEffort, 'xhigh');
   assert.equal(rendered.chatgptSol.defaultEffort, 'xhigh');
-  assert.equal(rendered.goLuna.mode, 'responses');
+  assert.equal(rendered.goDeepseek.defaultEffort, null);
   assert.equal(rendered.goDeepseek.mode, 'chat');
-  assert.equal(rendered.goDeepseek.defaultEffort, 'max');
   assert.equal(rendered.goGlm.mode, 'chat');
 
   for (const deployment of [rendered.goBeam, rendered.goOmen, rendered.goLongcat]) {
@@ -419,16 +434,25 @@ test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
     assert.equal(deployment.headers, null);
   }
   assert.equal(rendered.zenBigPickle.mode, 'chat');
+  assert.equal(rendered.chatgptLuna.apiBase, null);
+  assert.equal(rendered.chatgptLuna.apiKey, null);
 
-  // Session ids stay dynamic for every opencode-* group.
+  // Session ids stay dynamic for every logical model that includes an OpenCode
+  // provider; ChatGPT-only models stay out of the forwarding list.
   assert.deepEqual(rendered.forwarding, [
-    'opencode-go/*',
-    'opencode-zen/*',
+    'beam-free',
+    'big-pickle',
+    'deepseek-v4.1-flash',
+    'glm-5.3-flash',
+    'gpt-6-luna',
+    'longcat-2.0',
+    'omen-alpha',
   ]);
 
   assert.equal(rendered.settingsText.includes('opencode-go/deepseek-v4.1-flash-free'), false);
   assert.equal(rendered.settingsText.includes('opencode-go/glm-5.3-flash-free'), false);
   assert.equal(rendered.settingsText.includes('iceman-contributor-free'), false);
+  assert.equal(rendered.modelNames.includes('go-gpt-6-luna'), false);
 
   assert.match(rendered.settingsText, /allowed_openai_params/);
   assert.match(rendered.settingsText, /"reasoning_effort"/);
