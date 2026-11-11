@@ -94,14 +94,14 @@ in
       # targets are the listeners from fabro.nix (127.0.0.1:32276, API +
       # web UI), litellm.nix (127.0.0.1:4000), and opencode.nix
       # (127.0.0.1:4096).
-      ExecStart = [
-        "${lib.getExe cfg.package} serve --service=svc:fabro --https=443 http://127.0.0.1:32276"
-        "${lib.getExe cfg.package} serve --service=svc:litellm --https=443 http://127.0.0.1:4000"
-        "${lib.getExe cfg.package} serve --service=svc:opencode --https=443 http://127.0.0.1:4096"
-      ]
-      ++ lib.optionals config.fabro.totalRecall.enable [
-        "${lib.getExe cfg.package} serve --service=svc:total-recall --https=443 http://127.0.0.1:49134"
-      ];
+      # Built by the pure helper shared with the task 9.2 assertions, so the
+      # unit that runs here and the list the check verifies cannot drift.
+      ExecStart = import ./total-recall-serve.nix {
+        inherit lib;
+        tailscalePackage = cfg.package;
+        totalRecallEnable = config.fabro.totalRecall.enable;
+        iiiPort = config.fabro.totalRecall.iiiPort;
+      };
     };
   };
 }

@@ -204,7 +204,7 @@
   - _Requirements: 9.1, 9.11_
   - _Depends: 4.4, 5.2, 7_
 
-- [ ] 9.2 Assert loopback bindings and the single tailnet exposure
+- [x] 9.2 Assert loopback bindings and the single tailnet exposure
   - Assert PostgreSQL `listen_addresses` is exactly `127.0.0.1`, the iii worker-manager and stream hosts are `127.0.0.1`, and no configuration-worker file names another host
   - Assert `tailscale-serve` has exactly four `serve` entries when `fabro.totalRecall.enable` is true, the memory one targets `http://127.0.0.1:49134` under `svc:total-recall`, the three existing entries are unchanged, and exactly the original three entries remain when the option is false
   - Assert the guest declares no firewall opening and no unit for a memory port other than the Serve target
