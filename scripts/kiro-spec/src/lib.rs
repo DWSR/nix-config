@@ -11,7 +11,11 @@ pub mod validate;
 use std::ffi::OsString;
 use std::io::Write;
 
+use crate::cli::{Command, Invocation};
 use crate::error::{AppError, ErrorCategory};
+use crate::paths::SpecPaths;
+use crate::render::Format;
+use crate::tasks::{parse_tasks, TaskDocument};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Outcome {
@@ -71,8 +75,67 @@ pub fn execute(args: impl IntoIterator<Item = OsString>) -> Outcome {
     match cli::parse(args.into_iter().skip(1)) {
         Ok(cli::Parsed::Help) => Outcome::success(Some(cli::help_text().to_owned())),
         Ok(cli::Parsed::Version) => Outcome::success(Some(cli::version_text())),
-        Ok(cli::Parsed::Run(invocation)) => Outcome::failure(not_yet_wired(invocation.command())),
+        Ok(cli::Parsed::Run(invocation)) => dispatch(&invocation),
         Err(error) => Outcome::failure(error),
+    }
+}
+
+fn dispatch(invocation: &Invocation) -> Outcome {
+    let result = match invocation.command() {
+        Command::Tasks => read_tasks(invocation),
+        Command::Next => read_next(invocation),
+        _ => return Outcome::failure(not_yet_wired(invocation.command())),
+    };
+    match result {
+        Ok(stdout) => Outcome::success(Some(stdout)),
+        Err(error) => Outcome::failure(error),
+    }
+}
+
+fn read_tasks(invocation: &Invocation) -> Result<String, AppError> {
+    let (paths, document) = read_task_document(invocation)?;
+    Ok(render::render_tasks(
+        &document,
+        paths.name(),
+        selected_format(invocation),
+    ))
+}
+
+fn read_next(invocation: &Invocation) -> Result<String, AppError> {
+    let (paths, document) = read_task_document(invocation)?;
+    Ok(render::render_next(
+        document.next_actionable(),
+        paths.name(),
+        selected_format(invocation),
+    ))
+}
+
+fn read_task_document(invocation: &Invocation) -> Result<(SpecPaths, TaskDocument), AppError> {
+    let paths = SpecPaths::resolve(invocation.root(), invocation.spec())?;
+    let path = paths.tasks_md();
+    let context = path.display().to_string();
+    let bytes = std::fs::read(&path).map_err(|error| {
+        AppError::new(
+            ErrorCategory::ArtifactRead,
+            context.clone(),
+            format!("cannot read file: {error}"),
+        )
+    })?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        AppError::new(
+            ErrorCategory::ArtifactRead,
+            context,
+            "file is not valid UTF-8",
+        )
+    })?;
+    Ok((paths, parse_tasks(&text)))
+}
+
+fn selected_format(invocation: &Invocation) -> Format {
+    if invocation.json() {
+        Format::Json
+    } else {
+        Format::Human
     }
 }
 
@@ -145,10 +208,10 @@ mod tests {
             OsString::from("kiro-spec"),
             OsString::from("--spec"),
             OsString::from("demo"),
-            OsString::from("next"),
+            OsString::from("status"),
         ]);
         assert_eq!(outcome.code(), 1);
         assert_eq!(outcome.stdout(), None);
-        assert_eq!(outcome.stderr(), Some("kiro-spec: next: not yet wired\n"));
+        assert_eq!(outcome.stderr(), Some("kiro-spec: status: not yet wired\n"));
     }
 }
