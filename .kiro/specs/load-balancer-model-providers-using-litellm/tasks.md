@@ -112,7 +112,7 @@ set before the guest rebuild.
   - _Boundary: tests/litellm-routing/catalog.test.js_
   - _Depends: 1.2_
 
-- [ ] 5.2 (P) Add the gateway configuration suite
+- [x] 5.2 (P) Add the gateway configuration suite
   - Assert `model_list` equals `catalog.modelList` with 11 entries, a unique `model_info.id` per entry, and an explicit weight, that `router_settings` matches the documented table including the derived `max_fallbacks`, and that `deployment_affinity` plus every fallback and alias key is absent.
   - Assert forwarding equals `catalog.forwardClientHeaders`, `callbacks` names the bridge instance, and the overridden `ExecStart` plus `PYTHONPATH` name the generated config directory.
   - Render `config.services.litellm.settings` through current-system `pkgs.formats.yaml` and fail when any present `api_key` is not `os.environ/...` or the text contains `sk-` or a sops placeholder, naming the offending logical model.
