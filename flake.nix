@@ -3246,15 +3246,21 @@
           # Requirements 3.2, 4.1, 4.2, 4.4). The pinned nix-snapshotter
           # builder and the deployment runtime only exist on Linux, so these
           # checks stay absent on the Darwin systems instead of claiming a
-          # native Darwin publisher. Each entry reuses the task fixture
-          # derivation rather than duplicating its assertions:
+          # native Darwin publisher. The module and image entries reuse the
+          # task fixture derivations; the generator entry builds the consumer
+          # fixture and the deploy entry runs the deployment suite:
           #   - module: declaration evaluation, option errors, serialization,
           #     and token-free output isolation (tests/fly-app/module.test.nix);
           #   - image: self-contained OCI closure and the pinned publisher
           #     interface (tests/fly-app/image.test.nix);
           #   - generator: the consumer fixture's own check, which invokes each
           #     generated `deploy-<app>` command and proves it selects only its
-          #     declared app (tests/fly-app/fixture/flake.nix).
+          #     declared app (tests/fly-app/fixture/flake.nix);
+          #   - deploy: the deployment runtime suite, which exercises the real
+          #     deploy wrapper, publisher, and reconciler against in-process
+          #     registry, CLI, and Machines API stubs, including the caller
+          #     script that observes a Fly rejection as a nonzero status
+          #     (tests/fly-app/deploy.test.js).
           fly-app-module = import ./tests/fly-app/module.test.nix {
             inherit pkgs;
           };
@@ -3285,6 +3291,36 @@
               inherit (inputs) nixpkgs;
               repo = self;
             }).checks.${system}.fly-app-generator;
+
+          # Deployment runtime suite (spec nix-module-for-fly-io-app, Tasks
+          # 5.2/5.3 wired by task 5.4; Requirements 1.3, 1.4, 2.1-2.4, 3.1,
+          # 3.3-3.5, 3.8, 4.3, 4.4, 5.1-5.3, 6.1-6.3). The suite drives the
+          # real deploy wrapper, publisher, and reconciler against in-process
+          # registry/API stubs and builds its stub deployment packages with a
+          # nested `nix build`. Recursive Nix is unavailable in the flake-check
+          # sandbox: the nested build falls back to a chroot store whose
+          # builders cannot be executed, so a standard sandboxed
+          # `nix flake check` is environment-blocked here. An unsandboxed
+          # builder (or the devShell) runs the suite in full. It stays
+          # registered so the deployment suite is part of the repository check
+          # set rather than host-only evidence.
+          fly-app-deploy =
+            pkgs.runCommand "fly-app-deploy"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/fly-app/deploy.test.js
+                touch $out
+              '';
         }
       );
 
