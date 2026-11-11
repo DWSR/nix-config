@@ -21,7 +21,7 @@ set before the guest rebuild.
   - Observable: `nix eval` of the exported table reports 10 logical ids, 11 deployments, one two-deployment group, and no `/` in any id.
   - _Requirements: 1.1, 1.3, 1.5, 2.1, 2.7, 3.2, 7.1_
 
-- [ ] 1.2 Add catalog validation and export the pure `mkCatalog` constructor
+- [x] 1.2 Add catalog validation and export the pure `mkCatalog` constructor
   - Fail evaluation on a missing required field (`provider`, `upstreamModel`, `mode`, `limits.contextTokens`, `limits.maxOutputTokens`), a deployment naming an unknown provider, a group with zero deployments, a duplicate logical or deployment id, an id containing `/` or a provider key token, and a default model that is not a logical model; default `requestDefaults` to `{ }`, `weight` to `1`, and `displayName` to the id.
   - Fail on group disagreement over `mode`, `requestDefaults`, `limits.contextTokens`, or `limits.maxOutputTokens`, naming the logical model, both deployment ids, and the field, using the design's `litellm-catalog: ...` message shape.
   - Export `mkCatalog` for fixture tables and run validation before constructing any projection.
