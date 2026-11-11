@@ -113,7 +113,7 @@
   - Done when both runs preserve all declared Machine configs and rejected deployments never report success.
   - _Boundary: `tests/fly-app/deploy.test.js`_
   - _Requirements: 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 4.3, 4.4_
-- [ ] 5.4 Register Linux flake checks
+- [x] 5.4 Register Linux flake checks
   - Wire module, image, and deployment tests into repository checks for Linux systems supported by the pinned builder, without adding Darwin publisher claims.
   - Done when the relevant checks build and run on supported Linux systems and the consumer fixture selects each app independently.
   - _Depends: 4.2, 5.1, 5.3_
