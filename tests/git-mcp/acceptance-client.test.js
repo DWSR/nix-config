@@ -268,6 +268,35 @@ test('standalone acceptance client emits the git-mcp commit request without Open
   }
 });
 
+test('standalone acceptance client dry-run skips the mcpproxy health check', () => {
+  const packagePath = buildAcceptancePackage();
+  const fixture = createFixture();
+
+  try {
+    const output = childProcess.execFileSync(
+      path.join(packagePath, 'bin/git-mcp-secure-enclave-acceptance'),
+      [
+        'probe',
+        '--repo', fixture.repo,
+        '--state', 'unlocked',
+        '--health-url', 'http://127.0.0.1:1/healthz',
+        '--dry-run',
+      ],
+      {
+        cwd: repoRoot,
+        env: fixture.env,
+        encoding: 'utf8',
+        timeout: 30_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+    assert.equal(JSON.parse(output).tool, 'git-mcp:git_commit');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('standalone acceptance client rejects an unknown physical state', () => {
   const packagePath = buildAcceptancePackage();
   const fixture = createFixture();

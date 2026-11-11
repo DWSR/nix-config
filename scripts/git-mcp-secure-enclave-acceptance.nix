@@ -41,7 +41,7 @@ writeShellApplication {
       --message MESSAGE       Commit message (defaults to an acceptance message)
       --health-url URL        mcpproxy health endpoint
       --evidence PATH         Public probe evidence file
-      --dry-run               Print the git-mcp request without committing
+      --dry-run               Print the git-mcp request without contacting mcpproxy
 
     The probe command calls mcpproxy's git-mcp:git_commit tool directly. It does
     not start OpenCode and never creates a local commit as a fallback.
@@ -294,14 +294,6 @@ writeShellApplication {
     ' "$runtime_config" >/dev/null; then
       die "mcpproxy runtime configuration does not contain the active git-mcp signing environment"
     fi
-    if [[ "$health_url_overridden" == 0 ]]; then
-      listen_address="$(jq -er '.listen' "$runtime_config")" \
-        || die "mcpproxy runtime configuration has no listen address: $runtime_config"
-      health_url="http://$listen_address/healthz"
-    fi
-    health_response="$(curl --fail --silent --show-error --max-time 5 "$health_url" 2>&1)" \
-      || die "mcpproxy health check failed at $health_url: $health_response"
-
     probe_file_committed=0
     proxy_data_dir=""
     cleanup_probe() {
@@ -360,6 +352,14 @@ writeShellApplication {
       rmdir --ignore-fail-on-non-empty "$probe_dir" 2>/dev/null || true
       exit 0
     fi
+
+    if [[ "$health_url_overridden" == 0 ]]; then
+      listen_address="$(jq -er '.listen' "$runtime_config")" \
+        || die "mcpproxy runtime configuration has no listen address: $runtime_config"
+      health_url="http://$listen_address/healthz"
+    fi
+    health_response="$(curl --fail --silent --show-error --max-time 5 "$health_url" 2>&1)" \
+      || die "mcpproxy health check failed at $health_url: $health_response"
 
     before_head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
     proxy_data_dir="$(mktemp -d "''${TMPDIR:-/tmp}/git-mcp-acceptance-proxy.XXXXXX")" \
