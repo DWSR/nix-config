@@ -170,19 +170,29 @@ fn usage_diagnostics_name_the_offending_flag_or_command() {
 }
 
 #[test]
-fn unwired_mutations_are_not_yet_wired_and_leave_the_fixture_unchanged() {
+fn rejected_mutations_leave_the_fixture_unchanged() {
     let fixture = Fixture::new();
     let before = fixture.snapshot();
-    let cases: &[&[&str]] = &[
-        &["--spec", "demo", "complete", "1"],
-        &["--spec", "demo", "block", "1", "--reason", "waiting"],
+    let cases: &[(&[&str], i32, &str)] = &[
+        (&["--spec", "demo", "complete", "9"], 1, "unknown"),
+        (
+            &["--spec", "demo", "block", "1.1", "--reason", "waiting"],
+            1,
+            "unsupported transition",
+        ),
+        (&["--spec", "demo", "complete", "abc"], 2, "malformed"),
+        (
+            &["--spec", "demo", "block", "1", "--reason", "   "],
+            2,
+            "--reason",
+        ),
     ];
-    for args in cases {
+    for (args, code, fragment) in cases {
         let output = fixture.run(args);
-        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert_eq!(output.status.code(), Some(*code), "{args:?}");
         assert!(output.stdout.is_empty(), "{args:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("not yet wired"), "{args:?}: {stderr}");
+        assert!(stderr.contains(fragment), "{args:?}: {stderr}");
     }
     assert_eq!(fixture.snapshot(), before);
 }

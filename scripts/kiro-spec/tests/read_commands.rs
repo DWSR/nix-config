@@ -45,6 +45,14 @@ impl Fixture {
     fn write_spec_json(&self, contents: &[u8]) {
         fs::write(self.spec.join("spec.json"), contents).expect("write fixture spec.json");
     }
+
+    fn write_file(&self, name: &str, contents: &[u8]) {
+        fs::write(self.spec.join(name), contents).expect("write fixture file");
+    }
+
+    fn tasks_bytes(&self) -> Vec<u8> {
+        fs::read(self.spec.join("tasks.md")).expect("read fixture tasks.md")
+    }
 }
 
 impl Drop for Fixture {
@@ -86,6 +94,46 @@ fn hash_directory(base: &Path, directory: &Path, hasher: &mut DefaultHasher) {
             fs::read(&path).expect("read fixture file").hash(hasher);
         }
     }
+}
+
+fn run_binary(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_kiro-spec"))
+        .args(args)
+        .output()
+        .expect("binary runs")
+}
+
+fn tree_hash_without_tasks(root: &Path) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hash_directory_without_tasks(root, root, &mut hasher);
+    hasher.finish()
+}
+
+fn hash_directory_without_tasks(base: &Path, directory: &Path, hasher: &mut DefaultHasher) {
+    let mut entries: Vec<PathBuf> = fs::read_dir(directory)
+        .expect("read fixture directory")
+        .map(|entry| entry.expect("fixture entry").path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        path.strip_prefix(base)
+            .expect("path under base")
+            .hash(hasher);
+        if path.is_dir() {
+            hash_directory_without_tasks(base, &path, hasher);
+        } else if path.file_name().and_then(|name| name.to_str()) != Some("tasks.md") {
+            fs::read(&path).expect("read fixture file").hash(hasher);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn tasks_inode(fixture: &Fixture) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+
+    fs::metadata(fixture.spec.join("tasks.md"))
+        .expect("stat fixture tasks.md")
+        .ino()
 }
 
 #[test]
@@ -723,4 +771,391 @@ fn validate_leaves_the_fixture_tree_unchanged_in_both_formats() {
 
         assert_eq!(tree_hash(&fixture.root), before, "{tag}");
     }
+}
+
+const COMPLETE_TASKS: &str =
+    "# Plan\n\n- [ ] 1. First task\n  - _Requirements: 1.1_\n- [ ] 2. Second task\n";
+const COMPLETE_TASKS_DONE: &str =
+    "# Plan\n\n- [x] 1. First task\n  - _Requirements: 1.1_\n- [ ] 2. Second task\n";
+
+#[test]
+fn complete_marks_a_pending_entry_completed_and_later_reads_reflect_it() {
+    let fixture = Fixture::new("complete-pending", Some(COMPLETE_TASKS));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+
+    let output = fixture.run(&["complete", "1."]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8 stdout"),
+        "1 completed\n"
+    );
+    assert_eq!(fixture.tasks_bytes(), COMPLETE_TASKS_DONE.as_bytes());
+
+    assert_eq!(
+        success_stdout(fixture.run(&["tasks"])),
+        "1 First task [completed]\n2 Second task [pending]\n"
+    );
+    assert_eq!(
+        success_stdout(fixture.run(&["next"])),
+        "2 Second task [pending]\n"
+    );
+    let status = success_stdout(fixture.run(&["status"]));
+    assert!(status.contains("completed: 1"), "{status}");
+    assert!(status.contains("pending: 1 (optional: 0)"), "{status}");
+}
+
+#[test]
+fn complete_on_an_already_completed_entry_is_a_byte_identical_no_op() {
+    let fixture = Fixture::new(
+        "complete-noop",
+        Some("- [x] 1. Done\n  - _Blocked: stray bullet stays_\n- [ ] 2. Other\n"),
+    );
+    fixture.write_spec_json(VALID_SPEC_JSON);
+    let before = fixture.tasks_bytes();
+    let tree_before = tree_hash_without_tasks(&fixture.root);
+    #[cfg(unix)]
+    let inode_before = tasks_inode(&fixture);
+
+    let output = fixture.run(&["complete", "1"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8 stdout"),
+        "1 completed (no change)\n"
+    );
+    assert_eq!(fixture.tasks_bytes(), before);
+    assert_eq!(tree_hash_without_tasks(&fixture.root), tree_before);
+    #[cfg(unix)]
+    assert_eq!(tasks_inode(&fixture), inode_before);
+}
+
+#[test]
+fn complete_removes_the_reason_bullet_of_a_blocked_entry() {
+    let fixture = Fixture::new(
+        "complete-blocked",
+        Some("- [!] 1. Blocked work\n  - _Blocked: waiting on credentials_\n  - _Requirements: 1.1_\n- [ ] 2. Next\n"),
+    );
+
+    let output = fixture.run(&["complete", "1"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8 stdout"),
+        "1 completed\n"
+    );
+    assert_eq!(
+        fixture.tasks_bytes(),
+        b"- [x] 1. Blocked work\n  - _Requirements: 1.1_\n- [ ] 2. Next\n"
+    );
+    assert_eq!(
+        success_stdout(fixture.run(&["tasks"])),
+        "1 Blocked work [completed]\n2 Next [pending]\n"
+    );
+}
+
+const BLOCK_TASKS: &str =
+    "# Plan\n\n- [ ] 1. First task\n  - _Requirements: 1.1_\n- [ ] 2. Second task\n";
+const BLOCK_TASKS_BLOCKED: &str =
+    "# Plan\n\n- [!] 1. First task\n  - _Blocked: waiting_\n  - _Requirements: 1.1_\n- [ ] 2. Second task\n";
+
+#[test]
+fn block_inserts_one_trimmed_reason_bullet_and_later_reads_reflect_it() {
+    let fixture = Fixture::new("block-pending", Some(BLOCK_TASKS));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+
+    let output = fixture.run(&["block", "1", "--reason", "  waiting  "]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8 stdout"),
+        "1 blocked\n"
+    );
+    assert_eq!(fixture.tasks_bytes(), BLOCK_TASKS_BLOCKED.as_bytes());
+
+    assert_eq!(
+        success_stdout(fixture.run(&["tasks"])),
+        "1 First task [blocked] - blocked: waiting\n2 Second task [pending]\n"
+    );
+    assert_eq!(
+        success_stdout(fixture.run(&["next"])),
+        "1 First task [blocked] - blocked: waiting\n"
+    );
+    let status = success_stdout(fixture.run(&["status"]));
+    assert!(status.contains("blocked: 1"), "{status}");
+    assert!(status.contains("pending: 1 (optional: 0)"), "{status}");
+}
+
+#[test]
+fn block_with_the_same_reason_is_a_byte_identical_no_op() {
+    let fixture = Fixture::new(
+        "block-noop",
+        Some("- [!] 1. Blocked\n  - _Requirements: 1.1_\n  - _Blocked: waiting_\n- [ ] 2. Other\n"),
+    );
+    let before = fixture.tasks_bytes();
+    let tree_before = tree_hash_without_tasks(&fixture.root);
+    #[cfg(unix)]
+    let inode_before = tasks_inode(&fixture);
+
+    let output = fixture.run(&["block", "1", "--reason", "  waiting  "]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(output.stderr.is_empty(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("utf-8 stdout"),
+        "1 blocked (no change)\n"
+    );
+    assert_eq!(fixture.tasks_bytes(), before);
+    assert_eq!(tree_hash_without_tasks(&fixture.root), tree_before);
+    #[cfg(unix)]
+    assert_eq!(tasks_inode(&fixture), inode_before);
+}
+
+#[test]
+fn block_rejects_a_completed_entry_as_an_unsupported_transition() {
+    let fixture = Fixture::new(
+        "block-completed",
+        Some("- [x] 1. Done\n  - _Requirements: 1.1_\n- [ ] 2. Pending\n"),
+    );
+    fixture.write_spec_json(VALID_SPEC_JSON);
+    let before = fixture.tasks_bytes();
+    let tree_before = tree_hash_without_tasks(&fixture.root);
+
+    let output = fixture.run(&["block", "1", "--reason", "waiting"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(stderr.starts_with("kiro-spec: "), "{stderr}");
+    assert!(stderr.contains("unsupported transition"), "{stderr}");
+    assert!(stderr.contains('1'), "{stderr}");
+    assert_eq!(fixture.tasks_bytes(), before);
+    assert_eq!(tree_hash_without_tasks(&fixture.root), tree_before);
+}
+
+#[test]
+fn unknown_and_duplicate_identifiers_are_exit_one_conflicts_with_no_write() {
+    let unknown = Fixture::new(
+        "mutation-unknown",
+        Some("- [ ] 1. First\n- [ ] 2. Second\n"),
+    );
+    let before = unknown.tasks_bytes();
+    for args in [
+        &["complete", "9"][..],
+        &["block", "9", "--reason", "waiting"][..],
+    ] {
+        let output = unknown.run(args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+        assert!(stderr.contains('9'), "{args:?}: {stderr}");
+        assert!(stderr.contains("unknown"), "{args:?}: {stderr}");
+    }
+    assert_eq!(unknown.tasks_bytes(), before);
+
+    let duplicate = Fixture::new(
+        "mutation-duplicate",
+        Some("- [ ] 1. First\n- [ ] 1. Duplicate\n"),
+    );
+    let before = duplicate.tasks_bytes();
+    for args in [
+        &["complete", "1"][..],
+        &["block", "1", "--reason", "waiting"][..],
+    ] {
+        let output = duplicate.run(args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+        assert!(stderr.contains('1'), "{args:?}: {stderr}");
+        assert!(stderr.contains("ambiguous"), "{args:?}: {stderr}");
+    }
+    assert_eq!(duplicate.tasks_bytes(), before);
+}
+
+fn nonexistent_root() -> String {
+    std::env::temp_dir()
+        .join(format!(
+            "kiro-spec-missing-root-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ))
+        .display()
+        .to_string()
+}
+
+#[test]
+fn malformed_identifiers_are_usage_errors_before_any_filesystem_access() {
+    let root = nonexistent_root();
+    assert!(!Path::new(&root).exists());
+    for id in ["abc", "1.2.3", "", "1..2", "+1", "1 .2"] {
+        let output = run_binary(&["--root", &root, "--spec", "missing", "complete", id]);
+        assert_eq!(output.status.code(), Some(2), "{id:?}");
+        assert!(output.stdout.is_empty(), "{id:?}");
+        let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+        assert!(
+            stderr.contains("malformed task identifier"),
+            "{id:?}: {stderr}"
+        );
+        assert!(stderr.contains("N` or `N.M"), "{id:?}: {stderr}");
+        if !id.is_empty() {
+            assert!(stderr.contains(id), "{id:?}: {stderr}");
+        }
+    }
+}
+
+#[test]
+fn invalid_reasons_are_usage_errors_before_any_filesystem_access() {
+    let root = nonexistent_root();
+    assert!(!Path::new(&root).exists());
+    for reason in [
+        "   ",
+        "\t \t",
+        "waiting\non review",
+        "waiting\r\non review",
+        "\u{00A0}\u{00A0}",
+        "\u{2003}",
+        "before\u{2028}after",
+        "before\u{2029}after",
+        "before\u{0085}after",
+        "before\u{000B}after",
+        "before\u{000C}after",
+    ] {
+        let output = run_binary(&[
+            "--root", &root, "--spec", "missing", "block", "1", "--reason", reason,
+        ]);
+        assert_eq!(output.status.code(), Some(2), "{reason:?}");
+        assert!(output.stdout.is_empty(), "{reason:?}");
+        let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+        assert!(stderr.contains("--reason"), "{reason:?}: {stderr}");
+    }
+
+    let output = run_binary(&[
+        "--root", &root, "--spec", "missing", "block", "abc", "--reason", "   ",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(stderr.contains("malformed task identifier"), "{stderr}");
+    assert!(!stderr.contains("--reason"), "{stderr}");
+
+    let fixture = Fixture::new("block-blank-reason", Some("- [ ] 1. First\n"));
+    let before = fixture.tasks_bytes();
+    let output = fixture.run(&["block", "1", "--reason", "   "]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(fixture.tasks_bytes(), before);
+
+    let fixture = Fixture::new("block-unicode-reason", Some("- [ ] 1. First\n"));
+    let before = fixture.tasks_bytes();
+    for reason in ["\u{00A0}\u{00A0}", "\u{2003}", "before\u{2028}after"] {
+        let output = fixture.run(&["block", "1", "--reason", reason]);
+        assert_eq!(output.status.code(), Some(2), "{reason:?}");
+        assert!(output.stdout.is_empty(), "{reason:?}");
+        let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+        assert!(stderr.contains("--reason"), "{reason:?}: {stderr}");
+        assert_eq!(fixture.tasks_bytes(), before, "{reason:?}");
+    }
+}
+
+#[test]
+fn json_is_rejected_for_mutations() {
+    let fixture = Fixture::new("mutation-json", Some("- [ ] 1. First\n"));
+    let before = fixture.tasks_bytes();
+    for args in [
+        &["--json", "complete", "1"][..],
+        &["--json", "block", "1", "--reason", "waiting"][..],
+    ] {
+        let output = fixture.run(args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+        assert!(stderr.contains("--json"), "{args:?}: {stderr}");
+    }
+    assert_eq!(fixture.tasks_bytes(), before);
+}
+
+#[test]
+fn a_successful_mutation_changes_only_tasks_md() {
+    let fixture = Fixture::new("mutation-tree", Some("- [ ] 1. First\n- [ ] 2. Second\n"));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+    fixture.write_file("requirements.md", b"# Requirements\n\n- 1. Something\n");
+    fixture.write_file("design.md", b"# Design\n");
+    let spec_json = fs::read(fixture.spec.join("spec.json")).expect("read spec.json");
+    let requirements = fs::read(fixture.spec.join("requirements.md")).expect("read requirements");
+    let design = fs::read(fixture.spec.join("design.md")).expect("read design");
+    let tree_before = tree_hash_without_tasks(&fixture.root);
+
+    assert_eq!(fixture.run(&["complete", "1"]).status.code(), Some(0));
+    assert_eq!(
+        fixture
+            .run(&["block", "2", "--reason", "waiting"])
+            .status
+            .code(),
+        Some(0)
+    );
+
+    assert_eq!(tree_hash_without_tasks(&fixture.root), tree_before);
+    assert_eq!(
+        fs::read(fixture.spec.join("spec.json")).expect("read spec.json"),
+        spec_json
+    );
+    assert_eq!(
+        fs::read(fixture.spec.join("requirements.md")).expect("read requirements"),
+        requirements
+    );
+    assert_eq!(
+        fs::read(fixture.spec.join("design.md")).expect("read design"),
+        design
+    );
+    assert_eq!(
+        fixture.tasks_bytes(),
+        b"- [x] 1. First\n- [!] 2. Second\n  - _Blocked: waiting_\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_read_only_spec_directory_fails_the_write_and_leaves_tasks_md_intact() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new("mutation-readonly", Some("- [ ] 1. First\n"));
+    fixture.write_spec_json(VALID_SPEC_JSON);
+    let original = fixture.tasks_bytes();
+    fs::set_permissions(&fixture.spec, fs::Permissions::from_mode(0o555)).expect("chmod dir");
+
+    let still_writable = {
+        let probe = fixture
+            .spec
+            .join(format!(".kiro-spec-probe.{}", std::process::id()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(_) => {
+                let _ = fs::remove_file(&probe);
+                true
+            }
+            Err(_) => false,
+        }
+    };
+    if still_writable {
+        fs::set_permissions(&fixture.spec, fs::Permissions::from_mode(0o755))
+            .expect("restore dir mode");
+        eprintln!("skipping: process can still write in a read-only directory");
+        return;
+    }
+
+    let output = fixture.run(&["complete", "1"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("utf-8 stderr");
+    assert!(stderr.starts_with("kiro-spec: "), "{stderr}");
+    assert!(stderr.contains("tasks.md"), "{stderr}");
+    assert_eq!(fixture.tasks_bytes(), original);
+
+    fs::set_permissions(&fixture.spec, fs::Permissions::from_mode(0o755))
+        .expect("restore dir mode");
 }
