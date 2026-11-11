@@ -78,7 +78,7 @@ set before the guest rebuild.
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9_
   - _Depends: 1.3_
 
-- [ ] 3.4 Package the bridge with the gateway config and point the service at it
+- [x] 3.4 Package the bridge with the gateway config and point the service at it
   - Build a `runCommand "litellm-config"` directory holding `config.yaml` rendered from `config.services.litellm.settings` through `pkgs.formats.yaml`, `litellm_affinity_bridge.py`, and `litellm_session_identity.py`, and register `litellm_settings.callbacks = [ "litellm_affinity_bridge.proxy_handler_instance" ]`.
   - Override `systemd.services.litellm.serviceConfig.ExecStart` with `lib.mkForce` to the module's `litellm --host <host> --port <port> --config <dir>/config.yaml` shape, and add `PYTHONPATH` = the directory plus `PYTHONDONTWRITEBYTECODE = "1"` to `services.litellm.environment`.
   - Observable: `nix eval` shows the overridden `ExecStart` and `PYTHONPATH` naming the generated directory, `callbacks` naming the bridge instance, and the guest still evaluating with the existing `DynamicUser` unit and health gate.
