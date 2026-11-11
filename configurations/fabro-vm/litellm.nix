@@ -4,26 +4,28 @@
 # `services.litellm` module (DynamicUser, state dir, seeded tiktoken cache,
 # writable-UI runtime dir).
 #
-#   chatgpt/<model>      ChatGPT subscription (Codex backend; no API key —
-#                        OAuth device flow). The proxy HELD its startup per
-#                        chatgpt/ deployment until a human completes the
-#                        login flow. Provision once on the host mac (running
-#                        `litellm-chatgpt-login` there) and copy the
-#                        ~/.config/litellm credentials JSON into the VM's
-#                        /var/lib/litellm (state dir persists across
-#                        switches), then restart litellm.service.
-#                        /v1/chat/completions is bridged to the Responses
-#                        API upstream.
-#   opencode-go/<model>  OpenCode Go subscription; one API key also steers
-#                        the Zen balance fallback. gpt/grok model ids go to
-#                        {api_base}/responses, the GLM/Kimi/DeepSeek/MiMo
-#                        ids to /chat/completions. The gateways require a
-#                        stable x-opencode-session header, so the opencode-*
-#                        model groups forward client x-* headers upstream
-#                        (litellm_settings.model_group_settings below) for
-#                        the id fabro attaches at its provider level. The Go
-#                        free tier (beam-free, omen-alpha) rides the same
-#                        chat/completions base with cost=0.
+# The served model list and the header-forwarding list are generated from
+# `./litellm-catalog.nix`, the single source of the served logical ids: every
+# deployment in the catalog becomes one `model_list` entry under a
+# provider-free `model_name`, with an explicit deployment id and weight.
+#
+# Forwarding is group-scoped: a logical model is listed when any of its
+# deployments' provider requires a client session header, and the same
+# forwarding then applies to every sibling, so a unified group forwards the
+# same headers to its ChatGPT deployment. LiteLLM strips `Authorization` and
+# its special auth headers, then forwards only the documented allowlist —
+# `x-*` except `x-stainless-*`, plus `anthropic-beta` (content-type and
+# credentials stay behind). The OpenCode Go / Zen upstreams consume the
+# forwarded `x-opencode-session` id, which fabro attaches at its provider
+# level (`llm.providers.litellm.default_headers` in fabro.nix).
+#
+# ChatGPT deployments use the ChatGPT subscription (Codex backend; no API
+# key — OAuth device flow). The proxy HELD its startup per ChatGPT
+# deployment until a human completes the login flow. Provision once on the
+# host mac (running `litellm-chatgpt-login` there) and copy the
+# ~/.config/litellm credentials JSON into the VM's /var/lib/litellm (state
+# dir persists across switches), then restart litellm.service.
+# /v1/chat/completions is bridged to the Responses API upstream.
 #
 # Authentication: the proxy enforces a master key, supplied as the
 # LITELLM_MASTER_KEY env var from the sops-nix `litellm-env` template
@@ -32,10 +34,9 @@
 # Consumers present `Authorization: Bearer <master key>`; in the guest
 # that value must also exist in fabro's server vault as LITELLM_API_KEY
 # (`fabro secret set`, runs source it there). The template also exports
-# OPENCODE_API_KEY for the `os.environ/OPENCODE_API_KEY` provider
-# references above (the mac's providerKeys equivalent); like the mac,
-# a missing/unset key fails the opencode-* deployments per-request, not
-# the proxy itself.
+# OPENCODE_API_KEY for the `os.environ/OPENCODE_API_KEY` references in the
+# catalog (the mac's providerKeys equivalent); like the mac, a missing/unset
+# key fails the affected deployments per-request, not the proxy itself.
 {
   config,
   lib,
@@ -43,7 +44,11 @@
   ...
 }:
 let
-  # The `chatgpt/*` provider credentials: litellm's chatgpt authenticator
+  # The served model ids and the header-forwarding list: the catalog is the
+  # single source (one deployment per gateway entry).
+  inherit (import ./litellm-catalog.nix { inherit lib; }) catalog;
+
+  # The ChatGPT provider credentials: litellm's chatgpt authenticator
   # (llms/chatgpt/authenticator) resolves CHATGPT_TOKEN_DIR, falling back to
   # `~/.config/litellm/chatgpt`. The DynamicUser unit has no HOME, so both
   # the unit and this login wrapper pin the path inside the state dir; the
@@ -127,155 +132,28 @@ in
       HOME = config.services.litellm.stateDir;
     };
 
-    settings =
-      let
-        # litellm 1.86's per-provider param allowlists predate the model ids
-        # served here (gpt-6*, glm, longcat), so `reasoning_effort` — both a
-        # consumer's request value and each deployment's pinned default —
-        # fails the proxy's UnsupportedParamsError gate before reaching
-        # upstream. Merging this in re-permits the param per deployment; the
-        # chat→responses bridge then maps it to `reasoning.effort` for the
-        # Codex/OpenCode-Go upstreams.
-        reasoningEffortAllowed = {
-          allowed_openai_params = [ "reasoning_effort" ];
-        };
-      in
-      {
-        # Header forwarding: litellm strips client headers upstream by
-        # default. Enabling forward_client_headers_to_llm_api per model
-        # group sends the documented x- prefix allowlist through for those
-        # groups only (litellm/proxy/litellm_pre_call_utils.py's
-        # _get_forwardable_headers: x-* except x-stainless-*, never
-        # Authorization/Content-Type), and matches via plain prefix regex
-        # so "opencode-go/*" covers every opencode model id. OpenCode's
-        # Go/Zen gateways need the client's stable x-opencode-session id
-        # on the upstream call — fabro attaches it
-        # (llm.providers.litellm.default_headers in fabro.nix) and this
-        # is what carries it the rest of the way.
-        litellm_settings = {
-          model_group_settings.forward_client_headers_to_llm_api = [
-            "opencode-go/*"
-            "opencode-zen/*"
-          ];
-        };
-
-        model_list =
-          # OpenAI subscription (ChatGPT Work/Codex backend, chatgpt/ OAuth
-          # device flow). Reasoning effort is pinned per deployment so the
-          # effort travels with the model id; duplicated
-          # litellm_params.model entries are fine because model names are
-          # distinct (same named upstream model + different default params
-          # load-balances instead of pinning).
-          [
-            {
-              model_name = "chatgpt/gpt-6-luna";
-              model_info.mode = "responses";
-              litellm_params = {
-                model = "chatgpt/gpt-6-luna";
-                reasoning_effort = "xhigh";
-              }
-              // reasoningEffortAllowed;
-            }
-            {
-              model_name = "chatgpt/gpt-6-luna-none";
-              model_info.mode = "responses";
-              litellm_params = {
-                model = "chatgpt/gpt-6-luna";
-                reasoning_effort = "none";
-              }
-              // reasoningEffortAllowed;
-            }
-            {
-              model_name = "chatgpt/gpt-6-astra";
-              model_info.mode = "responses";
-              litellm_params = {
-                model = "chatgpt/gpt-6-astra";
-                reasoning_effort = "xhigh";
-              }
-              // reasoningEffortAllowed;
-            }
-            {
-              model_name = "chatgpt/gpt-6.1-sol";
-              model_info.mode = "responses";
-              litellm_params = {
-                model = "chatgpt/gpt-6.1-sol";
-                reasoning_effort = "xhigh";
-              }
-              // reasoningEffortAllowed;
-            }
-          ]
-          # OpenCode Go Responses-API wire models.
-          ++ (map (m: {
-            model_name = "opencode-go/${m}";
-            model_info.mode = "responses";
-            litellm_params = {
-              model = "openai/${m}";
-              api_base = "https://opencode.ai/zen/go/v1";
-              api_key = "os.environ/OPENCODE_API_KEY";
-            }
-            // reasoningEffortAllowed;
-          }) [ "gpt-6-luna" ])
-          # OpenCode Go chat/completions wire models.
-          ++ (map
-            (m: {
-              model_name = "opencode-go/${m}";
-              model_info.mode = "chat";
-              litellm_params = {
-                model = "openai/${m}";
-                api_base = "https://opencode.ai/zen/go/v1";
-                api_key = "os.environ/OPENCODE_API_KEY";
-              }
-              // reasoningEffortAllowed;
-            })
-            [
-              # Free Go tier. The catalog currently exposes these at
-              # cost=0; LiteLLM forwards the caller's session id so they
-              # keep OpenCode's cache affinity instead of pinning a static
-              # extra_headers value.
-              "beam-free"
-              "omen-alpha"
-
-              "glm-5.3-flash"
-
-              # longcat-2.5-preview-free left the Go catalog; 2.0 is the
-              # current Go-served id and is also cost=0.
-              "longcat-2.0"
-            ]
-          )
-          # DeepSeek V4.1 Flash is Fabro's default agent model. Pin max
-          # thinking on the deployment so every default call runs there; the
-          # fabro registry advertises only max so no request can send a
-          # conflicting level.
-          ++ [
-            {
-              model_name = "opencode-go/deepseek-v4.1-flash";
-              model_info.mode = "chat";
-              litellm_params = {
-                model = "openai/deepseek-v4.1-flash";
-                api_base = "https://opencode.ai/zen/go/v1";
-                api_key = "os.environ/OPENCODE_API_KEY";
-                reasoning_effort = "max";
-              }
-              // reasoningEffortAllowed;
-            }
-          ]
-          # Big Pickle is not part of the Go catalog (opencode.ai/docs/go):
-          # the stealth model serves on the Zen balance endpoint, which the
-          # OpenCode API key reaches unchanged (usage draws from the balance
-          # behind the Go subscription).
-          ++ [
-            {
-              model_name = "opencode-zen/big-pickle";
-              model_info.mode = "chat";
-              litellm_params = {
-                model = "openai/big-pickle";
-                api_base = "https://opencode.ai/zen/v1";
-                api_key = "os.environ/OPENCODE_API_KEY";
-              }
-              // reasoningEffortAllowed;
-            }
-          ];
+    settings = {
+      # Header forwarding: litellm strips client headers upstream by
+      # default. Enabling forward_client_headers_to_llm_api per model group
+      # sends the documented allowlist through for those groups only
+      # (litellm/proxy/litellm_pre_call_utils.py's _get_forwardable_headers:
+      # x-* except x-stainless-*, plus anthropic-beta, never Authorization
+      # or content-type). The catalog lists a logical model when any of its
+      # deployments' provider requires the client session header, so every
+      # sibling — including the ChatGPT sibling of a unified group — gets the
+      # same forwarding. OpenCode's Go/Zen gateways need the client's stable
+      # x-opencode-session id on the upstream call — fabro attaches it
+      # (llm.providers.litellm.default_headers in fabro.nix) and this is
+      # what carries it the rest of the way.
+      litellm_settings = {
+        model_group_settings.forward_client_headers_to_llm_api = catalog.forwardClientHeaders;
       };
+
+      # One entry per catalog deployment: a provider-free `model_name`, an
+      # explicit `model_info.id` naming the deployment, and an explicit
+      # `weight` for placement.
+      model_list = catalog.modelList;
+    };
   };
 
   # The login wrapper ships with the guest (invoked under sudo over SSH;
