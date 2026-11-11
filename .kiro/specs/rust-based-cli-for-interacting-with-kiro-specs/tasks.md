@@ -125,7 +125,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 2.8, 6.1, 6.22, 9.1, 9.9, 9.10, 9.11, 10.5_
 
 - [ ] 7. Task mutations
-- [ ] 7.1 Publish byte-preserving atomic writes
+- [x] 7.1 Publish byte-preserving atomic writes
   - Implement `write_atomic(path, bytes)` creating a `create_new` temporary `.tasks.md.kiro-spec.<pid>.tmp` in the spec directory, copying original permissions, writing and `sync_all`ing the bytes, then renaming over `tasks.md`.
   - Remove the temporary file on any pre-rename failure so `tasks.md` stays intact, and never open the original for writing; readers ignore leftover temporary files.
   - Reassemble bytes from `TaskDocument` so untouched lines keep their original terminators; equal bytes produce `EditPlan { bytes: None }` with no filesystem write.
