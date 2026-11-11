@@ -530,6 +530,88 @@ pub fn requirements_reference_findings(
     findings
 }
 
+pub fn validate(paths: &SpecPaths) -> ValidationReport {
+    let mut findings = Vec::new();
+
+    let spec_value = match read_spec_json_lenient(&paths.spec_json()) {
+        Ok(value) => Some(value),
+        Err(finding) => {
+            findings.push(finding);
+            None
+        }
+    };
+
+    let document = match std::fs::read(paths.tasks_md()) {
+        Ok(bytes) => match parse_tasks_bytes(&bytes) {
+            Ok(document) => Some(document),
+            Err(finding) => {
+                findings.push(finding);
+                None
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            findings.push(tasks_read_unreadable(error.to_string()));
+            None
+        }
+    };
+
+    if let Some(document) = &document {
+        findings.extend(task_findings(document));
+    }
+
+    let has_requirement_refs = document.as_ref().is_some_and(has_requirement_references);
+
+    match &spec_value {
+        Some(value) => {
+            findings.extend(validate_spec_json_value(value, paths.name()));
+            let facts = SpecJsonFacts::new(value);
+            findings.extend(validate_phase_relationships(&facts));
+            findings.extend(validate_artifact_presence(
+                &facts,
+                paths,
+                has_requirement_refs,
+            ));
+        }
+        None => {
+            if let Some(finding) = requirements_artifact_finding(paths, has_requirement_refs) {
+                findings.push(finding);
+            }
+        }
+    }
+
+    if let (Some(document), Some(requirements)) = (&document, read_requirements_text(paths)) {
+        let index = RequirementsIndex::parse(&requirements);
+        findings.extend(requirements_reference_findings(document, &index));
+    }
+
+    ValidationReport::new(findings)
+}
+
+fn has_requirement_references(document: &TaskDocument) -> bool {
+    document.entries().iter().any(|entry| {
+        entry
+            .block()
+            .metadata_for(MetadataKind::Requirements)
+            .next()
+            .is_some()
+    })
+}
+
+fn read_requirements_text(paths: &SpecPaths) -> Option<String> {
+    let bytes = std::fs::read(paths.requirements_md()).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+fn tasks_read_unreadable(detail: impl Into<String>) -> Finding {
+    Finding::error(
+        "tasks.unreadable",
+        format!("cannot read `tasks.md`: {}", detail.into()),
+        TASKS_MD_FILE,
+        None,
+    )
+}
+
 fn unresolved_reference_message(token: &ReferenceToken) -> String {
     match token.value() {
         Some(ReferenceValue::Requirement(number)) => format!(
@@ -2331,5 +2413,323 @@ mod tests {
 
         assert_eq!(document.entries().len(), 1);
         assert!(document.findings().is_empty());
+    }
+
+    fn write_spec(directory: &Path, value: &Value) {
+        fs::write(
+            directory.join(SPEC_JSON_FILE),
+            serde_json::to_string_pretty(value).expect("serialize spec"),
+        )
+        .expect("write spec");
+    }
+
+    fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        fn walk(root: &Path, directory: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+            let mut paths: Vec<PathBuf> = fs::read_dir(directory)
+                .expect("read directory")
+                .map(|entry| entry.expect("entry").path())
+                .collect();
+            paths.sort();
+            for path in paths {
+                if path.is_dir() {
+                    walk(root, &path, out);
+                } else {
+                    let relative = path
+                        .strip_prefix(root)
+                        .expect("relative path")
+                        .to_path_buf();
+                    out.push((relative, fs::read(&path).expect("read file")));
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        walk(root, root, &mut out);
+        out
+    }
+
+    #[test]
+    fn validate_of_a_spec_directory_with_no_artifacts_reports_without_aborting() {
+        let temp = TempDir::new("validate-empty");
+        let (paths, directory) = spec_paths(&temp);
+        let before = snapshot(&directory);
+
+        let report = super::validate(&paths);
+
+        assert_eq!(codes(&report.findings), vec!["spec.json.missing"]);
+        assert!(report.has_errors());
+        assert_eq!(snapshot(&directory), before);
+        assert_eq!(fs::read_dir(&directory).expect("read directory").count(), 0);
+    }
+
+    #[test]
+    fn validate_reports_missing_spec_json_alongside_task_and_reference_findings() {
+        let temp = TempDir::new("validate-partial");
+        let (paths, directory) = spec_paths(&temp);
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] 1. First\n  - _Requirements: 9_\n- [ ] 1. Duplicate\n",
+        )
+        .expect("write tasks");
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            requirements_document(),
+        )
+        .expect("write requirements");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(
+            keys(&report.findings),
+            vec![
+                (
+                    "spec.json",
+                    None,
+                    "spec.json.missing",
+                    "`spec.json` is missing"
+                ),
+                (
+                    "tasks.md",
+                    Some(2),
+                    "requirements.ref.unresolved",
+                    "requirement reference `9` does not resolve: requirement 9 is absent"
+                ),
+                (
+                    "tasks.md",
+                    Some(3),
+                    "tasks.id.duplicate",
+                    "duplicate task identifier `1` (first occurrence at line 1)"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_reports_a_missing_phase_and_task_defects_together() {
+        let temp = TempDir::new("validate-both-defects");
+        let (paths, directory) = spec_paths(&temp);
+        let mut value = valid_spec_json("demo");
+        value.as_object_mut().expect("object").remove("phase");
+        write_spec(&directory, &value);
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] 1. First\n- [ ] 1. Duplicate\n",
+        )
+        .expect("write tasks");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(
+            codes(&report.findings),
+            vec!["spec.field.missing", "tasks.id.duplicate"]
+        );
+        assert_eq!(
+            report.findings[0].message,
+            "required field `phase` is missing"
+        );
+        assert_eq!(report.findings[1].line, Some(2));
+    }
+
+    #[test]
+    fn validate_of_a_clean_spec_reports_no_findings() {
+        let temp = TempDir::new("validate-clean");
+        let (paths, directory) = spec_paths(&temp);
+        write_spec(&directory, &valid_spec_json("demo"));
+        write_all_artifacts(&directory);
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] 1. First\n  - _Requirements: 1.1_\n",
+        )
+        .expect("write tasks");
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            requirements_document(),
+        )
+        .expect("write requirements");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(report.findings, Vec::new());
+        assert!(!report.has_errors());
+    }
+
+    #[test]
+    fn validate_reports_unreadable_spec_json_and_still_validates_tasks() {
+        let temp = TempDir::new("validate-non-utf8-spec");
+        let (paths, directory) = spec_paths(&temp);
+        fs::write(directory.join(SPEC_JSON_FILE), [0xff, 0xfe]).expect("write spec");
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] 1. First\n- [ ] 1. Duplicate\n",
+        )
+        .expect("write tasks");
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            requirements_document(),
+        )
+        .expect("write requirements");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(
+            codes(&report.findings),
+            vec!["spec.json.unreadable", "tasks.id.duplicate"]
+        );
+        assert!(report.findings.iter().all(|finding| {
+            !finding.code.starts_with("spec.field.")
+                && !finding.code.starts_with("spec.phase.")
+                && !finding.code.starts_with("spec.generated.")
+        }));
+    }
+
+    #[test]
+    fn validate_reports_invalid_spec_json_and_still_validates_tasks() {
+        let temp = TempDir::new("validate-invalid-spec");
+        let (paths, directory) = spec_paths(&temp);
+        fs::write(directory.join(SPEC_JSON_FILE), "{ not json").expect("write spec");
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] 1. First\n  - _Requirements: 9_\n",
+        )
+        .expect("write tasks");
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            requirements_document(),
+        )
+        .expect("write requirements");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(
+            codes(&report.findings),
+            vec!["spec.json.parse", "requirements.ref.unresolved"]
+        );
+    }
+
+    #[test]
+    fn validate_reports_unreadable_tasks_and_skips_reference_resolution() {
+        let temp = TempDir::new("validate-non-utf8-tasks");
+        let (paths, directory) = spec_paths(&temp);
+        write_spec(&directory, &valid_spec_json("demo"));
+        fs::write(directory.join(TASKS_MD_FILE), [0xff, 0xfe, 0x00]).expect("write tasks");
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            requirements_document(),
+        )
+        .expect("write requirements");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(codes(&report.findings), vec!["tasks.unreadable"]);
+    }
+
+    #[test]
+    fn validate_reports_unreadable_requirements_and_skips_reference_resolution() {
+        let temp = TempDir::new("validate-non-utf8-requirements");
+        let (paths, directory) = spec_paths(&temp);
+        write_spec(&directory, &valid_spec_json("demo"));
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] 1. First\n  - _Requirements: 9_\n",
+        )
+        .expect("write tasks");
+        fs::write(directory.join(REQUIREMENTS_MD_FILE), [0xff, 0xfe]).expect("write requirements");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(codes(&report.findings), vec!["requirements.unreadable"]);
+    }
+
+    #[test]
+    fn validate_reports_artifact_missing_once_and_skips_unresolved_references() {
+        let temp = TempDir::new("validate-refs-missing");
+        let (paths, directory) = spec_paths(&temp);
+        write_spec(
+            &directory,
+            &spec_json(
+                "initialized",
+                [true, false, false],
+                [false, false, false],
+                false,
+            ),
+        );
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] 1. First\n  - _Requirements: 1, 1.1, 9_\n",
+        )
+        .expect("write tasks");
+
+        let report = super::validate(&paths);
+
+        assert_eq!(
+            keys(&report.findings),
+            vec![
+                (
+                    REQUIREMENTS_MD_FILE,
+                    None,
+                    "requirements.artifact-missing",
+                    "`requirements.md` is missing while `_Requirements:` references exist"
+                ),
+                (
+                    REQUIREMENTS_MD_FILE,
+                    None,
+                    "spec.generated.artifact-missing",
+                    "required artifact `requirements.md` is missing"
+                ),
+            ]
+        );
+        assert!(report
+            .findings
+            .iter()
+            .all(|finding| !finding.code.starts_with("requirements.ref.")));
+    }
+
+    #[test]
+    fn validate_is_deterministic_and_never_modifies_the_tree() {
+        let temp = TempDir::new("validate-deterministic");
+        let (paths, directory) = spec_paths(&temp);
+        write_spec(
+            &directory,
+            &spec_json(
+                "design-generated",
+                [true, false, false],
+                [false, false, false],
+                false,
+            ),
+        );
+        fs::write(
+            directory.join(TASKS_MD_FILE),
+            "- [ ] Unnumbered\n- [ ] 1. First\n  - _Requirements: 1.x_\n- [ ] 1. Duplicate\n",
+        )
+        .expect("write tasks");
+        fs::write(
+            directory.join(REQUIREMENTS_MD_FILE),
+            requirements_document(),
+        )
+        .expect("write requirements");
+        let before = snapshot(&directory);
+
+        let first = super::validate(&paths);
+        let second = super::validate(&paths);
+
+        assert_eq!(first, second);
+        assert!(!first.findings.is_empty());
+        assert_eq!(snapshot(&directory), before);
+        for pair in first.findings.windows(2) {
+            assert_ne!(
+                compare_findings(&pair[0], &pair[1]),
+                std::cmp::Ordering::Greater,
+                "{:?}",
+                &pair
+            );
+        }
+        let files: Vec<&str> = first
+            .findings
+            .iter()
+            .map(|finding| finding.file.as_str())
+            .collect();
+        let mut sorted_files = files.clone();
+        sorted_files.sort_unstable();
+        assert_eq!(files, sorted_files);
     }
 }
