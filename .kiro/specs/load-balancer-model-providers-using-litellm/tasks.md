@@ -170,7 +170,7 @@ set before the guest rebuild.
   - _Boundary: docs/opencode-fabro-vm-handoff.md_
   - _Depends: 1.4_
 
-- [ ] 7.3 (P) Retire the superseded spec directory
+- [x] 7.3 (P) Retire the superseded spec directory
   - Delete `.kiro/specs/configure-litellm-load-balancing-across-existing/` so no current spec document or task instructs a provider-scoped model call.
   - Observable: `rg 'opencode-go/|chatgpt/' .kiro/specs/ --glob '*.md'` reports hits only under `load-balancer-model-providers-using-litellm/`, and the directory is gone.
   - _Requirements: 8.10_
@@ -196,3 +196,4 @@ set before the guest rebuild.
 - 3.1 also moved the fabro-vm assertion in `tests/litellm-service/hm-render.test.js` to the catalog shape; the spec's "unchanged" premise predates that test being repurposed from the macOS render suite. The macOS render tests themselves are untouched.
 - 5.1 registered `/tests/litellm-routing` in `.github/dependabot.yml` (npm directories) so the new `.npmrc`/`package.json` pair satisfies `tests/dependency-cooldown/cooldown.test.py`.
 - The full `tests/litellm-service/` suite forces `pkgs.litellm` to build on the mac remote builder; the harness's 120s `nix eval` timeout can trip while copying the store path (environment-blocked, not a code failure). Targeted assertions and guest evals are the local gate; the flake check remains the CI gate.
+- 7.3 also corrected two cross-spec references while retiring the directory: the `install-total-recall-on-fabro-vm` design now uses the catalog id (the old provider-scoped id is dead), and `tests/fabro-workflows/model-fallbacks.test.py` asserts the catalog-driven behavior instead of the old literal model list (deepseek now uses the wire default effort, as the design's Initial Logical Model table specifies).
