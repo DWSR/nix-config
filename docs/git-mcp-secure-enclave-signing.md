@@ -302,7 +302,7 @@ git-mcp-secure-enclave-acceptance record --github-verified
 ```
 
 Use `--dry-run` to inspect the exact `git-mcp:git_commit` request without
-creating a commit.
+creating a commit or contacting mcpproxy.
 
 Before the first probe, record the existing host author identity:
 
