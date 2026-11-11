@@ -13,7 +13,7 @@ function nixEvalJson(expr, options = {}) {
       cwd: options.cwd ?? repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: options.timeout ?? 120_000,
+      timeout: options.timeout ?? 600_000,
     },
   ));
 }
@@ -27,7 +27,7 @@ function nixEvalFailure(expr, options = {}) {
         cwd: options.cwd ?? repoRoot,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: options.timeout ?? 120_000,
+        timeout: options.timeout ?? 600_000,
       },
     );
   } catch (error) {

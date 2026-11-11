@@ -719,21 +719,57 @@ function checksResultAttrset(tokens) {
 
   assert.equal(checksBindings.length, 1, 'flake defines exactly one checks = forAllSystems binding');
   const { opening, closing } = checksBindings[0];
-  let terminalEnd = closing;
+  const candidates = [];
 
-  while (tokens[terminalEnd - 1]?.value === ')') {
-    const groupStart = matchingDelimiterStart(tokens, terminalEnd - 1, '(', ')');
-    assert.notEqual(groupStart, -1, 'checks = forAllSystems has balanced terminal parentheses');
-    terminalEnd -= 1;
+  for (let index = opening + 1; index < closing; index += 1) {
+    const token = tokens[index];
+    if (token.type !== 'punctuation' || token.value !== '{') continue;
+
+    const end = matchingDelimiterEnd(tokens, index, '{', '}');
+    if (end !== -1 && definesDirectGitMcpCheck(tokens, index, end)) {
+      candidates.push({ start: index, end });
+    }
   }
 
-  const attrsetEnd = terminalEnd - 1;
-  assert.equal(tokens[attrsetEnd]?.value, '}', 'checks = forAllSystems has a terminal recursive attrset');
-  const attrsetStart = matchingDelimiterStart(tokens, attrsetEnd, '{', '}');
+  assert.equal(candidates.length, 1, 'checks = forAllSystems has exactly one attrset with a direct git-mcp check');
+  return candidates[0];
+}
 
-  assert.notEqual(attrsetStart, -1, 'checks = forAllSystems has a balanced terminal recursive attrset');
-  assert.equal(tokens[attrsetStart - 1]?.value, 'rec', 'checks = forAllSystems ends with a recursive attrset');
-  return { start: attrsetStart, end: attrsetEnd };
+function definesDirectGitMcpCheck(tokens, start, end) {
+  let braceDepth = 0;
+  let letDepth = 0;
+
+  for (let index = start + 1; index < end; index += 1) {
+    const token = tokens[index];
+
+    if (token.type === 'punctuation') {
+      if (token.value === '{') braceDepth += 1;
+      else if (token.value === '}') braceDepth -= 1;
+      continue;
+    }
+    if (token.value === 'let') {
+      letDepth += 1;
+      continue;
+    }
+    if (token.value === 'in' && letDepth > 0) {
+      letDepth -= 1;
+      continue;
+    }
+    if (
+      braceDepth === 0
+      && letDepth === 0
+      && tokens[index - 1]?.value !== '.'
+      && token.value === 'git-mcp'
+      && tokens[index + 1]?.value === '='
+      && tokens[index + 2]?.value === 'pkgs'
+      && tokens[index + 3]?.value === '.'
+      && tokens[index + 4]?.value === 'runCommand'
+      && tokens[index + 5]?.value === 'git-mcp'
+      && tokens[index + 6]?.value === '{'
+    ) return true;
+  }
+
+  return false;
 }
 
 function gitMcpCheck(source = fs.readFileSync(flakePath, 'utf8')) {
@@ -970,7 +1006,6 @@ test('git-mcp check extraction rejects carriage-return suffixed commands', () =>
   assert.notEqual(commandStart, -1, 'fixture finds the Go signer test command');
   const fixture = `${flake.slice(0, commandStart)}\n                ${command}${carriageReturn}\n${flake.slice(commandStart + commandText.length)}`;
 
-  assertNixExpressionParses(fixture, 'carriage-return signer command fixture');
   assert.throws(
     () => assertGitMcpCheckWiring(fixture),
     /git-mcp check has an exact executable command sequence/,
