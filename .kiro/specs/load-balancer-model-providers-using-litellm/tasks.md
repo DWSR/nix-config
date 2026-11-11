@@ -103,7 +103,7 @@ set before the guest rebuild.
   - _Depends: 1.4_
 
 - [ ] 5. Repository checks
-- [ ] 5.1 (P) Create the routing test harness and the catalog suite
+- [x] 5.1 (P) Create the routing test harness and the catalog suite
   - Add `tests/litellm-routing/{helpers.js,package.json,catalog.test.js}` reusing the `nixEvalJson`/`nixEvalFailure` pattern from `tests/litellm-service/helpers.js`, with a `main` field so `node --test` loads the directory.
   - Assert through `mkCatalog` fixtures that disagreeing `mode`, `requestDefaults`, `contextTokens`, or `maxOutputTokens`, a missing required field, an empty group, an unknown provider, a `/` or provider-token id, a duplicate id, and an invalid default model each fail with a message naming the logical model, the deployment, and the field.
   - Assert the real catalog weights every deployment, defaults a missing weight to `1`, and returns identical projections across two evaluations.
@@ -194,4 +194,5 @@ set before the guest rebuild.
 ## Implementation Notes
 
 - 3.1 also moved the fabro-vm assertion in `tests/litellm-service/hm-render.test.js` to the catalog shape; the spec's "unchanged" premise predates that test being repurposed from the macOS render suite. The macOS render tests themselves are untouched.
+- 5.1 registered `/tests/litellm-routing` in `.github/dependabot.yml` (npm directories) so the new `.npmrc`/`package.json` pair satisfies `tests/dependency-cooldown/cooldown.test.py`.
 - The full `tests/litellm-service/` suite forces `pkgs.litellm` to build on the mac remote builder; the harness's 120s `nix eval` timeout can trip while copying the store path (environment-blocked, not a code failure). Targeted assertions and guest evals are the local gate; the flake check remains the CI gate.
