@@ -153,7 +153,7 @@ set before the guest rebuild.
   - _Depends: 3.1_
 
 - [ ] 7. Operator documentation
-- [ ] 7.1 (P) Write `docs/litellm-routing-runbook.md`
+- [x] 7.1 (P) Write `docs/litellm-routing-runbook.md`
   - Document how to add a provider, logical model, deployment, or weight in `litellm-catalog.nix`; where weights, `deployment_affinity_ttl_seconds`, `cooldown_time`, `num_retries`, and `max_fallbacks` live; and that `x-litellm-model-id` names `<logical>@<provider>` on each response.
   - State the forwarded-header allowlist (`x-*` except `x-stainless-*`, plus `anthropic-beta`), the session-identity rules (header precedence, `bridge:v1:<producer>:<sha256>` for body keys, the stable-`User-Agent` requirement, pins cleared by restart), and that 1.86.0 fails over on transport errors without entering cooldown.
   - Document the three smoke steps — 20 fresh sessions for weight share, one repeated session across OpenCode's header and Fabro's body key for pin stability, and a forced failure by pointing the `opencode-go` `apiBase` at `http://127.0.0.1:9/v1` then reverting — each with its expected observation.
