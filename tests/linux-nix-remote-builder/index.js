@@ -8,3 +8,4 @@
 require('./builder-host.test.js');
 require('./fabro-dispatch.test.js');
 require('./lima-render.test.js');
+require('./personal-dispatch.test.js');
