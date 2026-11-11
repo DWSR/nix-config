@@ -159,7 +159,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Add `tests/fixtures/malformed/` covering depth, non-numeric, duplicate, malformed, unnumbered, and 50-entry documents, and `tests/fixtures/spec-json-cases/` with one tree per required-field and phase/approval rule.
   - Confirm each fixture parses through the harness and the malformed set triggers exactly its intended finding codes.
   - _Requirements: 11.1, 11.2_
-- [ ] 8.3 (P) Read-command CLI contract tests
+- [x] 8.3 (P) Read-command CLI contract tests
   - Add `tests/cli.rs` covering help contents, unknown command or option, missing `--spec` or value, malformed IDs, `--root` default and override, rejected spec names, missing spec directory, and missing artifact diagnostics with exit 2 or 1 and unchanged files.
   - Assert exactly one parseable JSON document and the documented human text per read command, empty stdout on diagnostics, stdout/stderr separation, identical exit status with and without `--json`, and hash-equal trees after `tasks`, `next`, `status`, and `validate`.
   - Assert `validate` exits 0 on warnings or no findings and 1 on errors in both formats.
