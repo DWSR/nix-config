@@ -195,7 +195,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Confirm the evaluated image root links `bin/kiro-spec` alongside the existing commands.
   - _Requirements: 1.2_
   - _Boundary: sandbox image contents (`configurations/fabro-vm/sandbox-image.nix`)_
-- [ ] 9.4 Add package, corpus, and Linux flake outputs
+- [x] 9.4 Add package, corpus, and Linux flake outputs
   - Add `checks.<system>.kiro-spec` bound to the overlay package so each darwin system builds it and runs `cargo test` through `doCheck`.
   - Add `checks.<system>.kiro-spec-corpus` that copies `.kiro` into `$TMPDIR`, runs the packaged binary's read commands twice per spec, asserts identical output, and compares the copied tree hash before and after.
   - Bind `packages.aarch64-linux.kiro-spec` to the guest's `pkgs.kiro-spec` so the Linux build and its checks are addressable with `nix build .#packages.aarch64-linux.kiro-spec`.
