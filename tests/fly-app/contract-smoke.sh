@@ -10,6 +10,11 @@
 #     ./tests/fly-app/contract-smoke.sh --spec <fly-app-spec.json> \
 #       --deploy <fly-app-deploy> my-app
 #
+# Failure check (Task 5.6):
+#   FLY_API_TOKEN=... FLY_SMOKE_CONFIRM_APP=my-app \
+#     ./tests/fly-app/contract-smoke.sh --spec <fly-app-spec.json> \
+#       --deploy <fly-app-deploy> --failures my-app
+#
 # The module deployment check runs the real per-app deployment program twice
 # against the selected existing disposable app. `--deploy` must accept
 # `--spec <spec>` (for example `packages.<system>.fly-app-deploy`). A generated
@@ -27,6 +32,17 @@
 # module-managed Machines), because the reconciler rejects surplus Fly Launch
 # Machines instead of deleting them.
 #
+# `--failures` additionally proves the live failure contract after the two
+# successful deployments: a publication record whose remote image is missing
+# fails without a repush, a deliberately invalid app setting is rejected by
+# Fly without a repush, and a caller script observes the Fly rejection as a
+# nonzero status. These checks require a deploy program that accepts `--spec`
+# (not a generated `deploy-<app>` wrapper), because each scenario supplies its
+# own specification. The missing-image check uses a private state directory
+# seeded with a fabricated image identity, so it cannot touch the operator's
+# persistent publication state. The invalid deployment is attempted against
+# the same disposable app, so use only a disposable app.
+#
 # Publication state is kept in the harness's private temporary directory, so
 # the second deployment exercises the unchanged-image path without touching
 # the operator's persistent publication state.
@@ -38,8 +54,9 @@ set -euo pipefail
 
 usage() {
   printf 'usage: FLY_API_TOKEN=<operator-token> FLY_SMOKE_CONFIRM_APP=<app> %s <existing-disposable-app> <registry.fly.io/app:tag-or-@sha256:digest>\n' "$0" >&2
-  printf '       FLY_API_TOKEN=<operator-token> FLY_SMOKE_CONFIRM_APP=<app> %s --spec <spec.json> --deploy <fly-app-deploy> <existing-disposable-app>\n' "$0" >&2
+  printf '       FLY_API_TOKEN=<operator-token> FLY_SMOKE_CONFIRM_APP=<app> %s --spec <spec.json> --deploy <fly-app-deploy> [--failures] <existing-disposable-app>\n' "$0" >&2
   printf 'The app must already exist and be disposable; this probe deploys the image and leaves its Machines running.\n' >&2
+  printf '%s\n' '--failures requires a deploy program that accepts --spec, not a generated deploy-<app> wrapper.' >&2
   exit 2
 }
 
@@ -49,14 +66,23 @@ fail() {
 }
 
 mode=image
+failures=0
 if [[ ${1:-} == --spec ]]; then
   mode=deploy
-  if [[ $# -ne 5 || -z ${2:-} || ${3:-} != --deploy || -z ${4:-} || -z ${5:-} ]]; then
+  if [[ $# -eq 6 && ${3:-} == --deploy && ${5:-} == --failures &&
+    -n ${2:-} && -n ${4:-} && -n ${6:-} ]]; then
+    spec=$2
+    deploy_program=$4
+    app=$6
+    failures=1
+  elif [[ $# -eq 5 && ${3:-} == --deploy && ${5:-} != --failures &&
+    -n ${2:-} && -n ${4:-} && -n ${5:-} ]]; then
+    spec=$2
+    deploy_program=$4
+    app=$5
+  else
     usage
   fi
-  spec=$2
-  deploy_program=$4
-  app=$5
 else
   if [[ $# -ne 2 ]]; then
     usage
@@ -500,6 +526,159 @@ check_derivation_images() {
   done
 }
 
+# Run the deployment program once and require a nonzero result. Captured
+# diagnostics are redacted before they are ever printed. A failure run must
+# report every requested message and must not log a publication attempt.
+run_failure_deployment() {
+  local label=$1 spec_path=$2 state=$3
+  shift 3
+  local stdout=$tmp_dir/failure-$label.stdout
+  local stderr=$tmp_dir/failure-$label.stderr
+  local status=0 pattern
+  if FLY_API_TOKEN="$fly_token" FLY_APP_STATE_DIR="$state" \
+    "$deploy_program" --spec "$spec_path" >"$stdout" 2>"$stderr"; then
+    status=0
+  else
+    status=$?
+  fi
+  if (( status == 0 )); then
+    redact_to_stderr "$stdout"
+    redact_to_stderr "$stderr"
+    fail "Fly failure scenario $label unexpectedly succeeded"
+  fi
+  for pattern in "$@"; do
+    if ! grep -Fq -- "$pattern" "$stdout" "$stderr"; then
+      redact_to_stderr "$stdout"
+      redact_to_stderr "$stderr"
+      fail "Fly failure scenario $label did not report '$pattern'"
+    fi
+  done
+  if grep -Fq -- 'fly-app-publish: publishing' "$stdout" "$stderr"; then
+    redact_to_stderr "$stdout"
+    redact_to_stderr "$stderr"
+    fail "Fly failure scenario $label republished an image"
+  fi
+  printf 'Fly failure %s: ok (status %s, no image republished)\n' "$label" "$status"
+}
+
+# Prove the live failure contract after the successful deployments:
+#   1. A recorded image whose remote manifest is missing fails without a push.
+#   2. A Fly-rejected deployment fails without republishing the unchanged image.
+#   3. A caller script observes the Fly rejection as a nonzero status.
+run_failure_checks() {
+  local missing_identity='zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
+  local missing_source="/nix/store/$missing_identity-fly-smoke-missing-image"
+  local missing_reference="registry.fly.io/$app:nix-$missing_identity"
+  local missing_spec=$tmp_dir/missing-image-spec.json
+  local missing_state=$tmp_dir/state-missing
+  local rejection_spec=$tmp_dir/fly-rejection-spec.json
+  local state_file=$state_dir/$app.json
+  local state_before fake_digest status reported caller_status
+  local caller_status_file=$tmp_dir/caller.status
+  local caller_stdout=$tmp_dir/caller.stdout
+  local caller_stderr=$tmp_dir/caller.stderr
+
+  jq --arg source "$missing_source" '
+    .machines |= with_entries(
+      .value as $machine |
+      if (($machine.containers // {}) | length) > 0 then
+        .value.containers |= with_entries(
+          if ((.value.image // {}) | has("derivation")) then
+            .value.image.derivation = $source
+          else . end)
+      elif (($machine.image // {}) | has("derivation")) then
+        .value.image.derivation = $source
+      else . end)
+  ' "$spec" > "$missing_spec" || fail 'could not create the missing-image failure specification'
+
+  mkdir -p "$missing_state" || fail 'could not create the missing-image state directory'
+  fake_digest="sha256:$(printf '%064d' 0)"
+  jq -n --arg app "$app" --arg identity "$missing_identity" \
+    --arg reference "$missing_reference" --arg digest "$fake_digest" '
+    {version: 1, app: $app, images: {($identity): {
+      identity: $identity, reference: $reference, digest: $digest}}}
+  ' > "$missing_state/$app.json" || fail 'could not seed the missing-image publication state'
+
+  status=$(registry_status "nix-$missing_identity") || fail 'could not inspect the fabricated missing image'
+  [[ $status == 404 ]] ||
+    fail "could not confirm the fabricated missing image is absent from the Fly registry (HTTP $status)"
+  run_failure_deployment 'missing-image' "$missing_spec" "$missing_state" \
+    'missing from the Fly registry' 'refusing to republish'
+  status=$(registry_status "nix-$missing_identity") || fail 'could not re-inspect the fabricated missing image'
+  [[ $status == 404 ]] ||
+    fail "the missing-image failure did not leave the fabricated image absent (HTTP $status)"
+  jq -e --arg app "$app" --arg identity "$missing_identity" --arg digest "$fake_digest" \
+    '.version == 1 and .app == $app and .images[$identity].digest == $digest' \
+    "$missing_state/$app.json" >/dev/null ||
+    fail 'the missing-image failure changed the publication state'
+
+  jq '.settings = ((.settings // {}) + {
+    kill_timeout: "fly-smoke-invalid-duration",
+    http_service: "fly-smoke-invalid-service",
+    services: "fly-smoke-invalid-services"
+  })' "$spec" > "$rejection_spec" || fail 'could not create the Fly rejection specification'
+  [[ -f $state_file ]] || fail 'the successful deployments did not record publication state'
+  state_before=$(<"$state_file")
+  run_failure_deployment 'fly-rejection' "$rejection_spec" "$state_dir" \
+    'Fly rejected deployment' 'not republishing'
+  [[ $(<"$state_file") == "$state_before" ]] ||
+    fail 'the Fly rejection changed the publication state'
+  check_derivation_images
+
+  cat > "$tmp_dir/caller.sh" <<'CALLER'
+#!/usr/bin/env bash
+set -u
+deploy_program=$1
+spec_path=$2
+state=$3
+status_file=$4
+stdout=$5
+stderr=$6
+status=0
+FLY_APP_STATE_DIR="$state" "$deploy_program" --spec "$spec_path" >"$stdout" 2>"$stderr" || status=$?
+printf '%s\n' "$status" > "$status_file"
+exit "$status"
+CALLER
+  chmod 700 "$tmp_dir/caller.sh" || fail 'could not make the caller script executable'
+
+  caller_status=0
+  if FLY_API_TOKEN="$fly_token" "$tmp_dir/caller.sh" \
+    "$deploy_program" "$rejection_spec" "$state_dir" \
+    "$caller_status_file" "$caller_stdout" "$caller_stderr"; then
+    caller_status=0
+  else
+    caller_status=$?
+  fi
+  if (( caller_status == 0 )); then
+    redact_to_stderr "$caller_stdout"
+    redact_to_stderr "$caller_stderr"
+    fail 'the caller script reported success for a rejected Fly deployment'
+  fi
+  reported=$(cat "$caller_status_file" 2>/dev/null) || fail 'the caller script did not record a status'
+  [[ $reported == "$caller_status" ]] ||
+    fail "the caller script recorded status '$reported' instead of '$caller_status'"
+  if ! grep -Fq -- 'Fly rejected deployment' "$caller_stdout" "$caller_stderr"; then
+    redact_to_stderr "$caller_stdout"
+    redact_to_stderr "$caller_stderr"
+    fail 'the caller script did not observe the Fly rejection'
+  fi
+  if ! grep -Fq -- 'not republishing' "$caller_stdout" "$caller_stderr"; then
+    redact_to_stderr "$caller_stdout"
+    redact_to_stderr "$caller_stderr"
+    fail 'the caller script failure did not prove the image was unchanged'
+  fi
+  if grep -Fq -- 'fly-app-publish: publishing' "$caller_stdout" "$caller_stderr"; then
+    redact_to_stderr "$caller_stdout"
+    redact_to_stderr "$caller_stderr"
+    fail 'the caller-script failure republished an image'
+  fi
+  if [[ $(<"$state_file") != "$state_before" ]]; then
+    fail 'the caller-script failure changed the publication state'
+  fi
+  printf 'Fly caller-script failure propagation: ok (status %s)\n' "$caller_status"
+  printf 'Fly live failure compatibility: ok (missing image and Fly rejection failed without republishing; caller script observed nonzero)\n'
+}
+
 inspect_app_settings() {
   local step=$1 label=$2 config error problem
   config=$tmp_dir/app-config-$step.json
@@ -584,5 +763,9 @@ for step in 1 2; do
   fi
   inspect_app_settings "$step" "$label"
 done
+
+if (( failures )); then
+  run_failure_checks
+fi
 
 printf 'Fly live compatibility: ok (two deployments preserved the declared app and Machine configuration)\n'
