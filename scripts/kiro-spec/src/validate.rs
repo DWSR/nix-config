@@ -4,7 +4,11 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use crate::paths::SpecPaths;
+use crate::requirements::{
+    tokenize_references, ReferenceOutcome, ReferenceToken, ReferenceValue, RequirementsIndex,
+};
 use crate::spec_json::Phase;
+use crate::tasks::{parse_tasks, MetadataKind, TaskDocument};
 
 pub const SPEC_JSON_FILE: &str = "spec.json";
 pub const DESIGN_MD_FILE: &str = "design.md";
@@ -471,6 +475,75 @@ fn requirements_artifact_finding(paths: &SpecPaths, has_requirement_refs: bool) 
             None,
         )),
         _ => None,
+    }
+}
+
+pub fn tasks_unreadable() -> Finding {
+    Finding::error(
+        "tasks.unreadable",
+        "`tasks.md` is not valid UTF-8",
+        TASKS_MD_FILE,
+        None,
+    )
+}
+
+pub fn parse_tasks_bytes(bytes: &[u8]) -> Result<TaskDocument, Finding> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(parse_tasks(text)),
+        Err(_) => Err(tasks_unreadable()),
+    }
+}
+
+pub fn task_findings(document: &TaskDocument) -> Vec<Finding> {
+    document.findings().to_vec()
+}
+
+pub fn requirements_reference_findings(
+    document: &TaskDocument,
+    index: &RequirementsIndex,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for entry in document.entries() {
+        for bullet in entry.block().metadata_for(MetadataKind::Requirements) {
+            for token in tokenize_references(bullet.body()) {
+                let finding = match index.resolve(&token) {
+                    ReferenceOutcome::Resolved => None,
+                    ReferenceOutcome::Malformed => Some(Finding::error(
+                        "requirements.ref.malformed",
+                        format!("malformed requirement reference `{}`", token.raw()),
+                        TASKS_MD_FILE,
+                        Some(bullet.line()),
+                    )),
+                    ReferenceOutcome::Unresolved => Some(Finding::error(
+                        "requirements.ref.unresolved",
+                        unresolved_reference_message(&token),
+                        TASKS_MD_FILE,
+                        Some(bullet.line()),
+                    )),
+                };
+                findings.extend(finding);
+            }
+        }
+    }
+
+    findings
+}
+
+fn unresolved_reference_message(token: &ReferenceToken) -> String {
+    match token.value() {
+        Some(ReferenceValue::Requirement(number)) => format!(
+            "requirement reference `{}` does not resolve: requirement {number} is absent",
+            token.raw()
+        ),
+        Some(ReferenceValue::Criterion {
+            requirement,
+            criterion,
+        }) => format!(
+            "requirement reference `{}` does not resolve: requirement {requirement} has no acceptance criterion {criterion}",
+            token.raw()
+        ),
+        None => format!("requirement reference `{}` does not resolve", token.raw()),
     }
 }
 
@@ -2011,5 +2084,252 @@ mod tests {
         assert!(artifact_present(&present));
         assert!(!artifact_present(&directory));
         assert!(!artifact_present(&temp.path().join("absent.md")));
+    }
+
+    fn requirements_document() -> &'static str {
+        "\
+### Requirement 1: One
+
+#### Acceptance Criteria
+
+1. First.
+2. Second.
+
+### Requirement 2: Two
+
+#### Acceptance Criteria
+
+1. First.
+"
+    }
+
+    fn reference_findings(tasks: &str, requirements: &str) -> Vec<Finding> {
+        let document = crate::tasks::parse_tasks(tasks);
+        let index = crate::requirements::RequirementsIndex::parse(requirements);
+        requirements_reference_findings(&document, &index)
+    }
+
+    fn merged_report(tasks: &str, requirements: &str) -> ValidationReport {
+        let document = crate::tasks::parse_tasks(tasks);
+        let index = crate::requirements::RequirementsIndex::parse(requirements);
+        ValidationReport::new(
+            task_findings(&document)
+                .into_iter()
+                .chain(requirements_reference_findings(&document, &index))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn task_and_reference_defects_are_both_reported_in_deterministic_order() {
+        let report = merged_report(
+            "- [ ] 1. First\n  - _Requirements: 1.x_\n- [ ] 1. Duplicate\n",
+            requirements_document(),
+        );
+
+        assert_eq!(
+            keys(&report.findings),
+            vec![
+                (
+                    "tasks.md",
+                    Some(2),
+                    "requirements.ref.malformed",
+                    "malformed requirement reference `1.x`"
+                ),
+                (
+                    "tasks.md",
+                    Some(3),
+                    "tasks.id.duplicate",
+                    "duplicate task identifier `1` (first occurrence at line 1)"
+                ),
+            ]
+        );
+        assert!(report.has_errors());
+    }
+
+    #[test]
+    fn a_valid_task_document_with_resolved_references_reports_no_findings() {
+        let report = merged_report(
+            "- [ ] 1. First\n  - _Requirements: 1, 1.1, 2.1_\n- [ ] 2. Second\n",
+            requirements_document(),
+        );
+
+        assert_eq!(report.findings, Vec::new());
+    }
+
+    #[test]
+    fn malformed_reference_tokens_are_reported_at_the_bullet_line_and_named() {
+        let findings = reference_findings(
+            "- [ ] 1. First\n  - _Requirements: 1.x, 1.2.3, 1-2_\n",
+            requirements_document(),
+        );
+
+        assert_eq!(findings.len(), 3, "{findings:?}");
+        for finding in &findings {
+            assert_eq!(finding.severity, Severity::Error, "{finding:?}");
+            assert_eq!(finding.code, "requirements.ref.malformed", "{finding:?}");
+            assert_eq!(finding.file, TASKS_MD_FILE, "{finding:?}");
+            assert_eq!(finding.line, Some(2), "{finding:?}");
+        }
+        let messages = messages(&findings);
+        for token in ["`1.x`", "`1.2.3`", "`1-2`"] {
+            assert!(
+                messages.iter().any(|message| message.contains(token)),
+                "{token}: {messages:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unresolved_requirement_and_criterion_references_are_reported_at_the_bullet_line() {
+        let findings = reference_findings(
+            "- [ ] 1. First\n  - _Requirements: 3, 1.3_\n",
+            requirements_document(),
+        );
+
+        assert_eq!(findings.len(), 2, "{findings:?}");
+        for finding in &findings {
+            assert_eq!(finding.severity, Severity::Error, "{finding:?}");
+            assert_eq!(finding.code, "requirements.ref.unresolved", "{finding:?}");
+            assert_eq!(finding.file, TASKS_MD_FILE, "{finding:?}");
+            assert_eq!(finding.line, Some(2), "{finding:?}");
+        }
+        let messages = messages(&findings);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("`3`") && message.contains("requirement 3")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("`1.3`") && message.contains("criterion 3")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn resolved_requirement_and_criterion_references_report_nothing() {
+        let findings = reference_findings(
+            "- [ ] 1. First\n  - _Requirements: 2, 1.1_\n",
+            requirements_document(),
+        );
+
+        assert_eq!(findings, Vec::new());
+    }
+
+    #[test]
+    fn a_bullet_with_valid_and_invalid_tokens_reports_only_the_invalid_one() {
+        let findings = reference_findings(
+            "- [ ] 1. First\n  - _Requirements: 1.1, 9_\n",
+            requirements_document(),
+        );
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, "requirements.ref.unresolved");
+        assert_eq!(findings[0].line, Some(2));
+        assert!(findings[0].message.contains("`9`"), "{findings:?}");
+    }
+
+    #[test]
+    fn continuation_tokens_resolve_at_the_metadata_bullet_line() {
+        let findings = reference_findings(
+            "- [ ] 1. First\n  - _Requirements: 1.1,\n    2.9, 2.1_\n",
+            requirements_document(),
+        );
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, "requirements.ref.unresolved");
+        assert_eq!(findings[0].line, Some(2));
+        assert!(findings[0].message.contains("`2.9`"), "{findings:?}");
+    }
+
+    #[test]
+    fn non_requirements_metadata_bullets_are_not_resolved() {
+        let findings = reference_findings(
+            "- [ ] 1. First\n  - _Boundary: 1.x, 9_\n  - _Depends: 1.x_\n",
+            requirements_document(),
+        );
+
+        assert_eq!(findings, Vec::new());
+    }
+
+    #[test]
+    fn parser_warnings_keep_their_severity_after_the_merge() {
+        let report = merged_report(
+            "- [ ] 1. First\n  - _Requirements: 9_\n- [ ] Unnumbered\n",
+            requirements_document(),
+        );
+
+        assert_eq!(report.findings.len(), 2, "{report:?}");
+        let warning = report
+            .findings
+            .iter()
+            .find(|finding| finding.code == "tasks.line.unnumbered")
+            .expect("parser warning");
+        assert_eq!(warning.severity, Severity::Warning, "{warning:?}");
+        assert_eq!(warning.line, Some(3), "{warning:?}");
+        let error = report
+            .findings
+            .iter()
+            .find(|finding| finding.code == "requirements.ref.unresolved")
+            .expect("reference error");
+        assert_eq!(error.severity, Severity::Error, "{error:?}");
+    }
+
+    #[test]
+    fn parser_errors_are_carried_into_the_report_unchanged() {
+        let document = crate::tasks::parse_tasks("- [ ] 1. First\n- [ ] 1.2.3 Too deep\n");
+        let parser_findings = task_findings(&document);
+
+        assert_eq!(parser_findings, document.findings());
+        assert_eq!(parser_findings.len(), 1, "{parser_findings:?}");
+        assert_eq!(parser_findings[0].severity, Severity::Error);
+        assert_eq!(parser_findings[0].code, "tasks.id.depth");
+        assert_eq!(parser_findings[0].file, TASKS_MD_FILE);
+        assert_eq!(parser_findings[0].line, Some(2));
+
+        let mut report = ValidationReport::new(parser_findings.clone());
+        report.extend(parser_findings);
+        assert_eq!(report.findings.len(), 2);
+        assert!(report
+            .findings
+            .iter()
+            .all(|finding| finding == &document.findings()[0]));
+    }
+
+    #[test]
+    fn tasks_unreadable_is_an_error_on_tasks_md_without_a_line() {
+        let finding = tasks_unreadable();
+
+        assert_eq!(finding.severity, Severity::Error);
+        assert_eq!(finding.code, "tasks.unreadable");
+        assert_eq!(finding.file, TASKS_MD_FILE);
+        assert_eq!(finding.line, None);
+        assert!(finding.message.contains("UTF-8"), "{finding:?}");
+    }
+
+    #[test]
+    fn a_non_utf8_tasks_file_is_undecodable() {
+        let temp = TempDir::new("non-utf8-tasks");
+        let path = temp.path().join(TASKS_MD_FILE);
+        fs::write(&path, [0xff, 0xfe, 0x00]).expect("write");
+        let bytes = fs::read(&path).expect("read");
+
+        let finding = parse_tasks_bytes(&bytes).expect_err("non-utf8");
+
+        assert_eq!(finding.severity, Severity::Error);
+        assert_eq!(finding.code, "tasks.unreadable");
+        assert_eq!(finding.file, TASKS_MD_FILE);
+        assert_eq!(finding.line, None);
+    }
+
+    #[test]
+    fn utf8_task_bytes_decode_into_a_document() {
+        let document = parse_tasks_bytes(b"- [ ] 1. One\n").expect("utf8");
+
+        assert_eq!(document.entries().len(), 1);
+        assert!(document.findings().is_empty());
     }
 }
