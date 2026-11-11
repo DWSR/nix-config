@@ -81,7 +81,7 @@
 
 - [ ] 6. Add configuration regression checks
 
-- [ ] 6.1 (P) Test the NixOS host and personal Lima adapter
+- [x] 6.1 (P) Test the NixOS host and personal Lima adapter
   - Add host and Lima render tests under `tests/linux-nix-remote-builder/` using the repository's Nix evaluation and Node test patterns.
   - Assert NixOS platform, remote-build/SSH/Tailscale/SOPS wiring, host independence from Lima, instance identity, launchd lifecycle/deploy wiring, and the 4-CPU/`8GiB`/`128GiB` render without changing Fabro's existing guest.
   - Done when tests pass on the feature configuration and reject a wrong platform, changed resource, missing lifecycle wiring, or altered Fabro guest render.
