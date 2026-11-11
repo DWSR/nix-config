@@ -7,12 +7,13 @@
 #
 #   * Models come from the local LiteLLM gateway
 #     (http://127.0.0.1:4000/v1, ./litellm.nix). The provider id
-#     (`opencode-litellm`) deliberately starts with "opencode": opencode
-#     emits its dynamic `x-opencode-session` header only for provider ids
-#     with that prefix (v1.19.0 header logic), and litellm's
-#     `forward_client_headers_to_llm_api` carries the header upstream for
-#     the opencode-* model groups. Do NOT add static provider headers —
-#     that is the entire mechanism.
+#     (`opencode-litellm`) deliberately starts with "opencode" so opencode
+#     itself emits its dynamic `x-opencode-session` / `x-opencode-session-id`
+#     headers (v1.19.0 header logic). Header forwarding is group-scoped in
+#     the gateway: ./litellm-catalog.nix marks a logical model when any of
+#     its deployments' provider requires the client session header, and the
+#     unified group forwards the same headers to every sibling. Do NOT add
+#     static provider headers — that is the entire mechanism.
 #   * A dedicated GitHub PAT (sops `opencode-github-token`) is exported as
 #     GITHUB_TOKEN and GH_TOKEN; git pushes authenticate through
 #     `gh auth git-credential`, and commits are SSH-signed with the key
@@ -44,6 +45,9 @@ let
   opencodeConfigDir = "${opencodeHome}/config";
   opencodeDataDir = "${opencodeHome}/share";
   opencodeCacheDir = "${opencodeHome}/cache";
+
+  # The served logical ids and their OpenCode projection (./litellm-catalog.nix).
+  inherit (import ./litellm-catalog.nix { inherit lib; }) catalog;
 
   # The per-project cc-sdd bootstrap helper (materialises .kiro/settings
   # template trees); shipped on PATH like the mac module's `cc-sdd-init`.
@@ -99,7 +103,7 @@ let
   opencodeJsonFormat = pkgs.formats.json { };
   opencodeSettings = opencodeJsonFormat.generate "opencode.json" {
     "$schema" = "https://opencode.ai/config.json";
-    model = "opencode-litellm/opencode-go/deepseek-v4.1-flash";
+    model = "opencode-litellm/${catalog.openCode.defaultModel}";
     subagent_depth = 10;
     snapshot = false;
     autoupdate = false;
@@ -125,41 +129,9 @@ let
         baseURL = "http://127.0.0.1:4000/v1";
         apiKey = "{env:LITELLM_MASTER_KEY}";
       };
-      models = {
-        "chatgpt/gpt-6-luna" = {
-          name = "GPT-6 Luna (ChatGPT, xhigh)";
-        };
-        "chatgpt/gpt-6-luna-none" = {
-          name = "GPT-6 Luna (ChatGPT, no thinking)";
-        };
-        "chatgpt/gpt-6-astra" = {
-          name = "GPT-6 Astra (ChatGPT, xhigh)";
-        };
-        "chatgpt/gpt-6.1-sol" = {
-          name = "GPT-6.1 Sol (ChatGPT, xhigh)";
-        };
-        "opencode-go/gpt-6-luna" = {
-          name = "GPT-6 Luna (OpenCode Go)";
-        };
-        "opencode-go/deepseek-v4.1-flash" = {
-          name = "DeepSeek V4.1 Flash (OpenCode Go)";
-        };
-        "opencode-go/glm-5.3-flash" = {
-          name = "GLM-5.3 Flash (OpenCode Go)";
-        };
-        "opencode-go/beam-free" = {
-          name = "Beam Free (OpenCode Go)";
-        };
-        "opencode-go/omen-alpha" = {
-          name = "Omen Alpha (OpenCode Go)";
-        };
-        "opencode-go/longcat-2.0" = {
-          name = "LongCat 2.0 (OpenCode Go)";
-        };
-        "opencode-zen/big-pickle" = {
-          name = "Big Pickle (OpenCode Zen)";
-        };
-      };
+      # Generated from ./litellm-catalog.nix and keyed by provider-free
+      # logical ids.
+      models = catalog.openCode.models;
     };
   };
 
