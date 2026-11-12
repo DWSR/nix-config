@@ -82,7 +82,7 @@
   - _Requirements: 1.4, 2.3, 2.4, 4.4_
 
 - [ ] 4. Connect the app, publisher, and reconciler
-- [ ] 4.1 Orchestrate selected-app deployment synchronously
+- [x] 4.1 Orchestrate selected-app deployment synchronously
   - Pass the selected store-safe spec and runtime credentials to the publisher, then pass resolved images to the reconciler; propagate errors without deploying a different app.
   - Done when a caller script sees success only after registry and Fly API acceptance and nonzero on every stubbed failure.
   - _Depends: 3.1, 3.5, 3.9_
