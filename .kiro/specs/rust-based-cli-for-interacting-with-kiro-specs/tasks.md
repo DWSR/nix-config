@@ -178,7 +178,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 11.5, 11.8_
 
 - [ ] 9. Packaging and host wiring
-- [ ] 9.1 Build the package from the custom-packages overlay
+- [x] 9.1 Build the package from the custom-packages overlay
   - Add `kiro-spec` to `overlays/misc.nix` as `final.rustPlatform.buildRustPackage` with `pname`, `version = "0.1.0"`, `src = final.lib.cleanSource ../scripts/kiro-spec`, `cargoLock.lockFile = ../scripts/kiro-spec/Cargo.lock`, `doCheck = true`, and `meta.mainProgram = "kiro-spec"`.
   - Leave existing overlay entries unchanged and keep the build and its checks free of network access.
   - Confirm the overlay package evaluates and builds for `aarch64-darwin` with `nix build --impure --expr` importing the flake's `overlays.custom-packages`.
