@@ -201,7 +201,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Bind `packages.aarch64-linux.kiro-spec` to the guest's `pkgs.kiro-spec` so the Linux build and its checks are addressable with `nix build .#packages.aarch64-linux.kiro-spec`.
   - Confirm both darwin checks and the Linux package build succeed offline.
   - _Requirements: 11.5, 11.6, 11.8_
-- [ ] 9.5 Assert host and image wiring in a flake check
+- [x] 9.5 Assert host and image wiring in a flake check
   - Add `checks.aarch64-darwin.kiro-spec-wiring` asserting every `darwinConfigurations` host carries `pkgs.kiro-spec` in `home.packages` and the guest image `contents` contains the linux package, both resolving to the crate's pname and version.
   - Fail the check with a named host or image when either wiring is missing.
   - Confirm the check passes with the wiring in place and fails when one host import or the image entry is removed locally.
