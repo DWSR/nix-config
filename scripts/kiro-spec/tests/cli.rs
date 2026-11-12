@@ -2,6 +2,7 @@ mod support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::Value;
 use support::{copy_tree, read_only, tree_hash, SpecTree, TempDir};
@@ -581,5 +582,581 @@ fn validate_is_deterministic_and_fixture_trees_stay_read_only() {
             source_hash,
             "{relative}"
         );
+    }
+}
+
+fn raw_run(cwd: Option<&Path>, args: &[&str]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kiro-spec"));
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command
+        .args(args)
+        .output()
+        .expect("compiled kiro-spec binary runs")
+}
+
+fn raw_stdout(output: &std::process::Output) -> String {
+    String::from_utf8(output.stdout.clone()).expect("stdout is valid UTF-8")
+}
+
+fn raw_stderr(output: &std::process::Output) -> String {
+    String::from_utf8(output.stderr.clone()).expect("stderr is valid UTF-8")
+}
+
+fn single_json_document(text: &str) -> Value {
+    assert!(
+        text.starts_with('{'),
+        "JSON document must start at byte 0: {text}"
+    );
+    assert!(
+        text.trim_end().ends_with('}'),
+        "JSON document must end with `}}`: {text}"
+    );
+    serde_json::from_str(text).expect("stdout is exactly one JSON document")
+}
+
+fn complete_spec_tree(tag: &str) -> SpecTree {
+    let tree = SpecTree::new("demo", tag);
+    tree.write("spec.json", SPEC_JSON)
+        .write("tasks.md", TASKS)
+        .write("requirements.md", REQUIREMENTS)
+        .write("design.md", DESIGN);
+    tree
+}
+
+#[test]
+fn help_lists_the_synopsis_every_subcommand_and_every_option() {
+    for args in [&["--help"][..], &["-h"][..]] {
+        let output = raw_run(None, args);
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}");
+        let stdout = raw_stdout(&output);
+        assert!(
+            stdout.contains("kiro-spec [--root <path>] --spec <name>"),
+            "{args:?}: {stdout}"
+        );
+        for command in ["next", "tasks", "status", "validate", "complete", "block"] {
+            assert!(stdout.contains(command), "{args:?}: missing `{command}`");
+        }
+        for option in [
+            "--root",
+            "--spec",
+            "--json",
+            "--reason",
+            "--help",
+            "--version",
+        ] {
+            assert!(stdout.contains(option), "{args:?}: missing `{option}`");
+        }
+    }
+}
+
+#[test]
+fn version_prints_the_cargo_package_version_for_both_flags() {
+    let expected = format!("kiro-spec {}\n", env!("CARGO_PKG_VERSION"));
+    for args in [&["--version"][..], &["-V"][..]] {
+        let output = raw_run(None, args);
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}");
+        assert_eq!(raw_stdout(&output), expected, "{args:?}");
+    }
+}
+
+#[test]
+fn usage_errors_exit_two_with_a_diagnostic_and_leave_the_tree_unchanged() {
+    let tree = complete_spec_tree("contract-usage-errors");
+    let before = tree.tree_hash();
+
+    let cases: &[(&[&str], &str)] = &[
+        (&["bogus"], "bogus"),
+        (&["--bogus", "tasks"], "--bogus"),
+        (&["-x", "tasks"], "-x"),
+        (&["--json", "complete", "1"], "--json"),
+        (&["--json", "block", "1", "--reason", "waiting"], "--json"),
+        (&["complete", "abc"], "abc"),
+        (&["complete", "1.2.3"], "1.2.3"),
+        (&["block", "abc", "--reason", "waiting"], "abc"),
+        (&["block", "1.2.3", "--reason", "waiting"], "1.2.3"),
+    ];
+
+    for (args, fragment) in cases {
+        let output = tree.run(args);
+        assert_eq!(output.code(), Some(2), "{args:?}: {}", output.describe());
+        assert!(
+            output.stdout().is_empty(),
+            "{args:?}: {}",
+            output.describe()
+        );
+        let stderr = output.stderr_text();
+        assert!(stderr.starts_with("kiro-spec: "), "{args:?}: {stderr}");
+        assert!(stderr.contains(fragment), "{args:?}: {stderr}");
+    }
+
+    assert_eq!(tree.tree_hash(), before);
+}
+
+#[test]
+fn missing_spec_and_missing_option_values_are_usage_errors() {
+    let tree = complete_spec_tree("contract-missing-values");
+    let before = tree.tree_hash();
+
+    let cases: &[(&[&str], &str)] = &[
+        (&["tasks"], "--spec"),
+        (&["--json", "validate"], "--spec"),
+        (&["--spec"], "--spec"),
+        (&["--spec", "demo", "--root"], "--root"),
+        (&["--spec", "demo", "block", "1", "--reason"], "--reason"),
+        (&["--spec=demo", "block", "1", "--reason="], "--reason"),
+        (&["--spec=demo", "--root=", "tasks"], "--root"),
+        (&["--spec=demo", "--json=yes", "tasks"], "value"),
+    ];
+
+    for (args, fragment) in cases {
+        let output = raw_run(Some(tree.root()), args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let stderr = raw_stderr(&output);
+        assert!(stderr.starts_with("kiro-spec: "), "{args:?}: {stderr}");
+        assert!(stderr.contains(fragment), "{args:?}: {stderr}");
+    }
+
+    assert_eq!(tree.tree_hash(), before);
+}
+
+#[test]
+fn invalid_spec_names_are_rejected_with_their_real_categories() {
+    let tree = complete_spec_tree("contract-invalid-names");
+    let before = tree.tree_hash();
+    let root = tree.root().to_str().expect("temporary root is UTF-8");
+
+    let empty = raw_run(Some(tree.root()), &["--spec", "", "tasks"]);
+    assert_eq!(empty.status.code(), Some(2), "empty name");
+    assert!(empty.stdout.is_empty(), "empty name");
+    let stderr = raw_stderr(&empty);
+    assert!(stderr.starts_with("kiro-spec: "), "{stderr}");
+    assert!(stderr.contains("--spec"), "{stderr}");
+    assert!(stderr.contains("value"), "{stderr}");
+
+    for name in [".", "..", "/absolute", "nested/demo", "trailing/"] {
+        let output = raw_run(
+            Some(tree.root()),
+            &["--root", root, "--spec", name, "tasks"],
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{name:?}: {}",
+            raw_stderr(&output)
+        );
+        assert!(output.stdout.is_empty(), "{name:?}");
+        let stderr = raw_stderr(&output);
+        assert!(stderr.starts_with("kiro-spec: "), "{name:?}: {stderr}");
+        assert!(stderr.contains("--spec"), "{name:?}: {stderr}");
+        assert!(stderr.contains(&format!("{name:?}")), "{name:?}: {stderr}");
+        assert!(
+            stderr.contains("requires a relative single path component"),
+            "{name:?}: {stderr}"
+        );
+    }
+
+    assert_eq!(tree.tree_hash(), before);
+}
+
+#[test]
+fn missing_spec_directory_exits_one_and_names_the_joined_path() {
+    let tree = complete_spec_tree("contract-missing-spec-dir");
+    let before = tree.tree_hash();
+    let expected = tree.root().join(".kiro/specs/absent");
+
+    let output = tree.run(&["--spec", "absent", "tasks"]);
+    assert_eq!(output.code(), Some(1), "{}", output.describe());
+    assert!(output.stdout().is_empty(), "{}", output.describe());
+    let stderr = output.stderr_text();
+    assert!(stderr.starts_with("kiro-spec: "), "{stderr}");
+    assert!(stderr.contains(&expected.display().to_string()), "{stderr}");
+    assert!(stderr.contains("does not exist"), "{stderr}");
+    assert_eq!(tree.tree_hash(), before);
+}
+
+#[test]
+fn missing_artifact_diagnostics_exit_one_with_empty_stdout() {
+    let tree = SpecTree::new("demo", "contract-missing-artifacts");
+    let before = tree.tree_hash();
+    let tasks_path = tree.spec_dir().join("tasks.md");
+    let spec_json_path = tree.spec_dir().join("spec.json");
+
+    for command in ["tasks", "next"] {
+        let output = tree.run(&[command]);
+        assert_eq!(output.code(), Some(1), "{command}: {}", output.describe());
+        assert!(
+            output.stdout().is_empty(),
+            "{command}: {}",
+            output.describe()
+        );
+        let stderr = output.stderr_text();
+        assert!(stderr.starts_with("kiro-spec: "), "{command}: {stderr}");
+        assert!(
+            stderr.contains(&tasks_path.display().to_string()),
+            "{command}: {stderr}"
+        );
+    }
+
+    let status = tree.run(&["status"]);
+    assert_eq!(status.code(), Some(1), "{}", status.describe());
+    assert!(status.stdout().is_empty(), "{}", status.describe());
+    assert!(
+        status
+            .stderr_text()
+            .contains(&spec_json_path.display().to_string()),
+        "{}",
+        status.describe()
+    );
+
+    assert_eq!(tree.tree_hash(), before);
+
+    let human = tree.run(&["validate"]);
+    assert_eq!(human.code(), Some(1), "{}", human.describe());
+    assert!(human.stderr().is_empty(), "{}", human.describe());
+    assert_eq!(
+        human.stdout_text(),
+        "spec.json: error [spec.json.missing] `spec.json` is missing\n1 error, 0 warnings\n"
+    );
+
+    let json = tree.run(&["--json", "validate"]);
+    assert_eq!(json.code(), Some(1), "{}", json.describe());
+    assert!(json.stderr().is_empty(), "{}", json.describe());
+    let document = single_json_document(&json.stdout_text());
+    assert_eq!(document["schema_version"].as_u64(), Some(1));
+    assert_eq!(document["spec"].as_str(), Some("demo"));
+    assert_eq!(document["valid"].as_bool(), Some(false));
+    assert_eq!(finding_codes(&document), vec!["spec.json.missing"]);
+
+    assert_eq!(tree.tree_hash(), before);
+}
+
+#[test]
+fn default_root_uses_the_current_directory_and_override_ignores_it() {
+    let tree = SpecTree::new("demo", "contract-default-root");
+    tree.write("tasks.md", "# Plan\n\n- [ ] 1. From current directory\n");
+
+    let output = raw_run(Some(tree.root()), &["--spec", "demo", "tasks"]);
+    assert_eq!(output.status.code(), Some(0), "{}", raw_stderr(&output));
+    assert!(output.stderr.is_empty());
+    assert_eq!(raw_stdout(&output), "1 From current directory [pending]\n");
+
+    let cwd_tree = SpecTree::new("demo", "contract-override-cwd");
+    cwd_tree.write("tasks.md", "# Plan\n\n- [ ] 1. From the cwd tree\n");
+    let root_tree = SpecTree::new("demo", "contract-override-root");
+    root_tree.write("tasks.md", "# Plan\n\n- [ ] 1. From the override root\n");
+    let cwd_before = cwd_tree.tree_hash();
+
+    let output = root_tree.run_in(cwd_tree.root(), &["tasks"]);
+    assert_eq!(output.code(), Some(0), "{}", output.describe());
+    assert!(output.stderr().is_empty(), "{}", output.describe());
+    assert_eq!(output.stdout_text(), "1 From the override root [pending]\n");
+    assert_eq!(cwd_tree.tree_hash(), cwd_before);
+}
+
+#[test]
+fn inline_option_forms_match_space_separated_forms() {
+    let tree = complete_spec_tree("contract-inline-options");
+    let root = tree.root().to_str().expect("temporary root is UTF-8");
+    let root_inline = format!("--root={root}");
+
+    let spaced = raw_run(None, &["--root", root, "--spec", "demo", "tasks"]);
+    let inline = raw_run(None, &[&root_inline, "--spec=demo", "tasks"]);
+    assert_eq!(spaced.status.code(), Some(0));
+    assert_eq!(inline.status.code(), Some(0));
+    assert!(spaced.stderr.is_empty());
+    assert!(inline.stderr.is_empty());
+    assert_eq!(spaced.stdout, inline.stdout);
+
+    let spaced_json = raw_run(
+        None,
+        &["--root", root, "--spec", "demo", "--json", "status"],
+    );
+    let inline_json = raw_run(None, &[&root_inline, "--spec=demo", "--json", "status"]);
+    assert_eq!(spaced_json.status.code(), Some(0));
+    assert_eq!(inline_json.status.code(), Some(0));
+    assert_eq!(spaced_json.stdout, inline_json.stdout);
+
+    let cwd_inline = raw_run(Some(tree.root()), &["--spec=demo", "next"]);
+    let cwd_spaced = raw_run(Some(tree.root()), &["--spec", "demo", "next"]);
+    assert_eq!(cwd_inline.status.code(), Some(0));
+    assert_eq!(cwd_inline.stdout, cwd_spaced.stdout);
+    assert_eq!(cwd_inline.stderr, cwd_spaced.stderr);
+}
+
+#[test]
+fn basic_fixture_read_commands_match_the_documented_human_text() {
+    let (tree, _) = copy_fixture("basic", "basic", "contract-basic-human");
+    let before = tree.tree_hash();
+
+    let tasks = tree.run(&["tasks"]).assert_success();
+    assert_eq!(tasks.stdout_text(), BASIC_TASKS_OUTPUT);
+
+    let next = tree.run(&["next"]).assert_success();
+    assert_eq!(next.stdout_text(), "  1.1 First child [pending]\n");
+
+    let status = tree.run(&["status"]).assert_success();
+    assert_eq!(status.stdout_text(), BASIC_STATUS_OUTPUT);
+
+    let validate = tree.run(&["validate"]).assert_success();
+    assert_eq!(validate.stdout_text(), "0 errors, 0 warnings\n");
+
+    assert_eq!(tree.tree_hash(), before);
+}
+
+#[test]
+fn basic_fixture_read_commands_emit_the_documented_json_schemas() {
+    let (tree, _) = copy_fixture("basic", "basic", "contract-basic-json");
+
+    let tasks_run = tree.run(&["--json", "tasks"]).assert_success();
+    let tasks_text = tasks_run.stdout_text();
+    assert!(!tasks_text.contains("[pending]"), "{tasks_text}");
+    let tasks = single_json_document(&tasks_text);
+    assert_eq!(tasks["schema_version"].as_u64(), Some(1));
+    assert_eq!(tasks["spec"].as_str(), Some("basic"));
+    let entries = tasks["tasks"].as_array().expect("flat tasks array");
+    let ids: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry["id"].as_str().expect("task id"))
+        .collect();
+    assert_eq!(ids, ["1", "1.1", "1.2", "2", "3", "4", "5", "6", "7"]);
+    for entry in entries {
+        assert_eq!(
+            entry.as_object().map(|object| object.len()),
+            Some(5),
+            "{entry}"
+        );
+        assert!(entry["id"].is_string(), "{entry}");
+        assert!(entry["description"].is_string(), "{entry}");
+        assert!(entry["state"].is_string(), "{entry}");
+        assert!(entry["optional"].is_boolean(), "{entry}");
+        assert!(
+            entry
+                .as_object()
+                .is_some_and(|object| object.contains_key("blocked_reason")),
+            "{entry}"
+        );
+    }
+
+    let next_run = tree.run(&["--json", "next"]).assert_success();
+    let next_text = next_run.stdout_text();
+    assert!(!next_text.contains("[pending]"), "{next_text}");
+    let next = single_json_document(&next_text);
+    assert_eq!(next["schema_version"].as_u64(), Some(1));
+    assert_eq!(next["spec"].as_str(), Some("basic"));
+    let task = next["task"].as_object().expect("next task object");
+    assert_eq!(task["id"].as_str(), Some("1.1"));
+    assert_eq!(task["description"].as_str(), Some("First child"));
+    assert_eq!(task["state"].as_str(), Some("pending"));
+    assert_eq!(task["optional"].as_bool(), Some(false));
+    assert!(task["blocked_reason"].is_null());
+
+    let status_run = tree.run(&["--json", "status"]).assert_success();
+    let status_text = status_run.stdout_text();
+    assert!(!status_text.contains("stage: "), "{status_text}");
+    let status = single_json_document(&status_text);
+    assert_eq!(status["schema_version"].as_u64(), Some(1));
+    assert_eq!(status["spec"].as_str(), Some("basic"));
+    assert_eq!(status["stage"].as_str(), Some("initialized"));
+    assert_eq!(status["total"].as_u64(), Some(9));
+    assert_eq!(status["counts"]["completed"].as_u64(), Some(2));
+    assert_eq!(status["counts"]["pending"].as_u64(), Some(6));
+    assert_eq!(status["counts"]["blocked"].as_u64(), Some(1));
+    assert_eq!(status["optional_pending"].as_u64(), Some(2));
+
+    let validate_run = tree.run(&["--json", "validate"]).assert_success();
+    let validate_text = validate_run.stdout_text();
+    assert!(!validate_text.contains(" errors, "), "{validate_text}");
+    assert!(!validate_text.contains(" error ["), "{validate_text}");
+    let validate = single_json_document(&validate_text);
+    assert_eq!(validate["schema_version"].as_u64(), Some(1));
+    assert_eq!(validate["spec"].as_str(), Some("basic"));
+    assert_eq!(validate["valid"].as_bool(), Some(true));
+    assert_eq!(
+        validate["findings"]
+            .as_array()
+            .map(|findings| findings.len()),
+        Some(0)
+    );
+}
+
+#[test]
+fn validate_exit_status_is_zero_for_warnings_and_clean_specs_and_one_for_errors() {
+    let (clean, _) = copy_fixture("basic", "basic", "contract-validate-clean");
+    for args in [&["validate"][..], &["--json", "validate"][..]] {
+        let output = clean.run(args);
+        assert_eq!(output.code(), Some(0), "{args:?}: {}", output.describe());
+        assert!(
+            output.stderr().is_empty(),
+            "{args:?}: {}",
+            output.describe()
+        );
+        assert!(!output.stdout().is_empty(), "{args:?}");
+    }
+    let clean_json = single_json_document(&clean.run(&["--json", "validate"]).stdout_text());
+    assert_eq!(clean_json["valid"].as_bool(), Some(true));
+    assert_eq!(
+        clean_json["findings"]
+            .as_array()
+            .map(|findings| findings.len()),
+        Some(0)
+    );
+
+    let (warnings, _) = copy_fixture(
+        "unnumbered",
+        "malformed/unnumbered",
+        "contract-validate-warnings",
+    );
+    let human = warnings.run(&["validate"]);
+    assert_eq!(human.code(), Some(0), "{}", human.describe());
+    assert!(human.stderr().is_empty(), "{}", human.describe());
+    assert_eq!(
+        human.stdout_text(),
+        "tasks.md:3: warning [tasks.line.unnumbered] checkbox line has no numeric task identifier\n0 errors, 1 warning\n"
+    );
+    let json = warnings.run(&["--json", "validate"]);
+    assert_eq!(json.code(), Some(0), "{}", json.describe());
+    assert!(json.stderr().is_empty(), "{}", json.describe());
+    let document = single_json_document(&json.stdout_text());
+    assert_eq!(document["valid"].as_bool(), Some(true));
+    let findings = document["findings"].as_array().expect("findings array");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["severity"].as_str(), Some("warning"));
+    assert_eq!(findings[0]["code"].as_str(), Some("tasks.line.unnumbered"));
+    assert_eq!(findings[0]["file"].as_str(), Some("tasks.md"));
+    assert_eq!(findings[0]["line"].as_u64(), Some(3));
+    assert!(findings[0]["message"].as_str().is_some());
+
+    let (errors, _) = copy_fixture("depth", "malformed/depth", "contract-validate-errors");
+    let human = errors.run(&["validate"]);
+    assert_eq!(human.code(), Some(1), "{}", human.describe());
+    assert!(human.stderr().is_empty(), "{}", human.describe());
+    assert_eq!(
+        human.stdout_text(),
+        "tasks.md:3: error [tasks.id.depth] task identifier `1.2.3` has more than two numeric levels\n1 error, 0 warnings\n"
+    );
+    let json = errors.run(&["--json", "validate"]);
+    assert_eq!(json.code(), Some(1), "{}", json.describe());
+    assert!(json.stderr().is_empty(), "{}", json.describe());
+    let document = single_json_document(&json.stdout_text());
+    assert_eq!(document["valid"].as_bool(), Some(false));
+    let findings = document["findings"].as_array().expect("findings array");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["severity"].as_str(), Some("error"));
+    assert_eq!(findings[0]["code"].as_str(), Some("tasks.id.depth"));
+    assert_eq!(findings[0]["file"].as_str(), Some("tasks.md"));
+    assert_eq!(findings[0]["line"].as_u64(), Some(3));
+    assert!(findings[0]["message"].as_str().is_some());
+}
+
+#[test]
+fn read_command_exit_status_matches_with_and_without_json() {
+    let (tree, _) = copy_fixture("basic", "basic", "contract-exit-parity-success");
+    for command in ["tasks", "next", "status", "validate"] {
+        let human = tree.run(&[command]);
+        let json = tree.run(&["--json", command]);
+        assert_eq!(human.code(), Some(0), "{command}: {}", human.describe());
+        assert_eq!(json.code(), Some(0), "{command}: {}", json.describe());
+        assert!(human.stderr().is_empty(), "{command}");
+        assert!(json.stderr().is_empty(), "{command}");
+        assert!(!human.stdout().is_empty(), "{command}");
+        single_json_document(&json.stdout_text());
+    }
+
+    let empty = SpecTree::new("demo", "contract-exit-parity-failure");
+    for command in ["tasks", "next", "status"] {
+        let human = empty.run(&[command]);
+        let json = empty.run(&["--json", command]);
+        assert_eq!(human.code(), Some(1), "{command}: {}", human.describe());
+        assert_eq!(json.code(), Some(1), "{command}: {}", json.describe());
+        assert!(human.stdout().is_empty(), "{command}");
+        assert!(json.stdout().is_empty(), "{command}");
+        assert!(!human.stderr().is_empty(), "{command}");
+        assert!(!json.stderr().is_empty(), "{command}");
+    }
+    let human = empty.run(&["validate"]);
+    let json = empty.run(&["--json", "validate"]);
+    assert_eq!(human.code(), Some(1));
+    assert_eq!(json.code(), Some(1));
+    assert!(!human.stdout().is_empty());
+    assert!(!json.stdout().is_empty());
+    assert!(human.stderr().is_empty());
+    assert!(json.stderr().is_empty());
+}
+
+#[test]
+fn read_commands_leave_trees_byte_identical_in_both_formats() {
+    let reads: [&[&str]; 8] = [
+        &["tasks"],
+        &["next"],
+        &["status"],
+        &["validate"],
+        &["--json", "tasks"],
+        &["--json", "next"],
+        &["--json", "status"],
+        &["--json", "validate"],
+    ];
+
+    for (name, relative) in [
+        ("basic", "basic"),
+        ("unnumbered", "malformed/unnumbered"),
+        ("depth", "malformed/depth"),
+    ] {
+        let (tree, _) = copy_fixture(name, relative, &format!("contract-read-only-{name}"));
+        let before = tree.tree_hash();
+        for args in reads {
+            let output = tree.run(args);
+            assert!(
+                matches!(output.code(), Some(0) | Some(1)),
+                "{relative} {args:?}: {}",
+                output.describe()
+            );
+            assert!(output.stderr().is_empty(), "{relative} {args:?}");
+            assert_eq!(tree.tree_hash(), before, "{relative} after {args:?}");
+        }
+    }
+
+    let empty = SpecTree::new("demo", "contract-read-only-diagnostics");
+    let before = empty.tree_hash();
+    for args in [
+        &["tasks"][..],
+        &["next"][..],
+        &["status"][..],
+        &["--json", "tasks"][..],
+        &["--json", "next"][..],
+        &["--json", "status"][..],
+    ] {
+        let output = empty.run(args);
+        assert_eq!(output.code(), Some(1), "{args:?}: {}", output.describe());
+        assert!(
+            output.stdout().is_empty(),
+            "{args:?}: {}",
+            output.describe()
+        );
+        assert!(
+            !output.stderr().is_empty(),
+            "{args:?}: {}",
+            output.describe()
+        );
+        assert_eq!(empty.tree_hash(), before, "after {args:?}");
+    }
+    for args in [&["validate"][..], &["--json", "validate"][..]] {
+        let output = empty.run(args);
+        assert_eq!(output.code(), Some(1), "{args:?}: {}", output.describe());
+        assert!(
+            !output.stdout().is_empty(),
+            "{args:?}: {}",
+            output.describe()
+        );
+        assert!(
+            output.stderr().is_empty(),
+            "{args:?}: {}",
+            output.describe()
+        );
+        assert_eq!(empty.tree_hash(), before, "after {args:?}");
     }
 }
