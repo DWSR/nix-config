@@ -1,12 +1,82 @@
+# Runs one selected Fly app deployment synchronously: create private runtime
+# registry credentials, publish the app's derivation-backed images, then apply
+# app settings and full Machine configurations with the resolved images. The
+# publisher and reconciler receive the same selected specification, and either
+# failure propagates its nonzero status instead of reporting success.
 {
   pkgs,
   publisher,
+  reconciler,
 }:
+let
+  python = pkgs.python3;
+
+  redactor = pkgs.writeText "fly-app-deploy-redact.py" ''
+    import base64
+    import os
+    from pathlib import Path
+    import sys
+
+    token = os.environ["FLY_API_TOKEN"].encode("utf-8")
+    secrets = (
+        token,
+        base64.b64encode(token),
+        base64.b64encode(b"x:" + token),
+    )
+    for name, destination in ((sys.argv[1], sys.stdout.buffer), (sys.argv[2], sys.stderr.buffer)):
+        path = Path(name)
+        output = path.read_bytes() if path.exists() else b""
+        for secret in secrets:
+            if secret:
+                output = output.replace(secret, b"[REDACTED]")
+        destination.write(output)
+  '';
+
+  validator = pkgs.writeText "fly-app-deploy-validate.py" ''
+    import json
+    import sys
+
+    def load(path, label):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                document = json.load(handle)
+        except (OSError, ValueError) as error:
+            print(
+                "fly-app-deploy: could not read the {}: {}".format(label, error),
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if not isinstance(document, dict):
+            print(
+                "fly-app-deploy: the {} must be a JSON object".format(label),
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        return document
+
+    spec = load(sys.argv[1], "app specification")
+    payload = load(sys.argv[2], "resolved image payload")
+    name = spec.get("name")
+    if not isinstance(name, str) or not name:
+        print(
+            "fly-app-deploy: the app specification must declare a Fly app name",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    if payload.get("app") != name:
+        print(
+            "fly-app-deploy: the resolved image payload targets app '{}' but the "
+            "selected specification is app '{}'".format(payload.get("app"), name),
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+  '';
+in
 pkgs.writeShellApplication {
   name = "fly-app-deploy";
   runtimeInputs = [
     pkgs.coreutils
-    pkgs.python3
+    python
   ];
   text = ''
     set -euo pipefail
@@ -32,7 +102,7 @@ pkgs.writeShellApplication {
     fi
 
     umask 077
-    runtime_dir=$(mktemp -d)
+    runtime_dir=$(mktemp -d "''${TMPDIR:-/tmp}/fly-app-deploy.XXXXXX")
     trap 'rm -rf -- "$runtime_dir"' EXIT
     trap 'exit 129' HUP
     trap 'exit 130' INT
@@ -42,7 +112,7 @@ pkgs.writeShellApplication {
     export DOCKER_CONFIG="$runtime_dir/docker"
     mkdir -m 700 "$HOME" "$DOCKER_CONFIG"
 
-    if ! printf '%s' "$FLY_API_TOKEN" | ${pkgs.python3}/bin/python3 -c '
+    if ! printf '%s' "$FLY_API_TOKEN" | ${python}/bin/python3 -c '
     import base64
     import json
     import os
@@ -66,33 +136,45 @@ pkgs.writeShellApplication {
     fi
 
     export FLY_API_TOKEN
+
+    publish_stdout="$runtime_dir/publish.stdout"
+    publish_stderr="$runtime_dir/publish.stderr"
+    reconcile_stdout="$runtime_dir/reconcile.stdout"
+    reconcile_stderr="$runtime_dir/reconcile.stderr"
+
     publisher_status=0
-    if ${publisher}/bin/fly-app-publish --spec "$spec_path" >"$runtime_dir/stdout" 2>"$runtime_dir/stderr"; then
+    if ${publisher}/bin/fly-app-publish --spec "$spec_path" >"$publish_stdout" 2>"$publish_stderr"; then
       publisher_status=0
     else
       publisher_status=$?
     fi
 
-    ${pkgs.python3}/bin/python3 - "$runtime_dir/stdout" "$runtime_dir/stderr" <<'PY'
-    import base64
-    import os
-    from pathlib import Path
-    import sys
+    if [ "$publisher_status" -ne 0 ]; then
+      ${python}/bin/python3 ${redactor} "$publish_stdout" "$publish_stderr"
+      exit "$publisher_status"
+    fi
 
-    token = os.environ["FLY_API_TOKEN"].encode("utf-8")
-    secrets = (
-        token,
-        base64.b64encode(token),
-        base64.b64encode(b"x:" + token),
-    )
-    for name, destination in ((sys.argv[1], sys.stdout.buffer), (sys.argv[2], sys.stderr.buffer)):
-        output = Path(name).read_bytes()
-        for secret in secrets:
-            if secret:
-                output = output.replace(secret, b"[REDACTED]")
-        destination.write(output)
-    PY
+    if [ ! -s "$publish_stdout" ]; then
+      ${python}/bin/python3 ${redactor} "$publish_stdout" "$publish_stderr"
+      echo "fly-app-deploy: publisher produced no resolved image payload" >&2
+      exit 1
+    fi
 
-    exit "$publisher_status"
+    if ! ${python}/bin/python3 ${validator} "$spec_path" "$publish_stdout"; then
+      ${python}/bin/python3 ${redactor} "$publish_stdout" "$publish_stderr"
+      exit 1
+    fi
+
+    ${python}/bin/python3 ${redactor} "$publish_stdout" "$publish_stderr"
+
+    reconciler_status=0
+    if ${reconciler}/bin/fly-app-reconcile --spec "$spec_path" --images "$publish_stdout" >"$reconcile_stdout" 2>"$reconcile_stderr"; then
+      reconciler_status=0
+    else
+      reconciler_status=$?
+    fi
+
+    ${python}/bin/python3 ${redactor} "$reconcile_stdout" "$reconcile_stderr"
+    exit "$reconciler_status"
   '';
 }
