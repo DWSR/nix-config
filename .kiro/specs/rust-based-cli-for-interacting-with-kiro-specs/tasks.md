@@ -214,7 +214,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 1.2_
   - _Depends: 9.3_
 
-- [ ] 10. Document the CLI, JSON schema, finding codes, and `[!]` encoding
+- [x] 10. Document the CLI, JSON schema, finding codes, and `[!]` encoding
   - Write `docs/kiro-spec.md` covering the six subcommands, JSON schema version 1 field sets for `next`, `tasks`, `status`, and `validate`, the finding-code table, exit codes 0/1/2, and the `[!]` marker with its `- _Blocked: <reason>_` bullet.
   - Generate every example from a fixture spec so the empty-task-list and no-incomplete-task cases match real output, and document the corpus and offline test commands.
   - Confirm each documented example matches the packaged binary's output and that the doc names every finding code `validate` can emit.
