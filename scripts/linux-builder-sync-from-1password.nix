@@ -15,16 +15,16 @@
 #       - builder-tailscale-oauth-secret: the Tailscale OAuth client secret
 #         used by configurations/linux-builder/default.nix.
 #
-#   * secrets/linux-builder-client.personal.yaml — the personal Mac's
-#     dedicated SSH client key for the Linux builder, encrypted only to
-#     `&host_personal` so neither the builder nor Fabro can decrypt it.
+#   * secrets/linux-builder-client.personal.yaml — the personal Mac's SSH
+#     client key for the Linux builder (reused from the mac builder's client
+#     key), encrypted only to `&host_personal`.
 #
 # Source material (design's `## Operator Provisioning` section):
 #   builder age key          op://Private/sops-age-key-linux-builder/notesPlain
 #   personal age key         op://Private/sops-age-key-personal/notesPlain
 #   authorized public keys   op://Infrastructure/mac-builder authorized keys/notesPlain
 #   Tailscale OAuth secret   op://Infrastructure/mac-builder Tailscale OAuth/Client Secret
-#   personal client key      op://Infrastructure/Brandons Mac Linux nix remote builder key/private key
+#   personal client key      op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key (reused from mac builder)
 #
 # Recipient handling: `.sops.yaml` intentionally carries an empty recipient
 # list for the builder store because the real `host_linux_builder` public
@@ -126,7 +126,7 @@ pkgs.writeShellApplication {
     PERSONAL_AGE_KEY_URI="op://Private/sops-age-key-personal/notesPlain"
     AUTHORIZED_KEYS_URI="op://Infrastructure/mac-builder authorized keys/notesPlain"
     TAILSCALE_SECRET_URI="op://Infrastructure/mac-builder Tailscale OAuth/Client Secret"
-    PERSONAL_CLIENT_KEY_URI="op://Infrastructure/Brandons Mac Linux nix remote builder key/private key?ssh-format=openssh"
+    PERSONAL_CLIENT_KEY_URI="op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key?ssh-format=openssh"
 
     tmpdir="$(mktemp -d "$REPO_ROOT/secrets/.linux-builder-sync-XXXXXX")"
     chmod 0700 "$tmpdir"

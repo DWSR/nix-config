@@ -349,7 +349,7 @@ section is its operational runbook.
 | Builder OAuth source | `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret` |
 | Guest runtime paths | `/run/secrets/builder-authorized-keys` (mode `0400`, root) → `/home/builder/.ssh/authorized_keys`; `/run/secrets/builder-tailscale-oauth-secret` (mode `0400`, root) |
 | Personal client store | `secrets/linux-builder-client.personal.yaml` (key `linux-builder-client-key`) |
-| Personal client source | `op://Infrastructure/Brandons Mac Linux nix remote builder key/private key` (read with `?ssh-format=openssh`) |
+| Personal client source | `op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key` (reused from the mac builder client key, read with `?ssh-format=openssh`) |
 | Personal runtime path | `/run/secrets/linux-builder-client-key` (mode `0400`, root) |
 | Fabro client store | `secrets/fabro.fabro.yaml` (key `linux-builder-client-key`) |
 | Fabro client source | `op://Infrastructure/Fabro Linux nix remote builder key/private key` |
@@ -417,7 +417,9 @@ previous step installed.
    directory. Never copy a private half into the checkout, a commit, a shell
    history, or a log. Append each `.pub` line to
    `op://Infrastructure/mac-builder authorized keys/notesPlain` — one public
-   key per line, preserving any existing authorized keys.
+   key per line, preserving any existing authorized keys. (The personal
+   client key is now reused from the mac builder client key, so its public
+   half is already covered by the mac builder's authorized keys.)
 
 3. **Create the builder's Tailscale OAuth client.** In the Tailscale admin
    console, create a    client that is separate from the Fabro guest's OAuth
