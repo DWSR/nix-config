@@ -179,7 +179,7 @@ case "$1" in
       "op://Private/sops-age-key-personal/notesPlain") cat "$MOCK_PERSONAL_AGE_KEY_FILE" ;;
       "op://Infrastructure/mac-builder authorized keys/notesPlain") cat "$MOCK_AUTHORIZED_KEYS_FILE" ;;
       "op://Infrastructure/mac-builder Tailscale OAuth/Client Secret") printf '%s' "$MOCK_TAILSCALE_SECRET" ;;
-      "op://Infrastructure/Brandons Mac Linux nix remote builder key/private key") cat "$MOCK_PERSONAL_CLIENT_KEY_FILE" ;;
+      "op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key") cat "$MOCK_PERSONAL_CLIENT_KEY_FILE" ;;
       *) echo "mock op: unexpected URI $uri" >&2; exit 1 ;;
     esac
     ;;
