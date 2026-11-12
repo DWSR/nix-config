@@ -158,7 +158,7 @@ in
       until ${config.services.tailscale.package}/bin/tailscale up \
         --auth-key="$(cat "$credential_file")?ephemeral=false&preauthorized=true" \
         --hostname=linux-builder \
-        --advertise-tags=tag:linux-nix-remote-builder \
+        --advertise-tags=tag:nix-remote-builder \
         --accept-dns=false; do
         echo "linux-builder: Tailscale enrollment failed; retrying in 30 seconds" >&2
         ${pkgs.coreutils}/bin/sleep 30

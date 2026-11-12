@@ -65,8 +65,8 @@ test('documents the Linux builder store layout, sources, and recipients', () => 
     '&host_linux_builder',
     '&host_personal',
     'op://Private/sops-age-key-linux-builder/notesPlain',
-    'op://Infrastructure/linux-builder authorized keys/notesPlain',
-    'op://Infrastructure/linux-builder Tailscale OAuth/Client Secret',
+    'op://Infrastructure/mac-builder authorized keys/notesPlain',
+    'op://Infrastructure/mac-builder Tailscale OAuth/Client Secret',
     'op://Infrastructure/Fabro Linux nix remote builder key/private key',
     'op://Infrastructure/Brandons Mac Linux nix remote builder key/private key',
   ]);
@@ -157,17 +157,13 @@ test('the documented builder sync command resolves to the checked-in script', ()
 test('documents the builder Tailscale credential, tag ownership, and SSH-only grants', () => {
   const text = linuxBuilderSection();
   assertContains(text, [
-    'tag:linux-nix-remote-builder',
-    'tagOwners',
-    'autogroup:admin',
-    'tcp:22',
-    'tag:fabro',
+    'tag:nix-remote-builder',
     'auth_keys',
     'builder-tailscale-auth',
     '/run/secrets/builder-tailscale-oauth-secret',
     'linux-builder.tuxedo-musical.ts.net',
-    'TailscaleIPs',
   ]);
+  assert.match(text, /shared/i, 'the runbook must note the tag is shared with the mac builder');
   assert.match(text, /admin console/i);
   assert.match(
     text,

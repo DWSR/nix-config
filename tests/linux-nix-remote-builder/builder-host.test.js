@@ -196,7 +196,7 @@ test('SOPS activation fails clearly when the encrypted store or age key is missi
     const scriptPath = path.join(tempRoot, 'sops-pre-start');
     fs.writeFileSync(scriptPath, preStart, { mode: 0o700 });
 
-    const missingStore = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    const missingStore = childProcess.spawnSync('/bin/bash', [scriptPath], { encoding: 'utf8' });
     assert.notEqual(missingStore.status, 0);
     assert.match(missingStore.stderr, /required encrypted SOPS store is missing/);
 
@@ -211,18 +211,18 @@ test('SOPS activation fails clearly when the encrypted store or age key is missi
       .replaceAll(configuredStorePath, storePath)
       .replaceAll('/var/lib/sops-nix/key.txt', keyPath);
     fs.writeFileSync(scriptPath, provisionedScript, { mode: 0o700 });
-    const emptyStore = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    const emptyStore = childProcess.spawnSync('/bin/bash', [scriptPath], { encoding: 'utf8' });
     assert.notEqual(emptyStore.status, 0);
     assert.match(emptyStore.stderr, /required encrypted SOPS store is missing or empty/);
 
     fs.writeFileSync(storePath, 'fixture encrypted store');
     fs.writeFileSync(keyPath, 'fixture age key');
 
-    const provisioned = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    const provisioned = childProcess.spawnSync('/bin/bash', [scriptPath], { encoding: 'utf8' });
     assert.equal(provisioned.status, 0, provisioned.stderr);
 
     fs.rmSync(keyPath);
-    const missingKey = childProcess.spawnSync(scriptPath, [], { encoding: 'utf8' });
+    const missingKey = childProcess.spawnSync('/bin/bash', [scriptPath], { encoding: 'utf8' });
     assert.notEqual(missingKey.status, 0);
     assert.match(missingKey.stderr, /required SOPS age key is missing/);
   } finally {
@@ -245,7 +245,7 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
   assert.match(cfg.tailscaleAuthService.script, /tailscale up/);
   assert.match(cfg.tailscaleAuthService.script, /--auth-key=/);
   assert.match(cfg.tailscaleAuthService.script, /\?ephemeral=false&preauthorized=true/);
-  assert.match(cfg.tailscaleAuthService.script, /--advertise-tags=tag:linux-nix-remote-builder/);
+  assert.match(cfg.tailscaleAuthService.script, /--advertise-tags=tag:nix-remote-builder/);
   assert.match(cfg.tailscaleAuthService.script, /--hostname=linux-builder/);
   assert.doesNotMatch(cfg.tailscaleAuthService.script, /builder-tailscale-oauth-client-id/);
 
@@ -280,7 +280,7 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
     const args = fs.readFileSync(capturePath, 'utf8').trim().split('\n');
     assert.ok(args.includes('--auth-key=fixture-oauth-client-secret?ephemeral=false&preauthorized=true'));
     assert.ok(args.includes('--hostname=linux-builder'));
-    assert.ok(args.includes('--advertise-tags=tag:linux-nix-remote-builder'));
+    assert.ok(args.includes('--advertise-tags=tag:nix-remote-builder'));
     assert.ok(args.includes('--accept-dns=false'));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });

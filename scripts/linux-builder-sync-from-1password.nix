@@ -22,8 +22,8 @@
 # Source material (design's `## Operator Provisioning` section):
 #   builder age key          op://Private/sops-age-key-linux-builder/notesPlain
 #   personal age key         op://Private/sops-age-key-personal/notesPlain
-#   authorized public keys   op://Infrastructure/linux-builder authorized keys/notesPlain
-#   Tailscale OAuth secret   op://Infrastructure/linux-builder Tailscale OAuth/Client Secret
+#   authorized public keys   op://Infrastructure/mac-builder authorized keys/notesPlain
+#   Tailscale OAuth secret   op://Infrastructure/mac-builder Tailscale OAuth/Client Secret
 #   personal client key      op://Infrastructure/Brandons Mac Linux nix remote builder key/private key
 #
 # Recipient handling: `.sops.yaml` intentionally carries an empty recipient
@@ -124,8 +124,8 @@ pkgs.writeShellApplication {
 
     BUILDER_AGE_KEY_URI="op://Private/sops-age-key-linux-builder/notesPlain"
     PERSONAL_AGE_KEY_URI="op://Private/sops-age-key-personal/notesPlain"
-    AUTHORIZED_KEYS_URI="op://Infrastructure/linux-builder authorized keys/notesPlain"
-    TAILSCALE_SECRET_URI="op://Infrastructure/linux-builder Tailscale OAuth/Client Secret"
+    AUTHORIZED_KEYS_URI="op://Infrastructure/mac-builder authorized keys/notesPlain"
+    TAILSCALE_SECRET_URI="op://Infrastructure/mac-builder Tailscale OAuth/Client Secret"
     PERSONAL_CLIENT_KEY_URI="op://Infrastructure/Brandons Mac Linux nix remote builder key/private key?ssh-format=openssh"
 
     tmpdir="$(mktemp -d "$REPO_ROOT/secrets/.linux-builder-sync-XXXXXX")"
