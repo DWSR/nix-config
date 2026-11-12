@@ -165,7 +165,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Assert `validate` exits 0 on warnings or no findings and 1 on errors in both formats.
   - _Requirements: 1.5, 1.6, 2.6, 2.7, 9.1, 9.2, 9.3, 9.10, 10.5, 11.4, 11.8_
   - _Boundary: read-command contract tests (`scripts/kiro-spec/tests/cli.rs`)_
-- [ ] 8.4 (P) Mutation contract tests
+- [x] 8.4 (P) Mutation contract tests
   - Add `tests/mutations.rs` proving `complete` and `block` preserve description, identifier, optional marker, metadata bullets, indentation, line endings, and every untouched byte.
   - Cover pending-to-completed, blocked-to-completed with reason removal, idempotent completion, block insertion and replacement, same-reason no-op, completed-to-blocked rejection, unknown and duplicate IDs, CRLF and missing-final-newline fixtures, and a no-write failure path.
   - Follow each mutation with `tasks`, `next`, and `status` assertions on the new state.
