@@ -189,7 +189,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Confirm the rendered personal host `home.packages` contains the package path and no other module behavior changes.
   - _Requirements: 1.1_
   - _Boundary: common Home Manager module (`home-manager/common/kiro-spec.nix`, `home-manager/common/default.nix`)_
-- [ ] 9.3 (P) Put the binary on the sandbox image command path
+- [x] 9.3 (P) Put the binary on the sandbox image command path
   - Add `pkgs.kiro-spec` to the default `contents` list in `configurations/fabro-vm/sandbox-image.nix`.
   - Extend the `contents` description and `defaultText` to state that `kiro-spec` must stay on the image's `/bin` path, mirroring the existing `PATH=/bin` invariant.
   - Confirm the evaluated image root links `bin/kiro-spec` alongside the existing commands.
