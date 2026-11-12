@@ -345,8 +345,8 @@ section is its operational runbook.
 | Builder SOPS keys | `builder-authorized-keys`, `builder-tailscale-oauth-secret` |
 | Builder recipient | `&host_linux_builder` (operator-enrolled; see below) |
 | Builder age key | `op://Private/sops-age-key-linux-builder/notesPlain` |
-| Builder authorized keys source | `op://Infrastructure/linux-builder authorized keys/notesPlain` (one public key per line) |
-| Builder OAuth source | `op://Infrastructure/linux-builder Tailscale OAuth/Client Secret` |
+| Builder authorized keys source | `op://Infrastructure/mac-builder authorized keys/notesPlain` (one public key per line) |
+| Builder OAuth source | `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret` |
 | Guest runtime paths | `/run/secrets/builder-authorized-keys` (mode `0400`, root) → `/home/builder/.ssh/authorized_keys`; `/run/secrets/builder-tailscale-oauth-secret` (mode `0400`, root) |
 | Personal client store | `secrets/linux-builder-client.personal.yaml` (key `linux-builder-client-key`) |
 | Personal client source | `op://Infrastructure/Brandons Mac Linux nix remote builder key/private key` (read with `?ssh-format=openssh`) |
@@ -416,15 +416,16 @@ previous step installed.
    `.../Brandons Mac Linux nix remote builder key`), then delete the temp
    directory. Never copy a private half into the checkout, a commit, a shell
    history, or a log. Append each `.pub` line to
-   `op://Infrastructure/linux-builder authorized keys/notesPlain` — one public
+   `op://Infrastructure/mac-builder authorized keys/notesPlain` — one public
    key per line, preserving any existing authorized keys.
 
 3. **Create the builder's Tailscale OAuth client.** In the Tailscale admin
-   console, create a client that is separate from the Fabro guest's OAuth
+   console, create a    client that is separate from the Fabro guest's OAuth
    client, grant it the `auth_keys` scope, and authorize it to apply
-   `tag:linux-nix-remote-builder`. Store only its client secret at
-   `op://Infrastructure/linux-builder Tailscale OAuth/Client Secret`; the
+   `tag:nix-remote-builder`. Store only its client secret at
+   `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret`; the
    secret value carries the client ID, so no separate field is mirrored.
+   (The linux builder now shares the mac builder's OAuth client and tag.)
 
 4. **Sync the stores from 1Password.** This creates the builder and personal
    client stores from the values above, so every later activation can decrypt
@@ -543,18 +544,18 @@ cannot be decrypted.
 ### Builder Tailscale credential and tailnet grants
 
 The builder joins the tailnet as the stable node `linux-builder` with
-MagicDNS name `linux-builder.tuxedo-musical.ts.net` and the dedicated tag
-`tag:linux-nix-remote-builder`. Enrollment uses the builder-specific OAuth
-client from the table, separate from the Fabro guest's client:
+MagicDNS name `linux-builder.tuxedo-musical.ts.net` and shares the mac
+builder's tag `tag:nix-remote-builder`. Enrollment uses the mac builder's
+OAuth client (reused, not a separate builder-specific client):
 
 - The client must have the `auth_keys` scope and be authorized to apply
-  `tag:linux-nix-remote-builder`.
+  `tag:nix-remote-builder`.
 - Only its client secret is mirrored, as `builder-tailscale-oauth-secret` in
   the builder store.
 - On the guest, `builder-tailscale-auth.service` waits for
   `sops-install-secrets.service` and `tailscaled.service`, then reads
   `/run/secrets/builder-tailscale-oauth-secret` and runs `tailscale up
-  --hostname=linux-builder --advertise-tags=tag:linux-nix-remote-builder
+  --hostname=linux-builder --advertise-tags=tag:nix-remote-builder
   --accept-dns=false` with the secret as the auth key. The node is
   persistent, not ephemeral, so its identity survives guest restarts.
 - Rotation affects future enrollments only. An already-registered guest keeps
@@ -565,28 +566,9 @@ client from the table, separate from the Fabro guest's client:
 Tag ownership and the SSH-only grants are **external tailnet policy**: they
 live in the Tailscale admin console (or the operator's policy-as-code source),
 not in this repository, and this runbook does not create, edit, or commit
-them. Mirror the macOS builder's model with the Linux builder's own tag and
-both client identities:
-
-```json
-{
-  "hosts": {
-    "brandons-macbook-pro": "100.x.y.z"
-  },
-  "tagOwners": {
-    "tag:linux-nix-remote-builder": ["autogroup:admin"]
-  },
-  "grants": [
-    {
-      "src": ["tag:fabro", "brandons-macbook-pro"],
-      "dst": ["tag:linux-nix-remote-builder"],
-      "ip": ["tcp:22"]
-    }
-  ]
-}
-```
-
-Merge these entries into the existing policy and preserve every other entry.
+them. Because the linux builder now shares the mac builder's
+`tag:nix-remote-builder` tag, no new `tagOwners` or grant entries are
+required — the existing mac builder policy already covers both builders.
 `tag:fabro` is the Fabro guest's existing tag. A host alias is referenced by
 its bare name in `src`. The personal Mac is untagged, so it is selected
 through such an alias: read its tailnet IPv4 address on the Mac and use it in

@@ -177,8 +177,8 @@ case "$1" in
     case "$base" in
       "op://Private/sops-age-key-linux-builder/notesPlain") cat "$MOCK_BUILDER_AGE_KEY_FILE" ;;
       "op://Private/sops-age-key-personal/notesPlain") cat "$MOCK_PERSONAL_AGE_KEY_FILE" ;;
-      "op://Infrastructure/linux-builder authorized keys/notesPlain") cat "$MOCK_AUTHORIZED_KEYS_FILE" ;;
-      "op://Infrastructure/linux-builder Tailscale OAuth/Client Secret") printf '%s' "$MOCK_TAILSCALE_SECRET" ;;
+      "op://Infrastructure/mac-builder authorized keys/notesPlain") cat "$MOCK_AUTHORIZED_KEYS_FILE" ;;
+      "op://Infrastructure/mac-builder Tailscale OAuth/Client Secret") printf '%s' "$MOCK_TAILSCALE_SECRET" ;;
       "op://Infrastructure/Brandons Mac Linux nix remote builder key/private key") cat "$MOCK_PERSONAL_CLIENT_KEY_FILE" ;;
       *) echo "mock op: unexpected URI $uri" >&2; exit 1 ;;
     esac
@@ -508,7 +508,7 @@ test('builder sync fails closed and leaves the prior stores untouched on bad inp
     encoding: 'utf8',
     env: syncEnvironment({
       ...baseEnvironment,
-      extra: { MOCK_FAIL_URI: 'op://Infrastructure/linux-builder Tailscale OAuth/Client Secret' },
+      extra: { MOCK_FAIL_URI: 'op://Infrastructure/mac-builder Tailscale OAuth/Client Secret' },
     }),
     timeout: 120_000,
   });
