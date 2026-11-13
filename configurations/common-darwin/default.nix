@@ -97,7 +97,7 @@ let
   # known_hosts file (there is no entry, so the connection fails closed) while
   # the rest of the configuration stays evaluable.
   linuxBuilderRecord =
-    "ssh-ng://builder@linux-builder.tuxedo-musical.ts.net aarch64-linux ${config.sops.secrets.linux-builder-client-key.path} 4 1 - -"
+    "ssh-ng://builder@linux-builder.tuxedo-musical.ts.net aarch64-linux ${config.sops.secrets.mac-builder-ssh-private-key.path} 4 1 - -"
     + lib.optionalString linuxBuilderHostKeyPresent " ${base64Encode linuxBuilderHostKeyText}";
 
   linuxBuilderHostKeyPinWarning =

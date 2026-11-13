@@ -64,7 +64,7 @@ in
     };
     linuxClientKeyPath = lib.mkOption {
       type = lib.types.str;
-      default = config.sops.secrets.linux-builder-client-key.path;
+      default = config.sops.secrets.build-client-key.path;
     };
     linuxHostKeyPath = lib.mkOption {
       type = lib.types.str;
