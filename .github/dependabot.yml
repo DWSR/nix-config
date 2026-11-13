@@ -40,6 +40,7 @@ updates:
       - /tests/fabro-service
       - /tests/git-clone-isolation
       - /tests/lima-vm
+      - /tests/litellm-routing
       - /tests/litellm-service
       - /tests/mac-nix-remote-builder
       - /tests/omlx-service
