@@ -2126,7 +2126,7 @@
                 cfg:
                 let
                   builder = cfg.home-manager.users.brandonmcnama.virtualisation.limaLinuxBuilder;
-                  linuxSecret = cfg.sops.secrets."linux-builder-client-key";
+                  linuxSecret = cfg.sops.secrets."mac-builder-ssh-private-key";
                   darwinSecret = cfg.sops.secrets."mac-builder-ssh-private-key";
                 in
                 {
@@ -2149,7 +2149,7 @@
                 cfg:
                 let
                   dispatch = cfg.fabro.darwinBuilder;
-                  linuxSecret = cfg.sops.secrets."linux-builder-client-key";
+                  linuxSecret = cfg.sops.secrets."build-client-key";
                 in
                 {
                   inherit (dispatch)
