@@ -137,7 +137,7 @@ set before the guest rebuild.
   - _Boundary: tests/litellm-affinity-bridge/_
   - _Depends: 2.1_
 
-- [ ] 5.5 Register the `litellm-routing` and `litellm-affinity-bridge` flake checks
+- [x] 5.5 Register the `litellm-routing` and `litellm-affinity-bridge` flake checks
   - Add `checks.<system>.litellm-routing` as a `runCommand` with `nativeBuildInputs = [ pkgs.nix pkgs.nodejs ]` that copies the source, exports `HOME` and `NIX_CONFIG`, and runs `node --test tests/litellm-routing/`, mirroring the `litellm-service` check.
   - Add `checks.<system>.litellm-affinity-bridge` as a `runCommand` with `pkgs.python3` that copies the source, exports `PYTHONPATH=configurations/fabro-vm`, and runs the unittest suite.
   - Observable: both checks build green, and each fails when a deliberate assertion or namespacing expectation is inverted.
