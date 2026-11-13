@@ -94,7 +94,7 @@ set before the guest rebuild.
   - _Boundary: OpenCode Model Surface_
   - _Depends: 1.4_
 
-- [ ] 4.2 (P) Point Fabro at the catalog model records
+- [x] 4.2 (P) Point Fabro at the catalog model records
   - Set `llm.providers.litellm.models = catalog.fabro.models` and derive `llm.providers.litellm.default_model`, `cli.exec.model.name`, and `run.model.name` from `catalog.fabro.defaultModel`.
   - Delete the `go-gpt-6-luna` record and re-key `go-beam-free`/`go-omen-alpha` to `beam-free`/`omen-alpha`, and keep `default_headers."x-opencode-session" = "fabro-litellm"` with a comment that the upstream requirement is not the affinity identity and that Fabro's `prompt_cache_key` is.
   - Observable: the generated `settings.toml` has 10 model records whose `api_model` equals their key, each with `caching` and `cache_routing` true and limits matching the catalog, and no `go-` key or provider-prefixed `api_model` remains.

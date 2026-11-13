@@ -38,6 +38,8 @@
   ...
 }:
 let
+  inherit (import ./litellm-catalog.nix { inherit lib; }) catalog;
+
   tomlFormat = pkgs.formats.toml { };
 
   fabroStateDir = "/var/lib/fabro/home";
@@ -47,213 +49,32 @@ let
     llm.providers.litellm = {
       enabled = true;
       base_url = "http://127.0.0.1:4000/v1";
-      # DeepSeek V4.1 Flash is the primary model with max thinking pinned by
-      # the litellm deployment below; workflows fall back to the
-      # ChatGPT-backed GPT-6 Luna (xhigh) when the OpenCode Go cell is
-      # saturated.
-      default_model = "deepseek-v4.1-flash";
+      # DeepSeek V4.1 Flash is the catalog's default model. Workflows that
+      # need another logical model select it by its provider-free catalog
+      # id; there is no cross-model fallback, so a rate-limited model fails
+      # over only inside its own group.
+      default_model = catalog.fabro.defaultModel;
 
       # OpenCode's Go gateway rejects requests without a stable
       # x-opencode-session id; fabro never sends one itself (its lithos
       # client sends only content-type/authorization/accept/user-agent),
-      # so attach a static id at the provider level. default_headers
-      # interpolate only vault secrets here (env/vars/run context are
-      # rejected or passed through literally on 0.382.0-nightly.0), so a
-      # shared id is the only option: every fabro call lands in one
-      # gateway session bucket, which coarsens prompt-cache routing
-      # affinity but is accepted.
+      # so attach a static id at the provider level. This header satisfies
+      # that upstream requirement; it is NOT the affinity identity. The
+      # affinity identity is the per-conversation `prompt_cache_key` fabro
+      # emits for records whose catalog capabilities set `caching` /
+      # `cache_routing`, which the gateway derives the session id from.
       default_headers."x-opencode-session" = "fabro-litellm";
 
-      models = {
-        "gpt-6-luna" = {
-          display_name = "GPT-6 Luna (ChatGPT, xhigh)";
-          api_model = "chatgpt/gpt-6-luna";
-          limits = {
-            context_tokens = 1050000;
-            max_output_tokens = 128000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-            reasoning_effort = {
-              xhigh = true;
-            };
-          };
-        };
-        "gpt-6-luna-none" = {
-          display_name = "GPT-6 Luna (ChatGPT, no thinking)";
-          api_model = "chatgpt/gpt-6-luna";
-          limits = {
-            context_tokens = 1050000;
-            max_output_tokens = 128000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-            # lithos has no `none` effort (minimal..max), so no-think
-            # stays the unset default: fabro sends no effort and
-            # litellm's deployment default (`reasoning_effort = "none"`)
-            # applies.
-          };
-        };
-        "gpt-6-astra" = {
-          display_name = "GPT-6 Astra (ChatGPT, xhigh)";
-          api_model = "chatgpt/gpt-6-astra";
-          limits = {
-            context_tokens = 1050000;
-            max_output_tokens = 128000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-            reasoning_effort = {
-              xhigh = true;
-            };
-          };
-        };
-        "gpt-6.1-sol" = {
-          display_name = "GPT-6.1 Sol (ChatGPT, xhigh)";
-          api_model = "chatgpt/gpt-6.1-sol";
-          limits = {
-            context_tokens = 1050000;
-            max_output_tokens = 128000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-            reasoning_effort = {
-              xhigh = true;
-            };
-          };
-        };
-        "go-gpt-6-luna" = {
-          display_name = "GPT-6 Luna (OpenCode Go)";
-          api_model = "opencode-go/gpt-6-luna";
-          limits = {
-            context_tokens = 1050000;
-            max_output_tokens = 128000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-            reasoning_effort = {
-              low = true;
-              medium = true;
-              high = true;
-              xhigh = true;
-              max = true;
-            };
-          };
-        };
-        "deepseek-v4.1-flash" = {
-          display_name = "DeepSeek V4.1 Flash (OpenCode Go, max)";
-          api_model = "opencode-go/deepseek-v4.1-flash";
-          # Same parity tier as the wire it shares with glm-5.3-flash, and
-          # the cheap pick for fabro's small utility tasks (run titles and
-          # other metadata calls).
-          small_default = true;
-          # DeepSeek's published V4 ceiling: 1M total context, 384k output.
-          limits = {
-            context_tokens = 1000000;
-            max_output_tokens = 384000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            # The Go wire advertises low/high/max; the litellm deployment
-            # below pins max. Expose only the pinned level so fabro cannot
-            # send a conflicting effort.
-            reasoning = true;
-            reasoning_effort = {
-              max = true;
-            };
-          };
-        };
-        "glm-5.3-flash" = {
-          display_name = "GLM-5.3 Flash (OpenCode Go)";
-          api_model = "opencode-go/glm-5.3-flash";
-          limits = {
-            context_tokens = 1000000;
-            max_output_tokens = 131072;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-            reasoning_effort = {
-              low = true;
-              high = true;
-              max = true;
-            };
-          };
-        };
-        "longcat-2.0" = {
-          display_name = "LongCat 2.0 (OpenCode Go)";
-          api_model = "opencode-go/longcat-2.0";
-          # Same family tier and chat-model window as the previous
-          # longcat-2.5-preview-free serving (which left the Go catalog);
-          # upstream publishes no separate hard output cap.
-          limits = {
-            context_tokens = 1000000;
-            max_output_tokens = 131072;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-          };
-        };
-        "go-beam-free" = {
-          display_name = "Beam Free (OpenCode Go)";
-          api_model = "opencode-go/beam-free";
-          limits = {
-            context_tokens = 1048576;
-            max_output_tokens = 131072;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-          };
-        };
-        "go-omen-alpha" = {
-          display_name = "Omen Alpha (OpenCode Go)";
-          api_model = "opencode-go/omen-alpha";
-          limits = {
-            context_tokens = 500000;
-            max_output_tokens = 128000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-          };
-        };
-        "big-pickle" = {
-          display_name = "Big Pickle (OpenCode Zen)";
-          api_model = "opencode-zen/big-pickle";
-          limits = {
-            context_tokens = 200000;
-            max_output_tokens = 32000;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-          };
-        };
-      };
+      # Model records are generated from ./litellm-catalog.nix: one per
+      # logical model, keyed by provider-free logical id with `api_model`
+      # equal to the key.
+      models = catalog.fabro.models;
     };
 
     cli = {
       exec.model = {
         provider = "litellm";
-        name = "deepseek-v4.1-flash";
+        name = catalog.fabro.defaultModel;
       };
 
       target = {
@@ -264,7 +85,7 @@ let
 
     run = {
       environment.id = "default";
-      model.name = "deepseek-v4.1-flash";
+      model.name = catalog.fabro.defaultModel;
 
       # Push every checkpoint: after each node commits to fabro/run/<id>,
       # publish the branch to origin so checkpoint timeline, fork, and
