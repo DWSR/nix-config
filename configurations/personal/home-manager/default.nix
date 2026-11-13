@@ -184,6 +184,7 @@ in
 
   virtualisation.limaLinuxBuilder = {
     enable = true;
+    package = config.virtualisation.limaMacGuest.package;
     cpus = 4;
     memory = "8GiB";
     disk = "128GiB";
