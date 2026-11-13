@@ -64,7 +64,7 @@ set before the guest rebuild.
   - _Requirements: 1.7, 2.7, 2.8, 3.5, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
   - _Depends: 1.3_
 
-- [ ] 3.2 Add weighted placement and session-affinity router settings
+- [x] 3.2 Add weighted placement and session-affinity router settings
   - Set `routing_strategy = "simple-shuffle"`, `optional_pre_call_checks = [ "session_affinity" ]`, and `deployment_affinity_ttl_seconds = 21600`; leave `deployment_affinity`, `rpm`, and `tpm` unset so placement uses weights plus deployment availability only.
   - Comment that pins are in-process, keyed by logical model and session identity, refreshed on every routed request, and cleared by a gateway restart (which also restarts Fabro).
   - Observable: `nix eval` of the guest's `router_settings` shows exactly the three values with the six-hour TTL, and none of `deployment_affinity`, `rpm`, `tpm`.
