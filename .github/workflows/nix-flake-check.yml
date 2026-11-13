@@ -16,6 +16,10 @@ jobs:
   flake-check:
     name: nix flake check
     runs-on: macos-latest
+    # `actions: write` is required by the cache action's purge feature.
+    permissions:
+      contents: read
+      actions: write
     # The filtered build below still takes most of an hour cold; keep
     # headroom so a slow runner does not cancel a green run.
     timeout-minutes: 120
@@ -30,6 +34,20 @@ jobs:
           extra_nix_config: |
             extra-substituters = https://nix-community.cachix.org
             extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+
+      # Restore and save the Nix store through the GitHub Actions cache.
+      # Only main pushes save and purge; pull requests restore the latest
+      # main cache by key prefix.
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ github.sha }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: ${{ github.event_name == 'push' }}
+          purge: ${{ github.event_name == 'push' }}
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-last-accessed: P7D
+          purge-primary-key: never
 
       - name: Validate Lima config
         run: nix build --no-link '.#checks.aarch64-darwin.lima-vm-config-validate'
