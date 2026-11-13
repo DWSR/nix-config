@@ -11,6 +11,7 @@ workflows:
     '.github/workflows/nix-flake-check.yml':
         - 'actions/checkout@v7.0.1'
         - 'cachix/install-nix-action@v31.11.3'
+        - 'nix-community/cache-nix-action@v7.0.2'
     '.github/workflows/prek.yml':
         - 'actions/checkout@v7.0.1'
         - 'cachix/install-nix-action@v31.11.3'
@@ -43,3 +44,8 @@ dependencies:
         commit: 'sha1-e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e'
         owner_id: 90395851
         repo_id: 242854909
+    'nix-community/cache-nix-action@v7.0.2':
+        ref: 'v7.0.2'
+        commit: 'sha1-7df957e333c1e5da7721f60227dbba6d06080569'
+        owner_id: 33221035
+        repo_id: 660071037
