@@ -144,7 +144,7 @@ set before the guest rebuild.
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.7_
   - _Depends: 5.1, 5.2, 5.3, 5.4_
 
-- [ ] 6. Rewrite the `fabro-vm-guest-eval` litellm assertion
+- [x] 6. Rewrite the `fabro-vm-guest-eval` litellm assertion
   - Replace the Go-free-model assertion in `flake.nix` (currently keyed on `opencode-go/beam-free`, `opencode-go/omen-alpha`, `opencode-go/longcat-2.0`, and the `opencode-go/*`/`opencode-zen/*` forwarding globs) with one that asserts the catalog shape.
   - Assert every `model_list` entry's `model_name` is a provider-free logical id, `model_info.id` is unique and of the form `<logical>@<provider>`, every entry carries an integer weight, and the forwarding list equals the 7 ids whose deployment set includes an OpenCode provider.
   - Keep the surrounding credential, env-template, and restart-unit assertions untouched and make the failure message name the offending model.
