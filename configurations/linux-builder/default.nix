@@ -6,7 +6,7 @@
 }:
 let
   secretStore = ../../secrets/remote-builder.linux-builder.yaml;
-  evaluationOnlyStore = pkgs.writeText "linux-builder-unprovisioned-secrets.yaml" "";
+  evaluationOnlyStore = builtins.toFile "linux-builder-unprovisioned-secrets.yaml" "";
 in
 {
   nixpkgs.hostPlatform = "aarch64-linux";
