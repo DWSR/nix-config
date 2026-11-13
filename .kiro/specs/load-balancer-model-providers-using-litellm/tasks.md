@@ -86,7 +86,7 @@ set before the guest rebuild.
   - _Depends: 2.2, 3.2, 3.3_
 
 - [ ] 4. Client surfaces
-- [ ] 4.1 (P) Point OpenCode at the catalog model map
+- [x] 4.1 (P) Point OpenCode at the catalog model map
   - Set `model = "opencode-litellm/${catalog.openCode.defaultModel}"` and `provider.opencode-litellm.models = catalog.openCode.models`; keep the provider id, `npm`, `baseURL`, and `apiKey` unchanged.
   - Add no `options.headers`, and rewrite the provider comment so forwarding is described as group-scoped and the session header as OpenCode's own.
   - Observable: the generated `opencode.json` lists each of the 10 logical ids once, defaults to `opencode-litellm/deepseek-v4.1-flash`, has no provider `headers` key, and contains no `chatgpt/`, `opencode-go/`, or `opencode-zen/` literal.
