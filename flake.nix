@@ -2641,45 +2641,76 @@
                 assert pkgs.lib.assertMsg
                   (
                     let
+                      inherit
+                        (import ./configurations/fabro-vm/litellm-catalog.nix {
+                          inherit (pkgs) lib;
+                        })
+                        catalog
+                        ;
                       models = vm.services.litellm.settings.model_list;
-                      byName = builtins.listToAttrs (
-                        builtins.map (m: {
-                          name = m.model_name;
+                      forwarding =
+                        vm.services.litellm.settings.litellm_settings.model_group_settings.forward_client_headers_to_llm_api;
+                      ids = map (m: m.model_info.id) models;
+                      badName = pkgs.lib.findFirst (m: builtins.match "[^/]+" m.model_name == null) null models;
+                      badShape = pkgs.lib.findFirst (
+                        m: builtins.match "[^/@]+@[^/@]+" m.model_info.id == null
+                      ) null models;
+                      duplicateId =
+                        (pkgs.lib.foldl'
+                          (
+                            state: id:
+                            if state.found != null then
+                              state
+                            else if builtins.elem id state.seen then
+                              state // { found = id; }
+                            else
+                              state // { seen = state.seen ++ [ id ]; }
+                          )
+                          {
+                            seen = [ ];
+                            found = null;
+                          }
+                          ids
+                        ).found;
+                      badWeight = pkgs.lib.findFirst (m: !(builtins.isInt (m.litellm_params.weight or null))) null models;
+                      expectedById = builtins.listToAttrs (
+                        map (m: {
+                          name = m.model_info.id;
+                          value = m;
+                        }) catalog.modelList
+                      );
+                      actualById = builtins.listToAttrs (
+                        map (m: {
+                          name = m.model_info.id;
                           value = m;
                         }) models
                       );
-                      goFree = [
-                        "opencode-go/beam-free"
-                        "opencode-go/omen-alpha"
-                        "opencode-go/longcat-2.0"
-                      ];
-                      isGoFree =
-                        name:
-                        let
-                          id = pkgs.lib.removePrefix "opencode-go/" name;
-                          m = byName.${name} or null;
-                        in
-                        m != null
-                        && (m.model_info.mode or null) == "chat"
-                        && (m.litellm_params.model or null) == "openai/${id}"
-                        && (m.litellm_params.api_base or null) == "https://opencode.ai/zen/go/v1"
-                        && (m.litellm_params.api_key or null) == "os.environ/OPENCODE_API_KEY"
-                        && !(m.litellm_params ? extra_headers);
-                      forwarding =
-                        vm.services.litellm.settings.litellm_settings.model_group_settings.forward_client_headers_to_llm_api;
+                      missing = builtins.filter (id: !(builtins.hasAttr id actualById)) (builtins.attrNames expectedById);
+                      extra = builtins.filter (id: !(builtins.hasAttr id expectedById)) (builtins.attrNames actualById);
+                      mismatch = pkgs.lib.findFirst (id: actualById.${id} != expectedById.${id}) null (
+                        builtins.attrNames expectedById
+                      );
                     in
-                    builtins.all isGoFree goFree
-                    && builtins.all (name: !(builtins.hasAttr name byName)) [
-                      "opencode-go/deepseek-v4.1-flash-free"
-                      "opencode-go/glm-5.3-flash-free"
-                      "opencode-go/iceman-contributor-free"
-                    ]
-                    && builtins.all (group: builtins.elem group forwarding) [
-                      "opencode-go/*"
-                      "opencode-zen/*"
-                    ]
+                    if badName != null then
+                      throw "fabro-vm: litellm model_list contains a provider-scoped model_name '${badName.model_name}'"
+                    else if badShape != null then
+                      throw "fabro-vm: litellm deployment id '${badShape.model_info.id}' must have the form <logical>@<provider>"
+                    else if duplicateId != null then
+                      throw "fabro-vm: litellm deployment id '${duplicateId}' is not unique"
+                    else if badWeight != null then
+                      throw "fabro-vm: litellm model '${badWeight.model_name}' must carry an integer weight"
+                    else if missing != [ ] then
+                      throw "fabro-vm: litellm model_list is missing '${builtins.head missing}'"
+                    else if extra != [ ] then
+                      throw "fabro-vm: litellm model_list serves unknown deployment '${builtins.head extra}'"
+                    else if mismatch != null then
+                      throw "fabro-vm: litellm deployment '${mismatch}' disagrees with the catalog"
+                    else if forwarding != catalog.forwardClientHeaders then
+                      throw "fabro-vm: litellm forwarding list must equal the catalog projection; got ${builtins.toJSON forwarding}"
+                    else
+                      true
                   )
-                  "fabro-vm: litellm must expose the Go free models through OPENCODE_API_KEY, with dynamic x-opencode-session forwarding for all opencode-* groups; iceman-contributor-free must stay absent.";
+                  "fabro-vm: litellm model_list must serve every catalog deployment under a provider-free model_name with a unique <logical>@<provider> id and an integer weight, and must forward client headers exactly for the catalog's OpenCode-served groups; iceman-contributor-free must stay absent.";
                 assert pkgs.lib.assertMsg
                   (
                     pkgs.lib.hasInfix "GITHUB_TOKEN=" vm.sops.templates."fabro-env".content
