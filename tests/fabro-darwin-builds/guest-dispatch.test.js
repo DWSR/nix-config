@@ -47,11 +47,11 @@ function evaluateGuest() {
           restartUnits = vm.sops.secrets."build-client-key".restartUnits;
         };
         linuxClient = {
-          path = vm.sops.secrets."linux-builder-client-key".path;
-          mode = vm.sops.secrets."linux-builder-client-key".mode;
-          owner = vm.sops.secrets."linux-builder-client-key".owner;
-          group = vm.sops.secrets."linux-builder-client-key".group;
-          restartUnits = vm.sops.secrets."linux-builder-client-key".restartUnits;
+          path = vm.sops.secrets."build-client-key".path;
+          mode = vm.sops.secrets."build-client-key".mode;
+          owner = vm.sops.secrets."build-client-key".owner;
+          group = vm.sops.secrets."build-client-key".group;
+          restartUnits = vm.sops.secrets."build-client-key".restartUnits;
         };
         host = {
           path = vm.sops.secrets."build-host-key".path;
@@ -104,7 +104,6 @@ function evaluateGuestWithDispatchDisabled() {
 function assertBuilderSecretMappings(secrets) {
   assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh');
   assert.equal(secrets['build-host-key'], 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key');
-  assert.equal(secrets['linux-builder-client-key'], 'op://Infrastructure/Fabro Linux nix remote builder key/private key');
 }
 
 function assertSandboxBoundary({ wiringText, sandboxSource, imageSource }) {
@@ -120,13 +119,13 @@ test('guest dispatch options expose the dedicated Linux builder inputs', () => {
   assert.equal(config.dispatchOptions.linuxMachine.hostName, 'linux-builder.tuxedo-musical.ts.net');
   assert.equal(config.dispatchOptions.linuxMachine.system, 'aarch64-linux');
   assert.equal(config.dispatchOptions.linuxMachine.maxJobs, 4);
-  assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
+  assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/build-client-key');
   assert.match(config.dispatchOptions.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
   assert.equal(config.dispatchOptions.machinesFile, '/run/fabro-darwin-builders/machines');
   assert.match(config.dispatchUnit.execStart, /--linux-host-name linux-builder\.tuxedo-musical\.ts\.net/);
   assert.match(config.dispatchUnit.execStart, /--linux-system aarch64-linux/);
   assert.match(config.dispatchUnit.execStart, /--linux-max-jobs 4/);
-  assert.match(config.dispatchUnit.execStart, /--linux-client-key \/run\/secrets\/linux-builder-client-key/);
+  assert.match(config.dispatchUnit.execStart, /--linux-client-key \/run\/secrets\/build-client-key/);
   assert.match(config.dispatchUnit.execStart, /--linux-host-key \/nix\/store\/[^\s]+-source\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub/);
 });
 
@@ -161,7 +160,7 @@ test('fabro-vm enables dispatch and Nix distributed builds from the real configu
   assert.equal(config.dispatchOptions.machine.speedFactor, 2);
   assert.equal(config.dispatchOptions.clientKeyPath, '/run/secrets/build-client-key');
   assert.equal(config.dispatchOptions.hostKeyPath, '/run/secrets/build-host-key');
-  assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
+  assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/build-client-key');
   assert.match(config.dispatchOptions.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
   assert.equal(config.dispatchOptions.machinesFile, '/run/fabro-darwin-builders/machines');
   assert.equal(config.distributedBuilds, true);

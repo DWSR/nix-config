@@ -102,7 +102,7 @@ function renderMachines(renderer, directory, clientKey, hostKey) {
   const hostPath = path.join(directory, 'host-key');
   const linuxClientPath = path.join(directory, 'linux-client-key');
   const linuxHostPath = path.join(directory, 'linux-host-key');
-  const linuxClientRuntimePath = '/run/secrets/linux-builder-client-key';
+  const linuxClientRuntimePath = '/run/secrets/build-client-key';
   const output = path.join(directory, 'machines');
   fs.writeFileSync(clientPath, clientKey);
   fs.writeFileSync(hostPath, hostKey);
