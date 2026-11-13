@@ -370,7 +370,7 @@ fabro.totalRecall = {
   databaseName;                # default "memory"
   databaseConnection;          # default "memory"
   queueTopic;                  # default "harness-events"
-  postProcessingModel;         # default "opencode-go/deepseek-v4.1-flash"
+  postProcessingModel;         # default "deepseek-v4.1-flash"
   postProcessingBaseUrl;       # default "http://127.0.0.1:4000/v1/"
 };
 ```
@@ -391,7 +391,7 @@ fabro.totalRecall = {
 | `TOTAL_RECALL_POST_PROCESSING_OPENAI_API_TOKEN` | — | — | sops placeholder | `total-recall-env` |
 
 - `prompt` output mode is chosen because the loopback gateway fronts subscription-backed model groups that do not uniformly honor JSON-schema response formats; the worker still validates its own closed schema locally.
-- The model defaults to the guest's existing OpenCode default (`opencode-go/deepseek-v4.1-flash`), exposed as an option so model choice is operator-tunable without changing unit code. If that model group rejects non-OpenCode callers because it expects the dynamic `x-opencode-session` header, switch the option to a `chatgpt/*` group; the worker contract is unchanged.
+- The model defaults to the guest's catalog default (`deepseek-v4.1-flash`), exposed as an option so model choice is operator-tunable without changing unit code. If the worker does not send the stable `x-opencode-session` header that the OpenCode Go/Zen upstreams require, switch the option to a ChatGPT-only logical model such as `gpt-6-astra`; the worker contract is unchanged.
 - No embedding variables are set, and no `memory-embedding` unit exists.
 - Ingestion validates every event against the pinned protobuf contracts. A rejected event returns a bounded error to the caller and leaves the worker registered for subsequent events.
 
