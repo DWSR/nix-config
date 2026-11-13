@@ -121,7 +121,7 @@ set before the guest rebuild.
   - _Boundary: tests/litellm-routing/gateway.test.js_
   - _Depends: 3.4, 5.1_
 
-- [ ] 5.3 (P) Add the client parity and legacy-id suite
+- [x] 5.3 (P) Add the client parity and legacy-id suite
   - Assert both client projections expose exactly the catalog ids, each surface's default model is a served logical id, and every Fabro record sets `caching`/`cache_routing` with limits equal to the catalog.
   - Scan `configurations/fabro-vm/opencode.nix` and `configurations/fabro-vm/fabro.nix` for provider-scoped literals (`chatgpt/`, `opencode-go/`, `opencode-zen/`) and old Fabro keys (`go-gpt-6-luna`, `go-beam-free`, `go-omen-alpha`), failing with the file path and matched string.
   - Observable: the suite passes, and reintroducing `api_model = "opencode-go/deepseek-v4.1-flash"` fails the legacy-id scan naming the file and id.
