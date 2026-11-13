@@ -49,8 +49,17 @@ jobs:
           purge-last-accessed: P7D
           purge-primary-key: never
 
-      - name: Validate Lima config
-        run: nix build --no-link '.#checks.aarch64-darwin.lima-vm-config-validate'
+      # Preserve Nix's evaluation/tarball cache between runs. The
+      # `github.sha` in the key lets each run save a fresh cache;
+      # `restore-keys` reuses the latest cache for the same lockfile.
+      - name: Cache Nix evaluation data
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/nix
+          key: nix-eval-${{ runner.os }}-${{ hashFiles('flake.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nix-eval-${{ runner.os }}-${{ hashFiles('flake.lock') }}-
+            nix-eval-${{ runner.os }}-
 
       - name: Run builds as the runner user
         run: |
@@ -67,16 +76,24 @@ jobs:
           # Building opencode cold takes over two hours; limactl refuses
           # root and fabro's validate check races build-dir cleanup. Gate
           # the remaining checks' builds while still evaluating every check.
+          # The `prek` workflow already runs the formatting and pre-commit
+          # hooks, so the flake-check job must not duplicate them.
           # shellcheck disable=SC2016
           attrs=$(nix eval --raw .#checks.aarch64-darwin --apply 'attrs:
             let
               names = builtins.filter
-                (name: !(builtins.match "^(opencode|agentmemory-opencode|lima-vm-config-validate|fabro-workflows-validate).*" name != null))
+                (name: !(builtins.match "^(opencode|agentmemory-opencode|lima-vm-config-validate|fabro-workflows-validate|formatting|pre-commit-check).*" name != null))
                 (builtins.attrNames attrs);
             in
             builtins.concatStringsSep " " (map (name: ".#checks.aarch64-darwin.${name}") names)')
           # shellcheck disable=SC2086
           nix build --no-link --keep-going $attrs
+
+      # Pull requests only need the filtered build above; the full flake
+      # output evaluation and IFD materialization are a main-only gate.
+      - name: Check full flake evaluation
+        if: github.event_name == 'push'
+        run: |
           # `nix flake check --no-build` cannot realise import-from-derivation
           # paths. Force every check's derivation, including the filtered
           # ones, so their IFD inputs (generated config files and package
@@ -87,3 +104,24 @@ jobs:
               (name: (builtins.getAttr name attrs).drvPath)
               (builtins.attrNames attrs))' > /dev/null
           nix flake check --no-build --show-trace --keep-going
+
+  # Limactl refuses to run as root, and the flake-check job reconfigures the
+  # daemon to run builds as root, so Lima validation runs in its own job.
+  lima-config:
+    name: Validate Lima config
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.11.3
+        with:
+          extra_nix_config: |
+            extra-substituters = https://nix-community.cachix.org
+            extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+
+      - name: Validate Lima config
+        run: nix build --no-link '.#checks.aarch64-darwin.lima-vm-config-validate'
