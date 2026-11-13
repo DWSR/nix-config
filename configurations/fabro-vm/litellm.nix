@@ -48,6 +48,10 @@ let
   # single source (one deployment per gateway entry).
   inherit (import ./litellm-catalog.nix { inherit lib; }) catalog;
 
+  # Same renderer the nixpkgs module uses, so the option value yields
+  # byte-identical YAML whichever path the service loads.
+  litellmSettingsFormat = pkgs.formats.yaml { };
+
   # The ChatGPT provider credentials: litellm's chatgpt authenticator
   # (llms/chatgpt/authenticator) resolves CHATGPT_TOKEN_DIR, falling back to
   # `~/.config/litellm/chatgpt`. The DynamicUser unit has no HOME, so both
@@ -79,6 +83,23 @@ let
       chown -R --reference=${config.services.litellm.stateDir} "${litellmTokenDir}"
     '';
   };
+
+  # The generated config directory: the rendered YAML plus both bridge
+  # modules is the only config the service loads. LiteLLM's callback loader
+  # resolves `callbacks` entries relative to `config.yaml`, so the
+  # `litellm_affinity_bridge` module must sit beside the YAML it names; the
+  # bridge's sibling import `litellm_session_identity` resolves through
+  # PYTHONPATH, which names this same directory. With both modules inside
+  # the store path, a missing or unreadable bridge fails the callback import
+  # at startup and the health gate fails the unit (no silently unrouted
+  # proxy). The YAML is rendered from the option value, so there is no second
+  # settings source.
+  litellmConfig = pkgs.runCommand "litellm-config" { } ''
+    mkdir -p $out
+    cp ${litellmSettingsFormat.generate "config.yaml" config.services.litellm.settings} $out/config.yaml
+    cp ${./litellm_affinity_bridge.py} $out/litellm_affinity_bridge.py
+    cp ${./litellm_session_identity.py} $out/litellm_session_identity.py
+  '';
 
   # ExecStartPost health gate: poll the proxy's own liveness endpoint so
   # the unit only reaches "active (started)" once the HTTP listener is
@@ -113,6 +134,15 @@ in
   # serviceConfig entry since the module exposes no readiness option.
   systemd.services.litellm.serviceConfig.ExecStartPost = lib.getExe litellmHealthGate;
 
+  # Forced: the module's ExecStart points at its own `settingsFormat` YAML,
+  # which contains neither the bridge module nor the directory the callback
+  # loader resolves against. This override keeps the module's exact command
+  # shape (quoted host, package, port) but swaps in the generated directory's
+  # config.yaml. The rest of the unit — DynamicUser, StateDirectory,
+  # ProtectHome, the health gate above — is unchanged.
+  systemd.services.litellm.serviceConfig.ExecStart =
+    lib.mkForce "${lib.getExe config.services.litellm.package} --host \"${config.services.litellm.host}\" --port ${toString config.services.litellm.port} --config ${litellmConfig}/config.yaml";
+
   services.litellm = {
     enable = true;
     host = "127.0.0.1";
@@ -123,6 +153,16 @@ in
 
     environment = {
       CHATGPT_TOKEN_DIR = litellmTokenDir;
+
+      # The bridge modules live in the generated config directory, beside
+      # the rendered config.yaml, so the callback loader resolves the
+      # `litellm_affinity_bridge` module it names and the bridge's sibling
+      # `litellm_session_identity` import resolves through PYTHONPATH.
+      PYTHONPATH = "${litellmConfig}";
+
+      # The store path is read-only; never attempt to write .pyc files into
+      # it (LiteLLM imports the callback module at startup).
+      PYTHONDONTWRITEBYTECODE = "1";
 
       # A DynamicUser unit gets no $HOME from systemd. litellm 1.86's
       # proxy_server imports prisma eagerly, and prisma's DefaultConfig
@@ -147,6 +187,14 @@ in
       # what carries it the rest of the way.
       litellm_settings = {
         model_group_settings.forward_client_headers_to_llm_api = catalog.forwardClientHeaders;
+
+        # The session identity bridge: a pre-call hook that derives a stable
+        # session id from the forwarded body/header identity and stamps it
+        # into the request metadata the router reads for session affinity.
+        # The module sits beside the rendered config.yaml in the generated
+        # config directory; an import failure fails the proxy start and the
+        # health gate, never a silent fallback.
+        callbacks = [ "litellm_affinity_bridge.proxy_handler_instance" ];
       };
 
       # One entry per catalog deployment: a provider-free `model_name`, an
