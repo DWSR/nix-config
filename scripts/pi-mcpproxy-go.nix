@@ -7,7 +7,7 @@ pkgs.buildNpmPackage {
   version = "0.1.0";
   inherit src;
 
-  npmDepsHash = "sha256-T+OKGuMUX7mT2kI/VRlO0JFlq7OQ7bFkzC8YF/pyHnw=";
+  npmDepsHash = "sha256-3ylJKERkRYJSGB+OAH/AYQoMehN0e43my+BVlZQfemM=";
   dontNpmBuild = true;
 
   installPhase = ''

@@ -19,7 +19,8 @@ const maybeTest = data ? test : test.skip;
 const darwinEndpoint = 'ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net';
 const linuxEndpoint = 'ssh-ng://builder@linux-builder.tuxedo-musical.ts.net';
 const linuxSystem = 'aarch64-linux';
-const linuxClientKeyPath = '/run/secrets/linux-builder-client-key';
+const personalLinuxClientKeyPath = '/run/secrets/mac-builder-ssh-private-key';
+const fabroLinuxClientKeyPath = '/run/secrets/build-client-key';
 const darwinClientKeyPath = '/run/secrets/mac-builder-ssh-private-key';
 const darwinHostKeyBase64 =
   'c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1XOEpoU2lLaXA3aVlHc3AyY08zVTBJTmNYeTliZkNRU0lPVEdvejRPcUkK';
@@ -109,20 +110,20 @@ function assertPersonalDispatch(personal) {
   assert.equal(linux.length, 8, `Linux machine record must have eight fields: ${linux.join(' ')}`);
   assert.equal(linux[0], linuxEndpoint, 'the personal Mac must dispatch aarch64-linux to the Linux builder (Requirement 3.2)');
   assert.equal(linux[1], linuxSystem, 'the personal Linux entry must support only aarch64-linux (Requirements 1.2, 3.2)');
-  assert.equal(linux[2], linuxClientKeyPath, 'the personal Linux entry must reference the dedicated runtime SOPS key path (Requirement 3.2)');
+  assert.equal(linux[2], personalLinuxClientKeyPath, 'the personal Linux entry must reference the runtime SOPS key path (Requirement 3.2)');
   assert.equal(linux[3], '4', 'the personal Linux entry must allow four remote jobs (Requirement 3.2)');
   assert.equal(linux[4], '1', 'the personal Linux entry must use speed factor 1 (Requirement 3.2)');
   assert.equal(linux[7], linuxHostKeyBase64, 'the personal Linux entry must carry the pinned builder host key (Requirement 3.2)');
 
   assert.equal(personal.maxJobs, 0, 'the personal host must keep max-jobs = 0 (Requirements 3.2, 3.3)');
   assert.equal(personal.distributedBuilds, false, 'the personal host must not enable global distributed builds (Requirement 3.3)');
-  assert.equal(personal.linuxSecret.path, linuxClientKeyPath, 'the personal Linux client key must use its runtime SOPS path (Requirement 3.2)');
+  assert.equal(personal.linuxSecret.path, personalLinuxClientKeyPath, 'the personal Linux client key must use its runtime SOPS path (Requirement 3.2)');
   assert.equal(personal.linuxSecret.owner, 'root', 'the personal Linux client key must be root-owned (Requirement 3.2)');
   assert.equal(personal.linuxSecret.mode, '0400', 'the personal Linux client key must be mode 0400 (Requirement 3.2)');
   assert.match(
     personal.linuxSecret.sopsFile,
-    /(linux-builder-client\.personal\.yaml|linux-builder-client-unprovisioned-secrets\.yaml)$/,
-    'the personal Linux client key must come from its own personal encrypted store (Requirement 3.2)',
+    /mac-builder-client\.personal\.yaml$/,
+    'the personal Linux client key must reuse the mac builder client key store (Requirement 3.2)',
   );
   assert.equal(personal.darwinSecret.path, darwinClientKeyPath, 'the existing Darwin client key must keep its runtime path (Requirement 3.3)');
   assert.equal(personal.darwinSecret.owner, 'root', 'the existing Darwin client key must stay root-owned (Requirement 3.3)');
@@ -133,14 +134,14 @@ function assertFabroDispatch(fabro) {
   assert.equal(fabro.linuxMachine.hostName, 'linux-builder.tuxedo-musical.ts.net', 'Fabro must dispatch aarch64-linux builds to the Linux builder (Requirement 3.1)');
   assert.equal(fabro.linuxMachine.system, linuxSystem, 'the Fabro Linux machine entry must support only aarch64-linux (Requirements 1.2, 3.1)');
   assert.equal(fabro.linuxMachine.maxJobs, 4, 'the Fabro Linux entry must allow four remote jobs (Requirement 3.1)');
-  assert.equal(fabro.linuxClientKeyPath, linuxClientKeyPath, 'the Fabro Linux entry must reference the dedicated runtime client key (Requirement 3.1)');
+  assert.equal(fabro.linuxClientKeyPath, fabroLinuxClientKeyPath, 'the Fabro Linux entry must reference the runtime client key (Requirement 3.1)');
   assert.equal(fabro.builders, '@/run/fabro-darwin-builders/machines', 'Fabro must read the combined runtime machines file (Requirement 3.1)');
   assert.equal(fabro.maxJobs, 0, 'Fabro must set max-jobs = 0 so builds never fall back to local jobs (Requirements 4.1, 4.2, 5.4)');
   assert.equal(fabro.distributedBuilds, true, 'Fabro must retain distributed builds (Requirement 4.3)');
   assert.equal(fabro.buildersUseSubstitutes, true, 'Fabro must retain builder substitutes (Requirement 4.3)');
   assert.equal(fabro.clientKeyPath, '/run/secrets/build-client-key', 'the existing Darwin client key must keep its runtime path (Requirement 3.3)');
   assert.equal(fabro.hostKeyPath, '/run/secrets/build-host-key', 'the existing Darwin host key must keep its runtime path (Requirement 3.3)');
-  assert.equal(fabro.linuxSecret.path, linuxClientKeyPath, 'the Fabro Linux client key must use its runtime secret path (Requirement 3.1)');
+  assert.equal(fabro.linuxSecret.path, fabroLinuxClientKeyPath, 'the Fabro Linux client key must use its runtime secret path (Requirement 3.1)');
   assert.equal(fabro.linuxSecret.owner, 'root', 'the Fabro Linux client key must be root-owned (Requirement 3.1)');
   assert.equal(fabro.linuxSecret.mode, '0400', 'the Fabro Linux client key must be mode 0400 (Requirement 3.1)');
   assertDarwinDispatchUnchanged(fabro.machine);

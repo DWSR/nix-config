@@ -80,12 +80,12 @@ test('writes both pinned machine entries atomically with mode 0600', (t) => {
   const inputs = makeInputs(directory);
   const output = path.join(directory, 'machines');
 
-  const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/linux-builder-client-key' }));
+  const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/build-client-key' }));
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     fs.readFileSync(output, 'utf8'),
-    `ssh-ng://nix-builder@mac-builder.example.ts.net aarch64-darwin ${inputs.clientKey} 4 2 - - ${Buffer.from(fs.readFileSync(inputs.hostKey)).toString('base64')}\nssh-ng://builder@linux-builder.tuxedo-musical.ts.net aarch64-linux /run/secrets/linux-builder-client-key 4 1 - - ${Buffer.from(fs.readFileSync(inputs.linuxHostKey)).toString('base64')}\n`,
+    `ssh-ng://nix-builder@mac-builder.example.ts.net aarch64-darwin ${inputs.clientKey} 4 2 - - ${Buffer.from(fs.readFileSync(inputs.hostKey)).toString('base64')}\nssh-ng://builder@linux-builder.tuxedo-musical.ts.net aarch64-linux /run/secrets/build-client-key 4 1 - - ${Buffer.from(fs.readFileSync(inputs.linuxHostKey)).toString('base64')}\n`,
   );
   assert.equal(fs.statSync(output).mode & 0o777, 0o600);
   assert.ok(!fs.readFileSync(output, 'utf8').includes('PRIVATE CLIENT KEY'));
@@ -103,7 +103,7 @@ for (const keyName of ['client-key', 'host-key']) {
       const output = path.join(directory, 'machines');
       fs.writeFileSync(output, 'existing contents\n');
 
-      const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/linux-builder-client-key' }));
+      const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/build-client-key' }));
 
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, new RegExp(pathArgument.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -134,7 +134,7 @@ for (const [option, value] of [
     const args = rendererArguments({
       output,
       ...inputs,
-      linuxClientKey: '/run/secrets/linux-builder-client-key',
+      linuxClientKey: '/run/secrets/build-client-key',
       ...(option === '--linux-host-name' ? { linuxHostName: value } : {}),
       ...(option === '--linux-system' ? { linuxSystem: value } : {}),
       ...(option === '--linux-max-jobs' ? { linuxMaxJobs: value } : {}),
@@ -158,7 +158,7 @@ for (const option of ['--linux-host-name', '--linux-system', '--linux-max-jobs',
     const inputs = makeInputs(directory);
     const output = path.join(directory, 'machines');
     fs.writeFileSync(output, 'prior complete Darwin and Linux records\n');
-    const args = rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/linux-builder-client-key' });
+    const args = rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/build-client-key' });
     args.splice(args.indexOf(option), 2);
 
     const result = runRenderer(args);
@@ -185,7 +185,7 @@ test('rejects an invalid Ed25519 key-length header without replacing output', (t
   const output = path.join(directory, 'machines');
   fs.writeFileSync(output, 'prior complete Darwin and Linux records\n');
 
-  const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/linux-builder-client-key' }));
+  const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/build-client-key' }));
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /host key/i);
@@ -200,7 +200,7 @@ test('rejects malformed Linux public host-key data without replacing output', (t
   const output = path.join(directory, 'machines');
   fs.writeFileSync(output, 'prior complete Darwin and Linux records\n');
 
-  const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/linux-builder-client-key' }));
+  const result = runRenderer(rendererArguments({ output, ...inputs, linuxClientKey: '/run/secrets/build-client-key' }));
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /host key/i);
@@ -219,7 +219,7 @@ for (const linuxKeyName of ['linuxClientKey', 'linuxHostKey']) {
     const result = runRenderer(rendererArguments({
       output,
       ...inputs,
-      ...(linuxKeyName === 'linuxHostKey' ? { linuxClientKey: '/run/secrets/linux-builder-client-key' } : {}),
+      ...(linuxKeyName === 'linuxHostKey' ? { linuxClientKey: '/run/secrets/build-client-key' } : {}),
     }));
 
     assert.notEqual(result.status, 0);
