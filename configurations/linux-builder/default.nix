@@ -22,6 +22,10 @@ in
     device = "/dev/disk/by-label/nixos";
     fsType = "ext4";
   };
+  fileSystems."/boot" = {
+    device = "/dev/disk/by-label/ESP";
+    fsType = "vfat";
+  };
 
   nix.enable = true;
   nix.settings = {

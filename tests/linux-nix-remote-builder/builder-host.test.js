@@ -105,6 +105,10 @@ function evalBuilder(extraModule = null) {
         dates = cfg.nix.optimise.dates;
       };
       hostName = cfg.networking.hostName;
+      bootFilesystem = {
+        device = cfg.fileSystems."/boot".device;
+        fsType = cfg.fileSystems."/boot".fsType;
+      };
       # The portable host must not depend on the personal host's Lima modules.
       hasLimaVM = cfg.virtualisation ? limaVM;
       hasLimaMacGuest = cfg.virtualisation ? limaMacGuest;
@@ -161,6 +165,15 @@ test('a wrong builder platform is rejected', () => {
     () => assertNativeBuilderPlatform(cfg),
     /native aarch64-linux/,
   );
+});
+
+test('Lima EFI system partition stays mounted for future system switches', () => {
+  const cfg = evalBuilder();
+
+  assert.deepEqual(cfg.bootFilesystem, {
+    device: '/dev/disk/by-label/ESP',
+    fsType: 'vfat',
+  });
 });
 
 test('SSH authorization and host identity are delivered outside the Nix store', () => {
