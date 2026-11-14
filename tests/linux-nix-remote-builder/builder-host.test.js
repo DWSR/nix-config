@@ -27,6 +27,7 @@ function evalBuilder(extraModule = null) {
       maxJobs = cfg.nix.settings.max-jobs;
       buildUsersGroup = cfg.nix.settings.build-users-group;
       trustedUsers = cfg.nix.settings.trusted-users;
+      wheelNeedsPassword = cfg.security.sudo.wheelNeedsPassword;
       builderUser = {
         isNormalUser = cfg.users.users.builder.isNormalUser;
         isSystemUser = cfg.users.users.builder.isSystemUser;
@@ -127,6 +128,7 @@ test('linux-builder is a native, standalone NixOS remote builder', () => {
   assert.equal(cfg.buildUsersGroup, 'nixbld');
   // Only the dedicated non-root builder account is trusted for remote builds.
   assert.deepEqual(cfg.trustedUsers, ['builder']);
+  assert.equal(cfg.wheelNeedsPassword, false, 'the Lima operator user must retain passwordless sudo');
   assert.equal(cfg.hostName, 'linux-builder');
   assert.equal(cfg.builderUser.isNormalUser, true);
   assert.equal(cfg.builderUser.isSystemUser, false);
