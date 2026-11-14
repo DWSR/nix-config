@@ -322,6 +322,76 @@ pub fn validate_spec_json_value(value: &Value, spec_name: &str) -> Vec<Finding> 
     findings
 }
 
+const GENERATED_STAGE_PHASES: [(&str, Phase); 3] = [
+    ("requirements", Phase::RequirementsGenerated),
+    ("design", Phase::DesignGenerated),
+    ("tasks", Phase::TasksGenerated),
+];
+
+pub fn validate_phase_relationships(facts: &SpecJsonFacts) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    if let Some(phase_text) = facts.phase() {
+        if let Some(phase) = Phase::parse(phase_text) {
+            for (stage, required_at) in GENERATED_STAGE_PHASES {
+                if phase.rank() >= required_at.rank()
+                    && facts.approval(stage, "generated") == Some(false)
+                {
+                    let flag = format!("approvals.{stage}.generated");
+                    findings.push(Finding::error(
+                        "spec.phase.generated-false",
+                        format!("phase `{phase_text}` requires `{flag}`"),
+                        SPEC_JSON_FILE,
+                        None,
+                    ));
+                }
+            }
+
+            if phase.rank() >= Phase::TasksApproved.rank() {
+                for stage in APPROVAL_STAGES {
+                    if facts.approval(stage, "approved") == Some(false) {
+                        let flag = format!("approvals.{stage}.approved");
+                        findings.push(Finding::error(
+                            "spec.phase.approved-false",
+                            format!("phase `{phase_text}` requires `{flag}`"),
+                            SPEC_JSON_FILE,
+                            None,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    for stage in APPROVAL_STAGES {
+        if facts.approval(stage, "approved") == Some(true)
+            && facts.approval(stage, "generated") == Some(false)
+        {
+            findings.push(Finding::error(
+                "spec.approval.without-generated",
+                format!(
+                    "`approvals.{stage}.approved` is true while `approvals.{stage}.generated` is false"
+                ),
+                SPEC_JSON_FILE,
+                None,
+            ));
+        }
+    }
+
+    if facts.ready_for_implementation() == Some(true)
+        && facts.approval("tasks", "approved") == Some(false)
+    {
+        findings.push(Finding::error(
+            "spec.ready.without-tasks-approval",
+            "`ready_for_implementation` is true while `approvals.tasks.approved` is false",
+            SPEC_JSON_FILE,
+            None,
+        ));
+    }
+
+    findings
+}
+
 fn json_kind(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
@@ -597,6 +667,26 @@ mod tests {
         validate_spec_json_value(value, "demo")
     }
 
+    fn spec_json(phase: &str, generated: [bool; 3], approved: [bool; 3], ready: bool) -> Value {
+        json!({
+            "feature_name": "demo",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z",
+            "language": "en",
+            "phase": phase,
+            "approvals": {
+                "requirements": {"generated": generated[0], "approved": approved[0]},
+                "design": {"generated": generated[1], "approved": approved[1]},
+                "tasks": {"generated": generated[2], "approved": approved[2]}
+            },
+            "ready_for_implementation": ready
+        })
+    }
+
+    fn relationships(value: &Value) -> Vec<Finding> {
+        validate_phase_relationships(&SpecJsonFacts::new(value))
+    }
+
     fn codes(findings: &[Finding]) -> Vec<&str> {
         findings.iter().map(|finding| finding.code).collect()
     }
@@ -855,6 +945,460 @@ mod tests {
         value["ready_for_implementation"] = json!(true);
 
         assert_eq!(validate(&value), Vec::new());
+    }
+
+    #[test]
+    fn initialized_requires_no_generated_flags() {
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn requirements_generated_requires_the_requirements_flag() {
+        let missing = spec_json(
+            "requirements-generated",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+        let findings = relationships(&missing);
+
+        assert_eq!(codes(&findings), vec!["spec.phase.generated-false"]);
+        assert!(
+            findings[0]
+                .message
+                .contains("`approvals.requirements.generated`"),
+            "{findings:?}"
+        );
+        assert_spec_json_location(&findings);
+
+        let satisfied = spec_json(
+            "requirements-generated",
+            [true, false, false],
+            [false, false, false],
+            false,
+        );
+
+        assert_eq!(relationships(&satisfied), Vec::new());
+    }
+
+    #[test]
+    fn design_generated_requires_the_design_flag() {
+        let missing = spec_json(
+            "design-generated",
+            [true, false, false],
+            [false, false, false],
+            false,
+        );
+        let findings = relationships(&missing);
+
+        assert_eq!(codes(&findings), vec!["spec.phase.generated-false"]);
+        assert!(
+            findings[0].message.contains("`approvals.design.generated`"),
+            "{findings:?}"
+        );
+
+        let satisfied = spec_json(
+            "design-generated",
+            [true, true, false],
+            [false, false, false],
+            false,
+        );
+
+        assert_eq!(relationships(&satisfied), Vec::new());
+    }
+
+    #[test]
+    fn design_generated_reports_both_missing_generated_flags() {
+        let value = spec_json(
+            "design-generated",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+        let findings = relationships(&value);
+
+        assert_eq!(findings.len(), 2);
+        assert!(findings
+            .iter()
+            .all(|finding| finding.code == "spec.phase.generated-false"));
+        let messages = messages(&findings);
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("`approvals.requirements.generated`")));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("`approvals.design.generated`")));
+    }
+
+    #[test]
+    fn tasks_generated_requires_the_tasks_flag() {
+        let missing = spec_json(
+            "tasks-generated",
+            [true, true, false],
+            [false, false, false],
+            false,
+        );
+        let findings = relationships(&missing);
+
+        assert_eq!(codes(&findings), vec!["spec.phase.generated-false"]);
+        assert!(
+            findings[0].message.contains("`approvals.tasks.generated`"),
+            "{findings:?}"
+        );
+
+        let satisfied = spec_json(
+            "tasks-generated",
+            [true, true, true],
+            [false, false, false],
+            false,
+        );
+
+        assert_eq!(relationships(&satisfied), Vec::new());
+    }
+
+    #[test]
+    fn tasks_approved_requires_every_approved_flag() {
+        for (approved, expected_false) in [
+            (
+                [false, false, false],
+                vec!["requirements", "design", "tasks"],
+            ),
+            ([true, false, false], vec!["design", "tasks"]),
+            ([true, true, false], vec!["tasks"]),
+        ] {
+            let value = spec_json("tasks-approved", [true, true, true], approved, false);
+            let findings = relationships(&value);
+
+            assert_eq!(findings.len(), expected_false.len(), "{approved:?}");
+            assert!(findings
+                .iter()
+                .all(|finding| finding.code == "spec.phase.approved-false"));
+            assert_spec_json_location(&findings);
+            for stage in expected_false {
+                let flag = format!("`approvals.{stage}.approved`");
+                assert!(
+                    findings
+                        .iter()
+                        .any(|finding| finding.message.contains(&flag)),
+                    "{stage}: {findings:?}"
+                );
+            }
+        }
+
+        let satisfied = spec_json(
+            "tasks-approved",
+            [true, true, true],
+            [true, true, true],
+            false,
+        );
+
+        assert_eq!(relationships(&satisfied), Vec::new());
+    }
+
+    #[test]
+    fn implemented_requires_every_approved_flag() {
+        for (approved, expected_false) in [
+            (
+                [false, false, false],
+                vec!["requirements", "design", "tasks"],
+            ),
+            ([true, false, false], vec!["design", "tasks"]),
+            ([true, true, false], vec!["tasks"]),
+        ] {
+            let value = spec_json("implemented", [true, true, true], approved, false);
+            let findings = relationships(&value);
+
+            assert_eq!(findings.len(), expected_false.len(), "{approved:?}");
+            assert!(findings
+                .iter()
+                .all(|finding| finding.code == "spec.phase.approved-false"));
+            assert_spec_json_location(&findings);
+            for stage in expected_false {
+                let flag = format!("`approvals.{stage}.approved`");
+                assert!(
+                    findings
+                        .iter()
+                        .any(|finding| finding.message.contains(&flag)),
+                    "{stage}: {findings:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn implemented_requires_the_generated_flags() {
+        let value = spec_json(
+            "implemented",
+            [true, false, true],
+            [true, false, true],
+            false,
+        );
+        let findings = relationships(&value);
+        let generated: Vec<&Finding> = findings
+            .iter()
+            .filter(|finding| finding.code == "spec.phase.generated-false")
+            .collect();
+
+        assert_eq!(generated.len(), 1, "{findings:?}");
+        assert!(
+            generated[0]
+                .message
+                .contains("`approvals.design.generated`"),
+            "{findings:?}"
+        );
+        assert_spec_json_location(&findings);
+    }
+
+    #[test]
+    fn implemented_requires_no_approval_finding_when_all_approvals_are_true() {
+        let value = spec_json("implemented", [true, true, true], [true, true, true], false);
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn an_approval_ahead_of_the_phase_is_valid() {
+        let value = spec_json(
+            "requirements-generated",
+            [true, true, false],
+            [false, true, false],
+            false,
+        );
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn an_approval_without_its_generated_flag_is_reported_at_any_phase() {
+        let value = spec_json(
+            "requirements-generated",
+            [true, false, false],
+            [false, true, false],
+            false,
+        );
+        let findings = relationships(&value);
+
+        assert_eq!(codes(&findings), vec!["spec.approval.without-generated"]);
+        assert!(
+            findings[0].message.contains("`approvals.design.approved`"),
+            "{findings:?}"
+        );
+        assert!(
+            findings[0].message.contains("`approvals.design.generated`"),
+            "{findings:?}"
+        );
+        assert_spec_json_location(&findings);
+    }
+
+    #[test]
+    fn readiness_without_tasks_approval_is_reported() {
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            true,
+        );
+        let findings = relationships(&value);
+
+        assert_eq!(codes(&findings), vec!["spec.ready.without-tasks-approval"]);
+        assert!(findings[0].message.contains("ready_for_implementation"));
+        assert!(
+            findings[0].message.contains("`approvals.tasks.approved`"),
+            "{findings:?}"
+        );
+        assert_spec_json_location(&findings);
+    }
+
+    #[test]
+    fn readiness_with_tasks_approval_reports_nothing() {
+        let value = spec_json(
+            "initialized",
+            [false, false, true],
+            [false, false, true],
+            true,
+        );
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn readiness_false_reports_nothing() {
+        let value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            false,
+        );
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn a_missing_phase_skips_the_phase_dependent_rules() {
+        let mut value = spec_json(
+            "tasks-approved",
+            [true, true, true],
+            [false, false, false],
+            false,
+        );
+        value.as_object_mut().expect("object").remove("phase");
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn an_unknown_phase_skips_the_phase_dependent_rules() {
+        let value = spec_json(
+            "future-phase",
+            [true, true, true],
+            [false, false, false],
+            false,
+        );
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn approval_without_generated_is_reported_when_the_phase_is_missing() {
+        let mut value = spec_json(
+            "initialized",
+            [false, false, false],
+            [true, false, false],
+            false,
+        );
+        value.as_object_mut().expect("object").remove("phase");
+        let findings = relationships(&value);
+
+        assert_eq!(codes(&findings), vec!["spec.approval.without-generated"]);
+        assert!(
+            findings[0]
+                .message
+                .contains("`approvals.requirements.approved`"),
+            "{findings:?}"
+        );
+        assert!(
+            findings[0]
+                .message
+                .contains("`approvals.requirements.generated`"),
+            "{findings:?}"
+        );
+        assert_spec_json_location(&findings);
+    }
+
+    #[test]
+    fn readiness_without_tasks_approval_is_reported_for_an_unknown_phase() {
+        let value = spec_json(
+            "future-phase",
+            [false, false, false],
+            [false, false, false],
+            true,
+        );
+        let findings = relationships(&value);
+
+        assert_eq!(codes(&findings), vec!["spec.ready.without-tasks-approval"]);
+        assert!(findings[0].message.contains("ready_for_implementation"));
+        assert!(
+            findings[0].message.contains("`approvals.tasks.approved`"),
+            "{findings:?}"
+        );
+        assert_spec_json_location(&findings);
+    }
+
+    #[test]
+    fn phase_independent_relationships_survive_a_missing_or_unknown_phase() {
+        for phase in [None, Some("future-phase")] {
+            let mut value = spec_json(
+                "initialized",
+                [false, false, false],
+                [true, false, false],
+                true,
+            );
+            match phase {
+                Some(phase) => value["phase"] = json!(phase),
+                None => {
+                    value.as_object_mut().expect("object").remove("phase");
+                }
+            }
+
+            let findings = relationships(&value);
+
+            assert_eq!(
+                codes(&findings),
+                vec![
+                    "spec.approval.without-generated",
+                    "spec.ready.without-tasks-approval"
+                ],
+                "{phase:?}"
+            );
+            assert_spec_json_location(&findings);
+        }
+    }
+
+    #[test]
+    fn phase_relationship_findings_are_errors_on_spec_json_without_a_line() {
+        let value = spec_json(
+            "tasks-approved",
+            [true, true, true],
+            [false, false, false],
+            true,
+        );
+        let findings = relationships(&value);
+
+        assert_eq!(findings.len(), 4);
+        assert_spec_json_location(&findings);
+        for finding in findings
+            .iter()
+            .filter(|finding| finding.code == "spec.phase.approved-false")
+        {
+            assert!(finding.message.contains("tasks-approved"), "{finding:?}");
+        }
+        let readiness = findings
+            .iter()
+            .find(|finding| finding.code == "spec.ready.without-tasks-approval")
+            .expect("readiness finding");
+        assert!(
+            readiness.message.contains("ready_for_implementation"),
+            "{readiness:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_generated_flag_skips_the_phase_and_approval_relationships() {
+        let mut value = spec_json(
+            "tasks-generated",
+            [true, true, true],
+            [false, false, false],
+            false,
+        );
+        value["approvals"]["design"]
+            .as_object_mut()
+            .expect("design object")
+            .remove("generated");
+
+        assert_eq!(relationships(&value), Vec::new());
+    }
+
+    #[test]
+    fn a_missing_tasks_approval_skips_the_readiness_rule() {
+        let mut value = spec_json(
+            "initialized",
+            [false, false, false],
+            [false, false, false],
+            true,
+        );
+        value["approvals"]["tasks"]
+            .as_object_mut()
+            .expect("tasks object")
+            .remove("approved");
+
+        assert_eq!(relationships(&value), Vec::new());
     }
 
     #[test]
