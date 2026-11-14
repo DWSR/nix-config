@@ -37,6 +37,7 @@ function evalBuilder(extraModule = null) {
       builderSecret = {
         path = cfg.sops.secrets."builder-authorized-keys".path;
         sopsFile = toString cfg.sops.secrets."builder-authorized-keys".sopsFile;
+        sopsFileContext = builtins.getContext "\${cfg.sops.secrets."builder-authorized-keys".sopsFile}";
         owner = cfg.sops.secrets."builder-authorized-keys".owner;
         mode = cfg.sops.secrets."builder-authorized-keys".mode;
       };
@@ -162,6 +163,10 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   assert.equal(cfg.ssh.settings.KbdInteractiveAuthentication, false);
   assert.equal(cfg.builderSecret.path, '/run/secrets/builder-authorized-keys');
   assert.match(cfg.builderSecret.sopsFile, /(linux-builder-unprovisioned-secrets|remote-builder\.linux-builder)\.yaml$/);
+  assert.ok(
+    Object.keys(cfg.builderSecret.sopsFileContext).length > 0,
+    'the SOPS manifest must retain the selected source file as a derivation input',
+  );
   assert.equal(cfg.builderSecret.owner, 'root');
   assert.equal(cfg.builderSecret.mode, '0400');
   assert.equal(cfg.tailscaleSecret.path, '/run/secrets/builder-tailscale-oauth-secret');
