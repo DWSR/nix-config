@@ -49,7 +49,7 @@ in
 
   services.openssh = {
     enable = true;
-    openFirewall = false;
+    openFirewall = true;
     hostKeys = [
       {
         path = "/var/lib/ssh/ssh_host_ed25519_key";
@@ -57,7 +57,13 @@ in
       }
     ];
     settings = {
-      AllowUsers = [ "builder" ];
+      # The guest creates its operator account at boot and adds it to wheel.
+      # Keep both that management account and the remote-build account usable
+      # after the guest's OpenSSH configuration takes effect.
+      AllowGroups = [
+        "builder"
+        "wheel"
+      ];
       KbdInteractiveAuthentication = false;
       PasswordAuthentication = false;
       PermitRootLogin = "no";

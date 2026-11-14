@@ -71,6 +71,8 @@ function evalBuilder(extraModule = null) {
         openFirewall = cfg.services.openssh.openFirewall;
         hostKeys = cfg.services.openssh.hostKeys;
         settings = cfg.services.openssh.settings;
+        allowGroups = cfg.services.openssh.settings.AllowGroups or [ ];
+        allowUsers = cfg.services.openssh.settings.AllowUsers or [ ];
       };
       materializer = {
         after = cfg.systemd.services.builder-authorized-keys.after;
@@ -155,11 +157,12 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   const cfg = evalBuilder();
 
   assert.equal(cfg.ssh.enable, true);
-  assert.equal(cfg.ssh.openFirewall, false);
+  assert.equal(cfg.ssh.openFirewall, true);
   assert.deepEqual(cfg.ssh.hostKeys, [
     { path: '/var/lib/ssh/ssh_host_ed25519_key', type: 'ed25519' },
   ]);
-  assert.deepEqual(cfg.ssh.settings.AllowUsers, ['builder']);
+  assert.deepEqual(cfg.ssh.allowGroups, ['builder', 'wheel']);
+  assert.equal(cfg.ssh.allowUsers, null, 'SSH must not exclude the guest operator account');
   assert.equal(cfg.ssh.settings.PermitRootLogin, 'no');
   assert.equal(cfg.ssh.settings.PasswordAuthentication, false);
   assert.equal(cfg.ssh.settings.KbdInteractiveAuthentication, false);
