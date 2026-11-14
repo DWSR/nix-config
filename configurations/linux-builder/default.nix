@@ -35,6 +35,10 @@ in
     trusted-users = lib.mkForce [ "builder" ];
   };
 
+  # The VM operator account belongs to wheel; deployment and provisioning use
+  # non-interactive sudo from the host.
+  security.sudo.wheelNeedsPassword = false;
+
   users.groups.builder = { };
   users.users.builder = {
     isNormalUser = true;
