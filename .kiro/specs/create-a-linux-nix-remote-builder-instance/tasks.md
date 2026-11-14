@@ -4,7 +4,7 @@
 
 - [x] 1.1 Define and register the NixOS builder host
   - Create `configurations/linux-builder/default.nix` for native `aarch64-linux`, with Nix remote-build support, a dedicated non-root `builder` account, and trust limited to that account.
-  - Configure OpenSSH with persistent host-key paths, declare SOPS runtime secrets for authorized keys and the Tailscale OAuth credential, and materialize authorized keys at runtime; do not place secret values in the Nix store.
+  - Configure OpenSSH with the SOPS-managed host private key, declare runtime secrets for the host key, authorized keys, and Tailscale OAuth credential, and materialize authorized keys at runtime; do not place secret values in the Nix store.
   - Configure the stable `linux-builder.tuxedo-musical.ts.net` endpoint and dedicated tailnet tag; support at least four concurrent remote jobs and explicitly avoid extra execution platforms.
   - Add Nix store garbage collection/optimization and keep all Lima-specific modules and provisioning outside the portable host.
   - Add `nixosConfigurations.linux-builder` to `flake.nix` using the existing NixOS flake pattern.
@@ -29,9 +29,9 @@
   - _Requirements: 2.4_
 
 - [x] 2.3 Publish the builder host-key pin
-  - Add the checked-in public host key at `certificates/linux-builder/ssh_host_ed25519_key.pub` from the provisioned guest's persistent `/var/lib/ssh/ssh_host_ed25519_key.pub`; never generate, mint, or commit the private host key.
+  - Keep the checked-in public host key at `certificates/linux-builder/ssh_host_ed25519_key.pub` aligned with the 1Password SSH Key item; never generate or commit the private host key in plaintext.
   - Treat the pin as operator-supplied public trust material: when the value is unavailable, record `environment-blocked: secret-material-blocked <name> (<source>)` rather than substituting a key.
-  - Done when the checked-in pin matches the guest's published host key and is available as the shared trust input for both client records.
+  - Done when the checked-in pin matches the 1Password-backed guest host key and is available as the shared trust input for both client records.
   - _Depends: 2.2_
   - _Requirements: 3.1, 3.2_
 
@@ -65,8 +65,8 @@
 - [ ] 5. Integrate operator-managed secret and trust material
 
 - [x] 5.1 Add builder secret-store and sync-command wiring
-  - Add a distinct `host_linux_builder` SOPS recipient/rule and builder secret declarations for authorized client public keys and Tailscale OAuth material; use the operator-provisioned recipient, never a placeholder.
-  - Create `scripts/linux-builder-sync-from-1password.nix` to encrypt operator-supplied builder values into the builder store and the personal client key into the personal encrypted store; it must not generate or mint values.
+  - Add a distinct `host_linux_builder` SOPS recipient/rule and builder secret declarations for the SSH host private key, authorized client public keys, and Tailscale OAuth material; use the operator-provisioned recipient, never a placeholder.
+  - Create `scripts/linux-builder-sync-from-1password.nix` to encrypt operator-supplied builder values into the builder store and the personal client key into the personal encrypted store; validate the host-key public half against the checked-in pin and never generate or mint values.
   - Update `scripts/fabro-sync-from-1password.nix` for the Fabro client key without storing private keys in the repository.
   - Done when sync behavior is testable with fixture credentials/recipients and declarations refer only to runtime secret paths; no real secret is needed to run the checks.
   - _Requirements: 1.3, 3.1, 3.2_
@@ -75,7 +75,7 @@
   - Update `secrets/README.md` with the design's operator provisioning, bootstrap order, key sources, sync commands, and verification steps for builder and client secrets.
   - Document the Tailscale tag ownership and SSH-only grants for Fabro and the personal Mac, plus host-key pin verification; state the builder-specific Tailscale OAuth credential source, `auth_keys` scope, and runtime consumption; point to the design's `## Operator Provisioning` section.
   - Include the post-provisioning live acceptance sequence for Linux builds from both clients, preserved Darwin dispatch, unsupported-platform rejection, and Fabro's no-local-fallback behavior.
-  - Do not create, rotate, decrypt, or record secret values or pretend external Tailscale ACL changes are repository configuration.
+  - Do not create or rotate source values. Sync existing 1Password values only into encrypted stores, never print plaintext, and keep external Tailscale ACL changes outside repository configuration.
   - Done when an operator can provision, verify external items, and perform the live acceptance checks using the documented sources and sequence without ambiguity.
   - _Requirements: 1.3, 2.4, 3.1, 3.2_
 

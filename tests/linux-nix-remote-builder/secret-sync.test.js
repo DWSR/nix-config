@@ -147,9 +147,15 @@ creation_rules:
   return config;
 }
 
-function createFixtureRepository(directory, personalRecipient, builderRecipient = null) {
+function createFixtureRepository(directory, personalRecipient, builderRecipient, builderHostPublicKey) {
   const repository = path.join(directory, 'repo');
   fs.mkdirSync(path.join(repository, 'secrets'), { recursive: true });
+  const hostKeyPin = path.join(
+    repository,
+    'certificates/linux-builder/ssh_host_ed25519_key.pub',
+  );
+  fs.mkdirSync(path.dirname(hostKeyPin), { recursive: true });
+  fs.writeFileSync(hostKeyPin, `${builderHostPublicKey}\n`);
   childProcess.execFileSync(testTools().git, ['init', '-q'], { cwd: repository });
   writeFixtureStoreConfig(repository, personalRecipient, builderRecipient);
   return repository;
@@ -176,6 +182,7 @@ case "$1" in
     fi
     case "$base" in
       "op://Private/sops-age-key-linux-builder/notesPlain") cat "$MOCK_BUILDER_AGE_KEY_FILE" ;;
+      "op://Infrastructure/Linux-Builder Host Key/private key") cat "$MOCK_BUILDER_HOST_KEY_FILE" ;;
       "op://Private/sops-age-key-personal/notesPlain") cat "$MOCK_PERSONAL_AGE_KEY_FILE" ;;
       "op://Infrastructure/mac-builder authorized keys/notesPlain") cat "$MOCK_AUTHORIZED_KEYS_FILE" ;;
       "op://Infrastructure/mac-builder Tailscale OAuth/Client Secret") printf '%s' "$MOCK_TAILSCALE_SECRET" ;;
@@ -192,12 +199,13 @@ esac
   return { opPath, logPath };
 }
 
-function syncEnvironment({ opPath, logPath, builderAge, personalAge, authorizedKeysFile, tailscaleSecret, personalClientKeyFile, extra = {} }) {
+function syncEnvironment({ opPath, logPath, builderAge, builderHostKeyFile, personalAge, authorizedKeysFile, tailscaleSecret, personalClientKeyFile, extra = {} }) {
   return {
     ...process.env,
     OP_BIN: opPath,
     MOCK_OP_LOG: logPath,
     MOCK_BUILDER_AGE_KEY_FILE: builderAge.keyPath,
+    MOCK_BUILDER_HOST_KEY_FILE: builderHostKeyFile,
     MOCK_PERSONAL_AGE_KEY_FILE: personalAge.keyPath,
     MOCK_AUTHORIZED_KEYS_FILE: authorizedKeysFile,
     MOCK_TAILSCALE_SECRET: tailscaleSecret,
@@ -279,6 +287,7 @@ test('builder secret declarations reference only root-only runtime paths', () =>
       };
     in {
       authorized = secret "builder-authorized-keys";
+      hostKey = secret "builder-ssh-host-key";
       tailscale = secret "builder-tailscale-oauth-secret";
       defaultSopsFile = toString cfg.sops.defaultSopsFile;
       declaration = builtins.readFile ${JSON.stringify(path.join(repoRoot, 'configurations/linux-builder/default.nix'))};
@@ -297,6 +306,12 @@ test('builder secret declarations reference only root-only runtime paths', () =>
     mode: '0400',
     owner: 'root',
   });
+  assert.deepEqual(config.hostKey, {
+    path: '/run/secrets/builder-ssh-host-key',
+    sopsFile: config.hostKey.sopsFile,
+    mode: '0400',
+    owner: 'root',
+  });
   const storePattern =
     /(remote-builder\.linux-builder\.yaml|linux-builder-unprovisioned-secrets\.yaml)$/;
   assert.match(config.authorized.sopsFile, storePattern);
@@ -306,6 +321,7 @@ test('builder secret declarations reference only root-only runtime paths', () =>
     /(remote-builder\.linux-builder\.yaml|linux-builder-unprovisioned-secrets\.yaml)$/,
   );
   assert.match(config.declaration, /"builder-authorized-keys"/);
+  assert.match(config.declaration, /"builder-ssh-host-key"/);
   assert.match(config.declaration, /"builder-tailscale-oauth-secret"/);
 });
 
@@ -406,6 +422,7 @@ test('builder sync encrypts fixture values to the operator recipient and persona
 
   const builderAge = generateAgeKey(directory, 'builder-age');
   const personalAge = generateAgeKey(directory, 'personal-age');
+  const builderHostKey = generateSshKey(directory, 'builder-host');
   const fabroClient = generateSshKey(directory, 'fabro-client');
   const personalClient = generateSshKey(directory, 'personal-client');
   const outsideClient = generateSshKey(directory, 'outside-client');
@@ -416,7 +433,12 @@ test('builder sync encrypts fixture values to the operator recipient and persona
     `${fabroClient.publicKey}\n${personalClient.publicKey}\n`,
   );
 
-  const repository = createFixtureRepository(directory, personalAge.recipient, builderAge.recipient);
+  const repository = createFixtureRepository(
+    directory,
+    personalAge.recipient,
+    builderAge.recipient,
+    builderHostKey.publicKey,
+  );
   const { opPath, logPath } = writeMockOp(directory);
   const script = buildSyncScript();
 
@@ -427,6 +449,7 @@ test('builder sync encrypts fixture values to the operator recipient and persona
       opPath,
       logPath,
       builderAge,
+      builderHostKeyFile: builderHostKey.keyPath,
       personalAge,
       authorizedKeysFile,
       tailscaleSecret: 'tskey-client-fixture-oauth-secret',
@@ -447,6 +470,10 @@ test('builder sync encrypts fixture values to the operator recipient and persona
   assert.doesNotMatch(encryptedBuilder, /tskey-client-fixture-oauth-secret/);
   assert.doesNotMatch(encryptedBuilder, /PRIVATE KEY/);
 
+  assert.equal(
+    decryptValue(builderStore, builderAge.keyPath, '["builder-ssh-host-key"]'),
+    builderHostKey.privateKey.trimEnd(),
+  );
   assert.equal(
     decryptValue(builderStore, builderAge.keyPath, '["builder-authorized-keys"]'),
     `${fabroClient.publicKey}\n${personalClient.publicKey}`,
@@ -479,13 +506,19 @@ test('builder sync fails closed and leaves the prior stores untouched on bad inp
 
   const builderAge = generateAgeKey(directory, 'builder-age');
   const personalAge = generateAgeKey(directory, 'personal-age');
+  const builderHostKey = generateSshKey(directory, 'builder-host');
   const fabroClient = generateSshKey(directory, 'fabro-client');
   const personalClient = generateSshKey(directory, 'personal-client');
 
   const authorizedKeysFile = path.join(directory, 'authorized-keys.txt');
   fs.writeFileSync(authorizedKeysFile, `${fabroClient.publicKey}\n`);
 
-  const repository = createFixtureRepository(directory, personalAge.recipient, builderAge.recipient);
+  const repository = createFixtureRepository(
+    directory,
+    personalAge.recipient,
+    builderAge.recipient,
+    builderHostKey.publicKey,
+  );
   const builderStore = path.join(repository, 'secrets/remote-builder.linux-builder.yaml');
   const personalStore = path.join(repository, 'secrets/linux-builder-client.personal.yaml');
   fs.writeFileSync(builderStore, 'prior-builder-store\n');
@@ -497,6 +530,7 @@ test('builder sync fails closed and leaves the prior stores untouched on bad inp
     opPath,
     logPath,
     builderAge,
+    builderHostKeyFile: builderHostKey.keyPath,
     personalAge,
     authorizedKeysFile,
     tailscaleSecret: 'tskey-client-fixture-oauth-secret',
@@ -541,6 +575,32 @@ test('builder sync fails closed and leaves the prior stores untouched on bad inp
   assert.match(invalidClient.stderr, /OpenSSH private key/i);
   assert.equal(fs.readFileSync(builderStore, 'utf8'), 'prior-builder-store\n');
   assert.equal(fs.readFileSync(personalStore, 'utf8'), 'prior-personal-store\n');
+
+  const invalidHostKeyFile = path.join(directory, 'not-a-host-key');
+  fs.writeFileSync(invalidHostKeyFile, 'not an OpenSSH host key\n');
+  const invalidHostKey = childProcess.spawnSync(script, [], {
+    cwd: repository,
+    encoding: 'utf8',
+    env: syncEnvironment({ ...baseEnvironment, builderHostKeyFile: invalidHostKeyFile }),
+    timeout: 120_000,
+  });
+  assert.notEqual(invalidHostKey.status, 0);
+  assert.match(invalidHostKey.stderr, /Linux builder host key is not a valid OpenSSH private key/i);
+  assert.equal(fs.readFileSync(builderStore, 'utf8'), 'prior-builder-store\n');
+  assert.equal(fs.readFileSync(personalStore, 'utf8'), 'prior-personal-store\n');
+
+  const hostKeyPin = path.join(repository, 'certificates/linux-builder/ssh_host_ed25519_key.pub');
+  fs.writeFileSync(hostKeyPin, `${personalClient.publicKey}\n`);
+  const mismatchedHostKey = childProcess.spawnSync(script, [], {
+    cwd: repository,
+    encoding: 'utf8',
+    env: syncEnvironment(baseEnvironment),
+    timeout: 120_000,
+  });
+  assert.notEqual(mismatchedHostKey.status, 0);
+  assert.match(mismatchedHostKey.stderr, /does not match the checked-in Linux builder pin/);
+  assert.equal(fs.readFileSync(builderStore, 'utf8'), 'prior-builder-store\n');
+  assert.equal(fs.readFileSync(personalStore, 'utf8'), 'prior-personal-store\n');
 });
 
 test('builder sync rejects a .sops.yaml recipient that does not match the operator age key', (t) => {
@@ -550,13 +610,19 @@ test('builder sync rejects a .sops.yaml recipient that does not match the operat
   const builderAge = generateAgeKey(directory, 'builder-age');
   const mistakenAge = generateAgeKey(directory, 'mistaken-builder-age');
   const personalAge = generateAgeKey(directory, 'personal-age');
+  const builderHostKey = generateSshKey(directory, 'builder-host');
   const client = generateSshKey(directory, 'fabro-client');
   const personalClient = generateSshKey(directory, 'personal-client');
 
   const authorizedKeysFile = path.join(directory, 'authorized-keys.txt');
   fs.writeFileSync(authorizedKeysFile, `${client.publicKey}\n`);
 
-  const repository = createFixtureRepository(directory, personalAge.recipient, mistakenAge.recipient);
+  const repository = createFixtureRepository(
+    directory,
+    personalAge.recipient,
+    mistakenAge.recipient,
+    builderHostKey.publicKey,
+  );
   const builderStore = path.join(repository, 'secrets/remote-builder.linux-builder.yaml');
   const personalStore = path.join(repository, 'secrets/linux-builder-client.personal.yaml');
   fs.writeFileSync(builderStore, 'prior-builder-store\n');
@@ -571,6 +637,7 @@ test('builder sync rejects a .sops.yaml recipient that does not match the operat
       opPath,
       logPath,
       builderAge,
+      builderHostKeyFile: builderHostKey.keyPath,
       personalAge,
       authorizedKeysFile,
       tailscaleSecret: 'tskey-client-fixture-oauth-secret',
@@ -588,6 +655,11 @@ test('builder sync rejects a .sops.yaml recipient that does not match the operat
 test('builder sync never generates secret material', () => {
   const sync = sourceText('scripts/linux-builder-sync-from-1password.nix');
 
+  assert.match(
+    sync,
+    /op:\/\/Infrastructure\/Linux-Builder Host Key\/private key\?ssh-format=openssh/,
+  );
+  assert.match(sync, /checked-in Linux builder pin/);
   assert.match(sync, /age-keygen -y/);
   assert.match(sync, /--age/);
   assert.match(sync, /host_linux_builder/);

@@ -60,11 +60,11 @@ creation_rules:
     key_groups:
       - age:
           - *host_personal
-  # The linux-builder host's own store: authorized client public keys and
-  # the Tailscale OAuth credential. The static recipient list is empty on
-  # purpose. No `host_linux_builder` recipient is known at commit time, so
-  # a config-only encryption fails closed ("empty key group provided")
-  # instead of writing a store that no operator key can decrypt.
+  # The linux-builder host's own store: its SSH host private key, authorized
+  # client public keys, and Tailscale OAuth credential. The static recipient
+  # list is empty on purpose. No `host_linux_builder` recipient is known at
+  # commit time, so config-only encryption fails closed with "empty key group provided"
+  # rather than writing a store that no operator key can decrypt.
   # scripts/linux-builder-sync-from-1password.nix supplies the recipient
   # derived from the operator-provisioned age key with `--age`.
   - path_regex: secrets/remote-builder\.linux-builder\.yaml$

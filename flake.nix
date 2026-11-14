@@ -2090,6 +2090,7 @@
                 let
                   ssh = cfg.services.openssh;
                   authorized = cfg.sops.secrets."builder-authorized-keys";
+                  hostKey = cfg.sops.secrets."builder-ssh-host-key";
                   oauth = cfg.sops.secrets."builder-tailscale-oauth-secret";
                 in
                 {
@@ -2108,6 +2109,9 @@
                   };
                   authorizedKeys = {
                     inherit (authorized) path owner mode;
+                  };
+                  hostKey = {
+                    inherit (hostKey) path owner mode;
                   };
                   tailscaleOauth = {
                     inherit (oauth) path owner mode;

@@ -322,7 +322,7 @@ The Linux builder is the separate NixOS `aarch64-linux` Lima guest
 personal host. Its secret material is split across three per-host stores:
 
 - `secrets/remote-builder.linux-builder.yaml` — the builder host's own store:
-  the authorized client public keys and the builder's Tailscale OAuth
+  its SSH host private key, authorized client public keys, and Tailscale OAuth
   credential, encrypted only to the builder's `&host_linux_builder` age
   recipient.
 - `secrets/linux-builder-client.personal.yaml` — the personal Mac's dedicated
@@ -342,12 +342,13 @@ section is its operational runbook.
 | Item | Value |
 | --- | --- |
 | Builder encrypted file | `secrets/remote-builder.linux-builder.yaml` |
-| Builder SOPS keys | `builder-authorized-keys`, `builder-tailscale-oauth-secret` |
+| Builder SOPS keys | `builder-ssh-host-key`, `builder-authorized-keys`, `builder-tailscale-oauth-secret` |
 | Builder recipient | `&host_linux_builder` (operator-enrolled; see below) |
 | Builder age key | `op://Private/sops-age-key-linux-builder/notesPlain` |
+| Builder SSH host key | `op://Infrastructure/Linux-Builder Host Key/private key?ssh-format=openssh` (SSH Key item) |
 | Builder authorized keys source | `op://Infrastructure/mac-builder authorized keys/notesPlain` (one public key per line) |
 | Builder OAuth source | `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret` |
-| Guest runtime paths | `/run/secrets/builder-authorized-keys` (mode `0400`, root) → `/home/builder/.ssh/authorized_keys`; `/run/secrets/builder-tailscale-oauth-secret` (mode `0400`, root) |
+| Guest runtime paths | `/run/secrets/builder-ssh-host-key` (mode `0400`, root); `/run/secrets/builder-authorized-keys` (mode `0400`, root) → `/home/builder/.ssh/authorized_keys`; `/run/secrets/builder-tailscale-oauth-secret` (mode `0400`, root) |
 | Personal client store | `secrets/linux-builder-client.personal.yaml` (key `linux-builder-client-key`) |
 | Personal client source | `op://Infrastructure/Brandons Mac Linux nix remote builder key/private key` (reused from the mac builder client key, read with `?ssh-format=openssh`) |
 | Personal runtime path | `/run/secrets/linux-builder-client-key` (mode `0400`, root) |
@@ -357,8 +358,8 @@ section is its operational runbook.
 
 The builder age key is installed on the guest at `/var/lib/sops-nix/key.txt`
 (mode `0600`, root), exactly like the other NixOS guest stores. Only the
-encrypted stores are committed; no private key or OAuth value ever enters the
-checkout or the Nix store.
+encrypted stores are committed; plaintext private keys and OAuth values never
+enter the checkout or the Nix store.
 
 The builder store's creation rule in `.sops.yaml` starts with an empty `age`
 list on purpose. The real `host_linux_builder` recipient does not exist until
@@ -376,9 +377,10 @@ from the configured one.
 
 Run these steps from the personal-host checkout with `op` signed in. They are
 operator-owned: the sync command writes the encrypted stores and the operator
-copies the public host-key pin, but no step mints, guesses, or records a
-secret value. The order matters because each activation reads what the
-previous step installed.
+keeps the checked-in public host-key pin aligned with the SSH Key item. No step
+generates a secret value, and sync writes plaintext only to a private temporary
+directory before encrypting it. The order matters because each activation reads
+what the previous step installed.
 
 1. **Create the builder age identity.** Generate the keypair out of band,
    stash the full file in 1Password, and print its public recipient — all in
@@ -422,7 +424,7 @@ previous step installed.
    half is already covered by the mac builder's authorized keys.)
 
 3. **Create the builder's Tailscale OAuth client.** In the Tailscale admin
-   console, create a    client that is separate from the Fabro guest's OAuth
+    console, create a client that is separate from the Fabro guest's OAuth
    client, grant it the `auth_keys` scope, and authorize it to apply
    `tag:nix-remote-builder`. Store only its client secret at
    `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret`; the
@@ -430,9 +432,11 @@ previous step installed.
    (The linux builder now shares the mac builder's OAuth client and tag.)
 
 4. **Sync the stores from 1Password.** This creates the builder and personal
-   client stores from the values above, so every later activation can decrypt
-   what it declares. The flake does not register a
-   `linux-builder-sync-from-1password` app yet, so run the builder sync with
+   client stores from the SSH host key, current 1Password values, and client
+   keys above, so every later activation can decrypt what it declares. The
+    builder sync verifies that the host key's public half matches the
+    committed `certificates/linux-builder/ssh_host_ed25519_key.pub` pin. The
+    flake does not register a `linux-builder-sync-from-1password` app yet, so run the builder sync with
    the checkout invocation in "Syncing the stores from 1Password" below, then
    the Fabro store sync:
 
@@ -474,14 +478,15 @@ previous step installed.
    linux-builder-deploy
    ```
 
-   The first switch generates the persistent OpenSSH host key at
-   `/var/lib/ssh/ssh_host_ed25519_key`, enrolls the node with the synced
-   OAuth credential, and materializes the authorized keys. Do not proceed to
-   the clients until the pin is committed (next step).
+   The switch restores the SOPS-managed OpenSSH host key at
+   `/run/secrets/builder-ssh-host-key` before sshd starts, enrolls the node
+   with the synced OAuth credential, and materializes the authorized keys.
+   The encrypted store and public pin must be committed before deploying the
+   clients.
 
-7. **Capture and commit the host-key pin** (see "Host-key pin" below). The
-   Fabro renderer fails closed without it, so it must exist in the deployed
-   tree before the Fabro switch.
+7. **Verify the host-key pin** (see "Host-key pin" below). The Fabro renderer
+   fails closed without it, so confirm it matches the SOPS-restored host key
+   before switching either client.
 
 8. **Deploy the clients.** Refresh Fabro with `lima-vm-deploy` from the
    personal host and the Mac with `sudo darwin-rebuild switch --flake .`.
@@ -496,13 +501,14 @@ previous step installed.
 The builder sync command `linux-builder-sync-from-1password` refreshes both
 Linux-builder stores in one gather-then-commit pass:
 
-1. It resolves the builder age key, the personal age key, the authorized-key
-   note, the Tailscale OAuth secret, and the personal client key from the
-   1Password references in the table above.
-2. It validates every value before writing anything — the age keys are
-   well-formed age files, every authorized-keys line is a public key, the
-   OAuth secret is a single non-empty token, and the personal key is an
-   OpenSSH private key — so one bad input leaves both prior stores untouched.
+1. It resolves the builder age key, the SSH host private key, the personal age
+   key, the authorized-key note, the Tailscale OAuth secret, and the personal
+   client key from the 1Password references in the table above.
+2. It validates every value before writing anything. The host key and client
+   key must be valid OpenSSH private keys; the host key must be Ed25519 and
+   match the checked-in public pin. The age keys must be well-formed, every
+   authorized-keys line must be a public key, and the OAuth secret must be a
+   single non-empty token. A bad input leaves both prior stores untouched.
 3. It writes each store through a mode-`0700` temporary directory under
    `secrets/` and an atomic rename, addressing the builder store to the
    recipient derived from the builder age key and the personal store to
@@ -606,6 +612,12 @@ op read 'op://Private/sops-age-key-linux-builder/notesPlain' > "$T/key.txt"
 SOPS_AGE_KEY_FILE="$T/key.txt" nix shell --inputs-from . nixpkgs#sops -c \
   sops -d --extract '["builder-authorized-keys"]' \
   secrets/remote-builder.linux-builder.yaml
+# Fingerprint only: never print the private host key.
+SOPS_AGE_KEY_FILE="$T/key.txt" nix shell --inputs-from . nixpkgs#sops -c \
+  sops -d --extract '["builder-ssh-host-key"]' \
+  secrets/remote-builder.linux-builder.yaml > "$T/host-key"
+chmod 0600 "$T/host-key"
+ssh-keygen -lf "$T/host-key"
 # Length only: never print the OAuth value.
 SOPS_AGE_KEY_FILE="$T/key.txt" nix shell --inputs-from . nixpkgs#sops -c \
   sops -d --extract '["builder-tailscale-oauth-secret"]' \
@@ -615,7 +627,8 @@ SOPS_AGE_KEY_FILE="$T/key.txt" nix shell --inputs-from . nixpkgs#sops -c \
 The first output must be the newline-separated public keys of the Fabro and
 personal Mac clients; compare each line with the public half of the matching
 keypair — `ssh-keygen -y -f <private-key-copy>` prints only that public half.
-The second output must be a positive byte count with no embedded newline.
+The host-key fingerprint must match the committed public pin. The OAuth length
+must be positive with no embedded newline.
 
 The personal client store is readable with the personal host's key, which
 sops-nix installs at `/var/lib/sops-nix/key.txt`:
@@ -640,6 +653,7 @@ units are active:
 
 ```sh
 lima-vmctl shell linux-builder sudo -n stat -c '%a %U' /run/secrets/builder-authorized-keys
+lima-vmctl shell linux-builder sudo -n stat -c '%a %U' /run/secrets/builder-ssh-host-key
 lima-vmctl shell linux-builder sudo -n stat -c '%a %U' /home/builder/.ssh/authorized_keys
 lima-vmctl shell linux-builder sudo -n stat -c '%a %U' /run/secrets/builder-tailscale-oauth-secret
 lima-vmctl shell linux-builder systemctl is-active sshd builder-authorized-keys tailscaled builder-tailscale-auth
@@ -654,20 +668,23 @@ without authorized keys does not accept SSH sessions.
 
 ### Host-key pin
 
-The builder's SSH host key is generated on the guest at the persistent path
-declared by `services.openssh.hostKeys`, `/var/lib/ssh/ssh_host_ed25519_key`.
-That path is outside the Nix store, so the host identity survives VM restarts.
-Only its public half is trust material for the clients:
+The builder's SSH host private key comes from the SSH Key item
+`op://Infrastructure/Linux-Builder Host Key` and is encrypted in the
+builder-only SOPS store as `builder-ssh-host-key`. sops-nix materializes it at
+`/run/secrets/builder-ssh-host-key` before `sshd-keygen` and sshd start. The
+public half remains the client trust pin in the repository:
 
 ```sh
-lima-vmctl shell linux-builder sudo -n cat /var/lib/ssh/ssh_host_ed25519_key.pub
+op read 'op://Infrastructure/Linux-Builder Host Key/public key'
 ```
 
-Create `certificates/linux-builder/` and save that single line as
-`certificates/linux-builder/ssh_host_ed25519_key.pub`, then `git add` and
-commit it before deploying either client. Never copy the private host key out
-of the guest and never commit the private host key; never generate a
-replacement pin to work around a mismatch.
+The public key must match the committed
+`certificates/linux-builder/ssh_host_ed25519_key.pub`. For an intentional host
+key rotation, update that file from the 1Password `public key` field and review
+its fingerprint before syncing. The builder sync rejects a mismatch and leaves
+both stores untouched. Deploy the builder with the new key before switching
+either client to the new pin. Never print or commit the private key in
+plaintext, and never generate a replacement pin to work around a mismatch.
 
 Both clients embed the base64 of the pin file as the machine record's
 host-key field: Fabro's `fabro-darwin-builders.service` renderer and the
@@ -684,13 +701,13 @@ Verify the pin matches the live guest:
 ```sh
 ssh-keygen -lf certificates/linux-builder/ssh_host_ed25519_key.pub
 lima-vmctl shell linux-builder sudo -n \
-  ssh-keygen -lf /var/lib/ssh/ssh_host_ed25519_key.pub
+  ssh-keygen -lf /run/secrets/builder-ssh-host-key
 ```
 
 The two fingerprints must be identical. A mismatch is a hard failure: stop,
-compare the guest's key with the committed pin, and treat a changed key as a
-deliberate operator review. Never disable host-key checking, and never point
-the machine record at an unpinned host as a workaround.
+compare the guest key with the 1Password item and committed pin, and treat a
+changed key as a deliberate operator review. Never disable host-key checking,
+and never point the machine record at an unpinned host as a workaround.
 
 ### Live acceptance after provisioning
 

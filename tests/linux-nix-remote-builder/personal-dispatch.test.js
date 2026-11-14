@@ -331,9 +331,9 @@ function poisonedPersonalClientStore(text) {
 }
 
 function poisonedBuilderOauthStore(text) {
-  return `({ lib, pkgs, ... }: {
+  return `({ lib, ... }: {
     sops.secrets."builder-tailscale-oauth-secret".sopsFile =
-      lib.mkForce (pkgs.writeText "poisoned-builder-oauth-store" ${nixString(text)});
+      lib.mkForce (builtins.toFile "poisoned-builder-oauth-store" ${nixString(text)});
   })`;
 }
 

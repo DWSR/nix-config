@@ -44,8 +44,8 @@ function assertBuilderCapability(builder) {
   assert.equal(builder.ssh.openFirewall, false, 'the builder must not expose SSH outside the tailnet (Requirement 1.3)');
   assert.deepEqual(
     builder.ssh.hostKeys,
-    [{ path: '/var/lib/ssh/ssh_host_ed25519_key', type: 'ed25519' }],
-    'the builder host key must persist outside the Nix store (Requirement 3.1)',
+    [{ path: '/run/secrets/builder-ssh-host-key', type: 'ed25519' }],
+    'the builder host identity must be restored from the runtime SOPS secret (Requirement 3.1)',
   );
   assert.deepEqual(builder.ssh.settings.AllowUsers, ['builder'], 'sshd must allow only the builder account (Requirement 1.1)');
   assert.equal(builder.ssh.settings.PermitRootLogin, 'no', 'root SSH must stay disabled (Requirement 1.3)');
@@ -54,6 +54,9 @@ function assertBuilderCapability(builder) {
   assert.equal(builder.authorizedKeys.path, '/run/secrets/builder-authorized-keys', 'authorized keys must come from the runtime SOPS path (Requirements 1.1, 5.1)');
   assert.equal(builder.authorizedKeys.owner, 'root', 'authorized keys must be root-owned (Requirement 5.1)');
   assert.equal(builder.authorizedKeys.mode, '0400', 'authorized keys must be mode 0400 (Requirement 5.1)');
+  assert.equal(builder.hostKey.path, '/run/secrets/builder-ssh-host-key', 'the host key must be sourced from the runtime SOPS secret (Requirement 5.1)');
+  assert.equal(builder.hostKey.owner, 'root', 'the host key must be root-owned (Requirement 5.1)');
+  assert.equal(builder.hostKey.mode, '0400', 'the host key must be mode 0400 (Requirement 5.1)');
   assert.equal(builder.tailscaleOauth.path, '/run/secrets/builder-tailscale-oauth-secret', 'the Tailscale credential must come from its runtime SOPS path (Requirement 1.3)');
   assert.equal(builder.tailscaleOauth.owner, 'root', 'the Tailscale credential must be root-owned (Requirement 5.1)');
   assert.equal(builder.tailscaleOauth.mode, '0400', 'the Tailscale credential must be mode 0400 (Requirement 5.1)');

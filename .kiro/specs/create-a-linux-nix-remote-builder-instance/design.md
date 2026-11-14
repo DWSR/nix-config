@@ -91,7 +91,7 @@ Decisions:
 
 - Keep the builder guest configuration portable: `configurations/linux-builder/default.nix` owns NixOS, OpenSSH, Nix daemon authorization, and Nix store maintenance; the personal-host module owns Lima's image, resource values, and lifecycle.
 - Name the flake host `nixosConfigurations.linux-builder`, the guest hostname `linux-builder`, and its stable tailnet address `linux-builder.tuxedo-musical.ts.net`. The tailnet route is needed because both clients must reach the guest; the Fabro guest is already a Tailscale node, and the personal Mac has the Tailscale client installed.
-- Use `ssh-ng://builder@linux-builder.tuxedo-musical.ts.net` with only `aarch64-linux` in the machine record. The machine record includes the dedicated client's private-key runtime path and the builder's pinned host public key; do not place private key values in Nix expressions or the store. Declare builder SSH host keys through NixOS `services.openssh.hostKeys` with a persistent path outside `/nix/store`, so the checked-in public pin can be compared with the guest's stable host identity across VM restarts.
+- Use `ssh-ng://builder@linux-builder.tuxedo-musical.ts.net` with only `aarch64-linux` in the machine record. The machine record includes the dedicated client's private-key runtime path and the builder's pinned host public key; do not place private key values in Nix expressions or the store. Source the builder's Ed25519 SSH host private key from its 1Password SSH Key item into the builder-only SOPS store, then point NixOS `services.openssh.hostKeys` at the root-only runtime secret. Sync validates the key's public half against the checked-in pin, preserving the host identity across VM restarts without generating a guest-local key.
 - Extend the existing Fabro machine-file renderer/service to emit both the Linux and existing Darwin records. Keep `nix.settings.builders = @/run/fabro-darwin-builders/machines`, the existing service ordering, and the existing Darwin record's values, so there is one Nix daemon source of truth and no generated-file race.
 - On `Brandons-MacBook-Pro`, set `nix.settings.builders` to an `@file` reference for a `pkgs.writeText` machine file containing both the existing Darwin record and the Linux record. The file contains only public host identity and runtime file paths, never private key contents; the SOPS private key remains root-owned at `/run/secrets`.
 - Set Fabro `nix.settings.max-jobs = 0`; retain `nix.distributedBuilds = true` and `builders-use-substitutes = true`. The existing personal host already has `max-jobs = 0`; add its Linux machine without changing its local-binary-cache publisher's distributed-build policy.
@@ -218,7 +218,7 @@ Map each numeric requirement area to its implementing component and contract. Ac
 **Implementation Notes**
 
 - Use a separate SOPS store and age recipient for the builder's authorized client public keys and Tailscale OAuth secret. Keep the Tailscale OAuth client ID in the encrypted store separately from its client secret if the NixOS auth unit requires both values.
-- Keep the builder host key public value as a public repository pin in `certificates/linux-builder/ssh_host_ed25519_key.pub`; use it to verify the persistent guest host key and include the expected host-key field in both machine records. Never check in the corresponding private host key.
+- Keep the builder host key public value as a public repository pin in `certificates/linux-builder/ssh_host_ed25519_key.pub`; use it to verify the SOPS-restored guest host key and include the expected host-key field in both machine records. Keep the corresponding private key only in 1Password, the encrypted builder SOPS store, and its root-only runtime path; never commit it in plaintext or place it in the Nix store.
 
 ### Personal Host VM
 
@@ -322,11 +322,11 @@ Map each numeric requirement area to its implementing component and contract. Ac
 
 - Machine records use the repository's existing `ssh-ng` line format; the Fabro renderer validates required paths and emits the Linux and Darwin records in a single atomic replacement.
 - Secret files use sops-nix runtime paths only. SOPS encrypted YAML stores remain host-specific and use distinct age recipients.
-- The builder host key public value may be stored in the repository because it is public trust material; its private counterpart is generated and retained at a persistent NixOS guest path outside the Nix store.
+- The builder host public key is checked-in trust material. Its Ed25519 private counterpart is sourced from 1Password and restored from the builder-only SOPS store to a root-only runtime path before sshd starts; plaintext key material never enters the Nix store.
 
 ## Operator Provisioning
 
-All provisioning below is operator-owned. Implementation tasks add declarations, runtime path wiring, and structural tests only; they do not create, rotate, or write secret values.
+All provisioning below is operator-owned. Implementation adds declarations, sync behavior, and structural tests; it never generates or rotates source values. Sync may mirror existing 1Password values only into encrypted stores.
 
 | Secret / material | Source | Exact provisioning command | Verification command | Owner |
 |---|---|---|---|---|
@@ -336,7 +336,7 @@ All provisioning below is operator-owned. Implementation tasks add declarations,
 | Linux builder authorized client public keys | 1Password Secure Note `op://Infrastructure/mac-builder authorized keys/notesPlain`, one public key per line | Append the public halves from the two dedicated client keypairs to this item (shared with the mac builder), then run `nix run .#linux-builder-sync-from-1password` to encrypt them into `secrets/remote-builder.linux-builder.yaml`; do not replace other authorized keys during a client-key update. | Decrypt only the `builder-authorized-keys` key with `SOPS_AGE_KEY_FILE="$T/linux-builder-age-key.txt" sops -d --extract '["builder-authorized-keys"]' secrets/remote-builder.linux-builder.yaml` and compare its public-key lines with `ssh-keygen -y` output for each client. | Linux builder operator |
 | Linux builder Tailscale OAuth secret | Tailscale OAuth client with `auth_keys` scope and `tag:nix-remote-builder`, reused from the mac builder and stored at `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret` | Reuse the mac builder's OAuth client (authorized for `tag:nix-remote-builder`) with `auth_keys` scope; store its secret at that 1Password field; run `nix run .#linux-builder-sync-from-1password` to encrypt it into the builder-only SOPS store. Ensure the guest receives it at `/run/secrets/builder-tailscale-oauth-secret` before Tailscale starts. | On guest, `sudo test -s /run/secrets/builder-tailscale-oauth-secret && systemctl is-active tailscaled && tailscale status --json | jq -e '.Self.DNSName | startswith("linux-builder.")'`. | Tailnet operator |
 | Tailscale ACL and MagicDNS | Tailscale admin console policy and tailnet DNS | No new entries required: the linux builder now shares the mac builder's `tag:nix-remote-builder` tag and its existing `tagOwners`/TCP/22 grants. | From Fabro and the Mac, resolve `linux-builder.tuxedo-musical.ts.net` and verify TCP/22 reachability; confirm disallowed identities cannot reach TCP/22. | Tailnet operator |
-| Linux builder SSH host private key | NixOS OpenSSH host key at persistent `/var/lib/ssh/ssh_host_ed25519_key` | Configure `services.openssh.hostKeys` to use the persistent path; the operator obtains the keypair out of band from the guest bootstrap, never through a Kiro task. If a fresh guest requires manual key creation, run `sudo install -d -m 0700 -o root -g root /var/lib/ssh && sudo ssh-keygen -t ed25519 -N '' -f /var/lib/ssh/ssh_host_ed25519_key`. Copy only the `.pub` value to `certificates/linux-builder/ssh_host_ed25519_key.pub` as the client trust pin. | On guest, `sudo ssh-keygen -lf /var/lib/ssh/ssh_host_ed25519_key.pub`; compare its public key with `certificates/linux-builder/ssh_host_ed25519_key.pub`. | Linux builder operator |
+| Linux builder SSH host private key | 1Password SSH Key item `op://Infrastructure/Linux-Builder Host Key/private key?ssh-format=openssh` | Add `builder-ssh-host-key` to the Linux builder SOPS store and declare it root-only at `/run/secrets/builder-ssh-host-key`; point `services.openssh.hostKeys` at that path. `linux-builder-sync-from-1password` validates the OpenSSH Ed25519 key and rejects a public half that differs from the checked-in pin. | On guest, compare `ssh-keygen -lf /run/secrets/builder-ssh-host-key` with `ssh-keygen -lf certificates/linux-builder/ssh_host_ed25519_key.pub`; fingerprints must match. Never print or commit the private key in plaintext. | Linux builder operator |
 
 ## Error Handling
 
@@ -377,7 +377,7 @@ All provisioning below is operator-owned. Implementation tasks add declarations,
 
 ### Security Considerations
 
-- Keep all private SSH client keys and the Tailscale OAuth secret in their respective SOPS stores and runtime paths. They must not be read into Nix derivations, logged, or written to tracked files.
+- Keep SSH client keys, the builder's private host key, and the Tailscale OAuth secret in their respective SOPS stores and root-only runtime paths. They must not be read into Nix derivations, logged, or committed in plaintext.
 - Use a unique builder age recipient and distinct client keypairs; do not reuse the existing Darwin builder private key or broaden its authorized-key set.
 - Keep Nix's trusted SSH identity limited to the dedicated non-root builder account and expose SSH only through the authenticated tailnet endpoint.
 - Pin the builder SSH host public key on both clients. A host key mismatch is a hard failure requiring operator review and deliberate pin update.

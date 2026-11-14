@@ -57,6 +57,7 @@ test('documents the Linux builder store layout, sources, and recipients', () => 
   const text = linuxBuilderSection();
   assertContains(text, [
     'secrets/remote-builder.linux-builder.yaml',
+    'builder-ssh-host-key',
     'builder-authorized-keys',
     'builder-tailscale-oauth-secret',
     'secrets/linux-builder-client.personal.yaml',
@@ -65,6 +66,7 @@ test('documents the Linux builder store layout, sources, and recipients', () => 
     '&host_linux_builder',
     '&host_personal',
     'op://Private/sops-age-key-linux-builder/notesPlain',
+    'op://Infrastructure/Linux-Builder Host Key/private key?ssh-format=openssh',
     'op://Infrastructure/mac-builder authorized keys/notesPlain',
     'op://Infrastructure/mac-builder Tailscale OAuth/Client Secret',
     'op://Infrastructure/Fabro Linux nix remote builder key/private key',
@@ -176,6 +178,7 @@ test('documents runtime consumption and secret-safe verification', () => {
   const text = linuxBuilderSection();
   assertContains(text, [
     '/run/secrets/builder-authorized-keys',
+    '/run/secrets/builder-ssh-host-key',
     '/home/builder/.ssh/authorized_keys',
     '/run/secrets/linux-builder-client-key',
     'builder-authorized-keys.service',
@@ -190,7 +193,8 @@ test('documents host-key pin capture and verification', () => {
   const text = linuxBuilderSection();
   assertContains(text, [
     'certificates/linux-builder/ssh_host_ed25519_key.pub',
-    '/var/lib/ssh/ssh_host_ed25519_key',
+    '/run/secrets/builder-ssh-host-key',
+    'op://Infrastructure/Linux-Builder Host Key/public key',
     'ssh-keygen -lf',
   ]);
   assert.match(text, /private host key/i);

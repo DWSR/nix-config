@@ -52,7 +52,7 @@ in
     openFirewall = true;
     hostKeys = [
       {
-        path = "/var/lib/ssh/ssh_host_ed25519_key";
+        path = config.sops.secrets."builder-ssh-host-key".path;
         type = "ed25519";
       }
     ];
@@ -84,6 +84,11 @@ in
   sops.secrets = {
     "builder-authorized-keys" = {
       path = "/run/secrets/builder-authorized-keys";
+      mode = "0400";
+      owner = "root";
+    };
+    "builder-ssh-host-key" = {
+      path = "/run/secrets/builder-ssh-host-key";
       mode = "0400";
       owner = "root";
     };
@@ -133,6 +138,13 @@ in
   systemd.services.sshd = {
     requires = [ "builder-authorized-keys.service" ];
     after = [ "builder-authorized-keys.service" ];
+  };
+
+  # Materialize the 1Password-backed host identity before sshd's keygen
+  # fallback checks configured host-key paths.
+  systemd.services.sshd-keygen = {
+    requires = [ "sops-install-secrets.service" ];
+    after = [ "sops-install-secrets.service" ];
   };
 
   services.tailscale = {
