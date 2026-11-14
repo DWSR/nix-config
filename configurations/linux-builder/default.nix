@@ -177,7 +177,7 @@ in
       fi
 
       until ${config.services.tailscale.package}/bin/tailscale up \
-        --auth-key="$(cat "$credential_file")?ephemeral=false&preauthorized=true" \
+        --auth-key="$(cat "$credential_file")?ephemeral=true&preauthorized=true" \
         --hostname=linux-builder \
         --advertise-tags=tag:nix-remote-builder \
         --accept-dns=false; do

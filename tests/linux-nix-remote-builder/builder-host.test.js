@@ -266,7 +266,7 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
   assert.equal(cfg.tailscaleAuthService.serviceConfig.TimeoutStartSec, '0');
   assert.match(cfg.tailscaleAuthService.script, /tailscale up/);
   assert.match(cfg.tailscaleAuthService.script, /--auth-key=/);
-  assert.match(cfg.tailscaleAuthService.script, /\?ephemeral=false&preauthorized=true/);
+  assert.match(cfg.tailscaleAuthService.script, /\?ephemeral=true&preauthorized=true/);
   assert.match(cfg.tailscaleAuthService.script, /--advertise-tags=tag:nix-remote-builder/);
   assert.match(cfg.tailscaleAuthService.script, /--hostname=linux-builder/);
   assert.doesNotMatch(cfg.tailscaleAuthService.script, /builder-tailscale-oauth-client-id/);
@@ -300,7 +300,7 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
     });
     assert.equal(enrolled.status, 0, enrolled.stderr);
     const args = fs.readFileSync(capturePath, 'utf8').trim().split('\n');
-    assert.ok(args.includes('--auth-key=fixture-oauth-client-secret?ephemeral=false&preauthorized=true'));
+    assert.ok(args.includes('--auth-key=fixture-oauth-client-secret?ephemeral=true&preauthorized=true'));
     assert.ok(args.includes('--hostname=linux-builder'));
     assert.ok(args.includes('--advertise-tags=tag:nix-remote-builder'));
     assert.ok(args.includes('--accept-dns=false'));
