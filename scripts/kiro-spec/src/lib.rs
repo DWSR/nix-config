@@ -9,7 +9,122 @@ pub mod tasks;
 pub mod validate;
 
 use std::ffi::OsString;
+use std::io::Write;
 
-pub fn run(_args: impl IntoIterator<Item = OsString>) -> i32 {
-    0
+use crate::error::AppError;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Outcome {
+    stdout: Option<String>,
+    stderr: Option<String>,
+    code: i32,
+}
+
+impl Outcome {
+    pub fn new(stdout: Option<String>, stderr: Option<String>, code: i32) -> Self {
+        Self {
+            stdout,
+            stderr,
+            code,
+        }
+    }
+
+    pub fn success(stdout: Option<String>) -> Self {
+        Self::new(stdout, None, 0)
+    }
+
+    pub fn failure(error: AppError) -> Self {
+        Self::new(None, Some(format!("{}\n", error.diagnostic())), error.exit_code())
+    }
+
+    pub fn stdout(&self) -> Option<&str> {
+        self.stdout.as_deref()
+    }
+
+    pub fn stderr(&self) -> Option<&str> {
+        self.stderr.as_deref()
+    }
+
+    pub fn stdout_bytes(&self) -> &[u8] {
+        self.stdout.as_deref().unwrap_or("").as_bytes()
+    }
+
+    pub fn code(&self) -> i32 {
+        self.code
+    }
+
+    pub fn emit(&self) {
+        if let Some(stderr) = &self.stderr {
+            let mut handle = std::io::stderr().lock();
+            let _ = handle.write_all(stderr.as_bytes());
+            let _ = handle.flush();
+        }
+        if let Some(stdout) = &self.stdout {
+            let mut handle = std::io::stdout().lock();
+            let _ = handle.write_all(stdout.as_bytes());
+            let _ = handle.flush();
+        }
+    }
+}
+
+pub fn execute(args: impl IntoIterator<Item = OsString>) -> Outcome {
+    match cli::parse(args) {
+        Ok(()) => Outcome::success(None),
+        Err(error) => Outcome::failure(error),
+    }
+}
+
+pub fn run(args: impl IntoIterator<Item = OsString>) -> i32 {
+    let outcome = execute(args);
+    outcome.emit();
+    outcome.code()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::AppError;
+
+    #[test]
+    fn success_outcome_exits_zero() {
+        let outcome = Outcome::success(Some("result\n".to_owned()));
+        assert_eq!(outcome.code(), 0);
+        assert_eq!(outcome.stdout(), Some("result\n"));
+        assert_eq!(outcome.stderr(), None);
+    }
+
+    #[test]
+    fn failure_outcome_emits_nothing_on_stdout() {
+        let outcome = Outcome::failure(AppError::usage("usage", "missing subcommand"));
+        assert_eq!(outcome.code(), 2);
+        assert_eq!(outcome.stdout(), None);
+        assert_eq!(outcome.stdout_bytes().len(), 0);
+        assert_eq!(
+            outcome.stderr(),
+            Some("kiro-spec: usage: missing subcommand\n")
+        );
+    }
+
+    #[test]
+    fn validation_failure_keeps_complete_result_on_stdout() {
+        let outcome = Outcome::new(Some("{}\n".to_owned()), None, 1);
+        assert_eq!(outcome.code(), 1);
+        assert_eq!(outcome.stdout(), Some("{}\n"));
+        assert_eq!(outcome.stderr(), None);
+    }
+
+    #[test]
+    fn execute_without_arguments_is_a_usage_failure_with_no_stdout() {
+        let outcome = execute(std::iter::empty::<OsString>());
+        assert_eq!(outcome.code(), 2);
+        assert_eq!(outcome.stdout(), None);
+        assert!(outcome.stderr().unwrap().starts_with("kiro-spec: "));
+    }
+
+    #[test]
+    fn execute_with_unknown_arguments_is_a_usage_failure_with_no_stdout() {
+        let outcome = execute([OsString::from("unknown")]);
+        assert_eq!(outcome.code(), 2);
+        assert_eq!(outcome.stdout(), None);
+    }
 }
