@@ -125,7 +125,7 @@
   - _Depends: 1.2, 4.2, 5.4_
   - _Boundary: `tests/fly-app/contract-smoke.sh`_
   - _Requirements: 1.3, 2.4, 3.2, 3.8, 5.1_
-- [ ] 5.6 Prove live failure and caller-script propagation
+- [x] 5.6 Prove live failure and caller-script propagation
   - Extend and run the same harness for a recorded missing image, Fly rejection, and a caller script; verify no repush and a nonzero result in each failure case.
   - Done only when live failures are observed as specified; otherwise leave the compatibility gate blocked and do not claim complete implementation.
   - _Boundary: `tests/fly-app/contract-smoke.sh`_

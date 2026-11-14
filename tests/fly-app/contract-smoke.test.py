@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Behavioral regression tests for the operator-run Fly smoke harness.
 
-The suite covers the existing-image boot mode and the module deployment mode
+The suite covers the existing-image boot mode, the module deployment mode
 (hybrid image publication, two deployments, full Machine configs, managed
-counts, stable identities, and live app settings).
+counts, stable identities, and live app settings), and the failure checks
+(recorded missing image, Fly rejection, and caller-script propagation).
 """
 
 import copy
@@ -56,6 +57,9 @@ if "/v1/apps/" in url and url.endswith("/machines"):
 elif "/v1/apps/" in url:
     output.write_text(json.dumps({"name": os.environ["FLY_SMOKE_CONFIRM_APP"]}))
 elif "/manifests/" in url:
+    if "nix-" + "z" * 32 in url and os.environ.get("FLY_TEST_MISSING_TAG_PRESENT") != "1":
+        print("404", end="")
+        sys.exit(0)
     if os.environ.get("FLY_TEST_REGISTRY_FAIL") == "1":
         print("401", end="")
         sys.exit(0)
@@ -89,26 +93,111 @@ if os.environ.get("FLY_TEST_DEPLOY_FAIL") == "1":
         self.deploy_program = self.bin / "fly-app-deploy"
         self._write_command(
             "fly-app-deploy",
-            r'''#!/usr/bin/env bash
-set -euo pipefail
-if [[ $# -ne 2 || $1 != --spec || ! -f $2 ]]; then
-  printf 'unexpected deploy arguments\n' >&2
-  exit 64
-fi
-if [[ -z ${FLY_APP_STATE_DIR:-} ]]; then
-  printf 'deployment must use the harness publication state directory\n' >&2
-  exit 66
-fi
-printf '%s\n' "$2" >> "$FLY_TEST_DEPLOY_LOG"
-mapfile -t invocations < "$FLY_TEST_DEPLOY_LOG"
-count=${#invocations[@]}
-if [[ -n ${FLY_TEST_DEPLOY_OUTPUT:-} ]]; then
-  printf '%s\n' "$FLY_TEST_DEPLOY_OUTPUT"
-fi
-if [[ ${FLY_TEST_DEPLOY_FAIL_AT:-} == "$count" ]]; then
-  printf 'stub deployment failure %s\n' "$count" >&2
-  exit 7
-fi
+            r'''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+if len(sys.argv) != 3 or sys.argv[1] != "--spec":
+    print("unexpected deploy arguments", file=sys.stderr)
+    sys.exit(64)
+spec_path = pathlib.Path(sys.argv[2])
+if not spec_path.is_file():
+    print("deployment spec is not readable", file=sys.stderr)
+    sys.exit(64)
+if not os.environ.get("FLY_APP_STATE_DIR"):
+    print("deployment must use the harness publication state directory", file=sys.stderr)
+    sys.exit(66)
+
+log = pathlib.Path(os.environ["FLY_TEST_DEPLOY_LOG"])
+with log.open("a", encoding="utf-8") as handle:
+    handle.write(str(spec_path) + "\n")
+count = len(log.read_text(encoding="utf-8").splitlines())
+if os.environ.get("FLY_TEST_DEPLOY_OUTPUT"):
+    print(os.environ["FLY_TEST_DEPLOY_OUTPUT"])
+if os.environ.get("FLY_TEST_DEPLOY_FAIL_AT") == str(count):
+    print(f"stub deployment failure {count}", file=sys.stderr)
+    sys.exit(7)
+
+spec = json.loads(spec_path.read_text(encoding="utf-8"))
+settings = spec.get("settings") or {}
+sources = []
+for machine in (spec.get("machines") or {}).values():
+    if "image" in machine:
+        sources.append(machine["image"])
+    for container in (machine.get("containers") or {}).values():
+        if "image" in container:
+            sources.append(container["image"])
+identities = [
+    source["derivation"].split("/")[3][:32]
+    for source in sources
+    if "derivation" in source
+]
+app = spec["name"]
+
+
+def republish():
+    if identities and os.environ.get("FLY_TEST_PUBLISH_ON_FAILURE") == "1":
+        print(
+            f"fly-app-publish: publishing registry.fly.io/{app}:nix-{identities[0]}",
+            file=sys.stderr,
+        )
+
+
+def failure_output():
+    if os.environ.get("FLY_TEST_FAILURE_OUTPUT"):
+        print(os.environ["FLY_TEST_FAILURE_OUTPUT"])
+
+
+if os.environ.get("FLY_TEST_IGNORE_FAILURES") != "1":
+    if any(identity == "z" * 32 for identity in identities):
+        republish()
+        failure_output()
+        print(
+            "fly-app-publish: previously published image "
+            f"'registry.fly.io/{app}:nix-{'z' * 32}' is missing from the Fly "
+            "registry while publication state records a digest; refusing to republish",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    rejected = any(
+        isinstance(settings.get(key), str) for key in ("http_service", "services")
+    )
+    rejected = rejected or settings.get("kill_timeout") == "fly-smoke-invalid-duration"
+    if rejected:
+        republish()
+        failure_output()
+        for identity in identities:
+            print(
+                f"fly-app-publish: image registry.fly.io/{app}:nix-{identity} "
+                "is unchanged and still available; not republishing",
+                file=sys.stderr,
+            )
+        print(
+            f"fly-app-reconcile: Fly rejected deployment for app '{app}' "
+            "(flyctl exit status 7)",
+            file=sys.stderr,
+        )
+        sys.exit(7)
+
+if identities:
+    state_dir = pathlib.Path(os.environ["FLY_APP_STATE_DIR"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / f"{app}.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        state = {"version": 1, "app": app, "images": {}}
+    for identity in identities:
+        state.setdefault("images", {})[identity] = {
+            "identity": identity,
+            "reference": f"registry.fly.io/{app}:nix-{identity}",
+            "digest": "sha256:" + "0" * 64,
+        }
+    state_path.write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 ''',
         )
         for command in ("jq", "base64", "mktemp", "tr", "sleep", "awk"):
@@ -280,6 +369,7 @@ fi
         app_config=None,
         timeout="1",
         overrides=None,
+        failures=False,
     ):
         spec = copy.deepcopy(self._spec()) if spec is None else spec
         spec_path = self.root / "spec.json"
@@ -309,15 +399,18 @@ fi
             }
         )
         env.update(overrides or {})
+        arguments = [
+            str(HARNESS),
+            "--spec",
+            str(spec_path),
+            "--deploy",
+            str(self.deploy_program),
+        ]
+        if failures:
+            arguments.append("--failures")
+        arguments.append("demo")
         result = subprocess.run(
-            [
-                str(HARNESS),
-                "--spec",
-                str(spec_path),
-                "--deploy",
-                str(self.deploy_program),
-                "demo",
-            ],
+            arguments,
             check=False,
             capture_output=True,
             text=True,
@@ -338,6 +431,49 @@ fi
         self.assertIn("Fly hybrid image publication: ok", result.stdout)
         self.assertIn("Fly hybrid image boot: ok", result.stdout)
         self.assertIn("Fly live compatibility: ok", result.stdout)
+        self.assertNotIn("Fly failure missing-image: ok", result.stdout)
+
+    def test_deploy_mode_proves_failure_paths_without_republishing(self):
+        result, deploy_log = self._run_deploy(failures=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(deploy_log.read_text().splitlines()), 5)
+        for label in ("missing-image", "fly-rejection"):
+            self.assertIn(f"Fly failure {label}: ok", result.stdout)
+        self.assertIn("Fly caller-script failure propagation: ok", result.stdout)
+        self.assertIn("Fly live failure compatibility: ok", result.stdout)
+        self.assertNotIn("fly-app-publish: publishing", result.stdout + result.stderr)
+
+    def test_failure_checks_reject_an_unexpected_success(self):
+        result, _ = self._run_deploy(
+            failures=True, overrides={"FLY_TEST_IGNORE_FAILURES": "1"}
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unexpectedly succeeded", result.stderr)
+
+    def test_failure_checks_reject_a_republish(self):
+        result, _ = self._run_deploy(
+            failures=True, overrides={"FLY_TEST_PUBLISH_ON_FAILURE": "1"}
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("republished an image", result.stderr)
+
+    def test_failure_checks_reject_a_present_missing_image_tag(self):
+        result, _ = self._run_deploy(
+            failures=True, overrides={"FLY_TEST_MISSING_TAG_PRESENT": "1"}
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("could not confirm the fabricated missing image is absent", result.stderr)
+
+    def test_failure_check_diagnostics_redact_the_token(self):
+        result, _ = self._run_deploy(
+            failures=True,
+            overrides={
+                "FLY_TEST_PUBLISH_ON_FAILURE": "1",
+                "FLY_TEST_FAILURE_OUTPUT": "token test-only-token-do-not-log",
+            },
+        )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("[REDACTED]", result.stdout + result.stderr)
 
     def test_deploy_mode_requires_a_multi_container_hybrid_spec(self):
         mixed = copy.deepcopy(self._spec())
@@ -522,6 +658,11 @@ fi
         for args, status, message in (
             (
                 ["--spec", "spec.json", "demo"],
+                2,
+                "usage:",
+            ),
+            (
+                ["--spec", "spec.json", "--deploy", str(self.deploy_program), "--failures"],
                 2,
                 "usage:",
             ),
