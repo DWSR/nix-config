@@ -551,10 +551,10 @@ cannot be decrypted.
 
 ### Builder Tailscale credential and tailnet grants
 
-The builder joins the tailnet as the stable node `linux-builder` with
-MagicDNS name `linux-builder.tuxedo-musical.ts.net` and shares the mac
-builder's tag `tag:nix-remote-builder`. Enrollment uses the mac builder's
-OAuth client (reused, not a separate builder-specific client):
+The builder registers as an ephemeral node with requested hostname `linux-builder`
+and MagicDNS name `linux-builder.tuxedo-musical.ts.net`, sharing the mac
+builder's `tag:nix-remote-builder`. Enrollment uses the mac builder's OAuth
+client (reused, not a separate builder-specific client):
 
 - The client must have the `auth_keys` scope and be authorized to apply
   `tag:nix-remote-builder`.
@@ -564,12 +564,13 @@ OAuth client (reused, not a separate builder-specific client):
   `sops-install-secrets.service` and `tailscaled.service`, then reads
   `/run/secrets/builder-tailscale-oauth-secret` and runs `tailscale up
   --hostname=linux-builder --advertise-tags=tag:nix-remote-builder
-  --accept-dns=false` with the secret as the auth key. The node is
-  persistent, not ephemeral, so its identity survives guest restarts.
+  --accept-dns=false` with the secret as the auth key and
+  `ephemeral=true&preauthorized=true` options. A guest recreation registers a
+  fresh ephemeral node; remove stale offline `linux-builder*` records in the
+  Tailscale admin console if they occupy the base MagicDNS name.
 - Rotation affects future enrollments only. An already-registered guest keeps
-  its node until `sudo tailscale logout` runs in-guest; restart
-  `builder-tailscale-auth.service` afterwards to enroll with the new
-  credential.
+  its active node until `sudo tailscale logout` runs in-guest; restart
+  `builder-tailscale-auth.service` afterwards to enroll a new ephemeral node.
 
 Tag ownership and the SSH-only grants are **external tailnet policy**: they
 live in the Tailscale admin console (or the operator's policy-as-code source),
