@@ -113,7 +113,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Keep `tasks` in document order with subtasks beneath their grouping entry; have `next` report the actionable entry with blocked state and reason, or the no-incomplete-task result, and never select a grouping entry.
   - Confirm a fixture tree yields identical repeated output in both formats and hash-equal files after runs of both commands.
   - _Requirements: 2.7, 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.8, 4.1, 4.2, 4.3, 4.4, 4.5, 10.5_
-- [ ] 6.2 Wire `status`
+- [x] 6.2 Wire `status`
   - Read `spec.json` before rendering and fail naming the file when it is unparseable or `phase` is not a string; never infer the stage from task progress.
   - Render total, completed, pending, blocked, optional pending, and the raw phase string in both formats, reusing the task model's counts.
   - Confirm on a fixture tree that counts match entry states and the run leaves every file byte-identical.
