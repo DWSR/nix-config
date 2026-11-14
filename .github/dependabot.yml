@@ -1,7 +1,9 @@
 version: 2
 updates:
   - package-ecosystem: cargo
-    directory: /configurations/fabro-vm/api-bridge
+    directories:
+      - /configurations/fabro-vm/api-bridge
+      - /scripts/kiro-spec
     schedule:
       interval: weekly
     cooldown:
