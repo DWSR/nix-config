@@ -47,6 +47,12 @@ function evalBuilder(extraModule = null) {
         owner = cfg.sops.secrets."builder-tailscale-oauth-secret".owner;
         mode = cfg.sops.secrets."builder-tailscale-oauth-secret".mode;
       };
+      hostKeySecret = {
+        path = cfg.sops.secrets."builder-ssh-host-key".path;
+        sopsFile = toString cfg.sops.secrets."builder-ssh-host-key".sopsFile;
+        owner = cfg.sops.secrets."builder-ssh-host-key".owner;
+        mode = cfg.sops.secrets."builder-ssh-host-key".mode;
+      };
       sopsActivation = {
         enabled = cfg.sops.useSystemdActivation;
         installerServiceExists = cfg.systemd.services ? sops-install-secrets;
@@ -84,6 +90,10 @@ function evalBuilder(extraModule = null) {
       sshd = {
         after = cfg.systemd.services.sshd.after;
         requires = cfg.systemd.services.sshd.requires;
+      };
+      sshdKeygen = {
+        after = cfg.systemd.services.sshd-keygen.after;
+        requires = cfg.systemd.services.sshd-keygen.requires;
       };
       garbageCollection = {
         automatic = cfg.nix.gc.automatic;
@@ -159,7 +169,7 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   assert.equal(cfg.ssh.enable, true);
   assert.equal(cfg.ssh.openFirewall, true);
   assert.deepEqual(cfg.ssh.hostKeys, [
-    { path: '/var/lib/ssh/ssh_host_ed25519_key', type: 'ed25519' },
+    { path: '/run/secrets/builder-ssh-host-key', type: 'ed25519' },
   ]);
   assert.deepEqual(cfg.ssh.allowGroups, ['builder', 'wheel']);
   assert.equal(cfg.ssh.allowUsers, null, 'SSH must not exclude the guest operator account');
@@ -177,6 +187,10 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   assert.equal(cfg.tailscaleSecret.path, '/run/secrets/builder-tailscale-oauth-secret');
   assert.equal(cfg.tailscaleSecret.owner, 'root');
   assert.equal(cfg.tailscaleSecret.mode, '0400');
+  assert.equal(cfg.hostKeySecret.path, '/run/secrets/builder-ssh-host-key');
+  assert.match(cfg.hostKeySecret.sopsFile, /remote-builder\.linux-builder\.yaml$/);
+  assert.equal(cfg.hostKeySecret.owner, 'root');
+  assert.equal(cfg.hostKeySecret.mode, '0400');
   assert.equal(cfg.sopsActivation.enabled, true);
   assert.equal(cfg.sopsActivation.installerServiceExists, true);
   assert.ok(cfg.sopsActivation.installerWantedBy.includes('sysinit.target'));
@@ -187,6 +201,8 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   assert.ok(cfg.materializer.before.includes('sshd.service'));
   assert.ok(cfg.sshd.requires.includes('builder-authorized-keys.service'));
   assert.ok(cfg.sshd.after.includes('builder-authorized-keys.service'));
+  assert.ok(cfg.sshdKeygen.requires.includes('sops-install-secrets.service'));
+  assert.ok(cfg.sshdKeygen.after.includes('sops-install-secrets.service'));
   assert.match(cfg.materializer.script, /authorized_keys/);
   assert.match(cfg.materializer.script, /install -m 0600/);
   assert.match(cfg.materializer.script, /builder-authorized-keys/);

@@ -10,6 +10,8 @@
 #   * secrets/remote-builder.linux-builder.yaml — the builder host's store,
 #     encrypted to the operator-provisioned `host_linux_builder` age
 #     identity. It holds:
+#       - builder-ssh-host-key: the Linux builder's OpenSSH host private key,
+#         restored by sops-nix before sshd starts.
 #       - builder-authorized-keys: newline-separated public keys of the
 #         Fabro and personal-Mac Linux builder clients.
 #       - builder-tailscale-oauth-secret: the Tailscale OAuth client secret
@@ -21,6 +23,7 @@
 #
 # Source material (design's `## Operator Provisioning` section):
 #   builder age key          op://Private/sops-age-key-linux-builder/notesPlain
+#   builder SSH host key     op://Infrastructure/Linux-Builder Host Key/private key?ssh-format=openssh
 #   personal age key         op://Private/sops-age-key-personal/notesPlain
 #   authorized public keys   op://Infrastructure/mac-builder authorized keys/notesPlain
 #   Tailscale OAuth secret   op://Infrastructure/mac-builder Tailscale OAuth/Client Secret
@@ -123,6 +126,7 @@ pkgs.writeShellApplication {
     DEST_PERSONAL="$REPO_ROOT/$DEST_PERSONAL_REL"
 
     BUILDER_AGE_KEY_URI="op://Private/sops-age-key-linux-builder/notesPlain"
+    BUILDER_HOST_KEY_URI="op://Infrastructure/Linux-Builder Host Key/private key?ssh-format=openssh"
     PERSONAL_AGE_KEY_URI="op://Private/sops-age-key-personal/notesPlain"
     AUTHORIZED_KEYS_URI="op://Infrastructure/mac-builder authorized keys/notesPlain"
     TAILSCALE_SECRET_URI="op://Infrastructure/mac-builder Tailscale OAuth/Client Secret"
@@ -132,6 +136,7 @@ pkgs.writeShellApplication {
     chmod 0700 "$tmpdir"
     trap 'rm -rf "$tmpdir"' EXIT
     builder_age_key="$tmpdir/builder-age.key"
+    builder_host_key_file="$tmpdir/builder-host-key"
     personal_age_key="$tmpdir/personal-age.key"
     builder_plaintext="$tmpdir/remote-builder.linux-builder.yaml"
     personal_plaintext="$tmpdir/linux-builder-client.personal.yaml"
@@ -181,12 +186,44 @@ pkgs.writeShellApplication {
 
     authorized_keys_file="$tmpdir/authorized-keys"
     tailscale_secret_file="$tmpdir/tailscale-oauth-secret"
+    builder_host_key_check="$tmpdir/builder-host-key-check"
     personal_client_key_file="$tmpdir/personal-client-key"
+    read_secret "builder-ssh-host-key" "$BUILDER_HOST_KEY_URI" "$builder_host_key_file"
     read_secret "builder-authorized-keys" "$AUTHORIZED_KEYS_URI" "$authorized_keys_file"
     read_secret "builder-tailscale-oauth-secret" "$TAILSCALE_SECRET_URI" "$tailscale_secret_file"
     read_secret "the personal Linux builder client key" "$PERSONAL_CLIENT_KEY_URI" "$personal_client_key_file"
 
     # Gather phase: validate every supplied value before writing anything.
+    builder_host_key="$(tr -d '\r' < "$builder_host_key_file")"
+    printf '%s\n' "$builder_host_key" > "$builder_host_key_check"
+    chmod 0600 "$builder_host_key_check"
+    if [[ "$(head -n 1 "$builder_host_key_check")" != "-----BEGIN OPENSSH PRIVATE KEY-----" ]] \
+      || ! builder_host_public_key="$(ssh-keygen -y -f "$builder_host_key_check" 2>/dev/null)"; then
+      echo "linux-builder-sync-from-1password: error: the Linux builder host key is not a valid OpenSSH private key" >&2
+      echo "  Ensure its 1Password reference includes ?ssh-format=openssh" >&2
+      echo "  URI: $BUILDER_HOST_KEY_URI" >&2
+      exit 3
+    fi
+    read -r builder_host_key_type builder_host_key_data _ <<< "$builder_host_public_key"
+    host_key_pin="$REPO_ROOT/certificates/linux-builder/ssh_host_ed25519_key.pub"
+    if [[ ! -r "$host_key_pin" ]]; then
+      echo "linux-builder-sync-from-1password: error: the checked-in Linux builder host-key pin is missing" >&2
+      echo "  expected: $host_key_pin" >&2
+      exit 3
+    fi
+    host_key_pin_text="$(tr -d '\r' < "$host_key_pin")"
+    if [[ "$host_key_pin_text" == *$'\n'* ]]; then
+      echo "linux-builder-sync-from-1password: error: the checked-in Linux builder host-key pin must be one line" >&2
+      exit 3
+    fi
+    read -r host_key_pin_type host_key_pin_data _ <<< "$host_key_pin_text"
+    if [[ "$builder_host_key_type" != "ssh-ed25519" || "$host_key_pin_type" != "ssh-ed25519" \
+      || "$builder_host_key_data" != "$host_key_pin_data" ]]; then
+      echo "linux-builder-sync-from-1password: error: the 1Password host key does not match the checked-in Linux builder pin" >&2
+      echo "  compare the public half of $BUILDER_HOST_KEY_URI with $host_key_pin" >&2
+      exit 3
+    fi
+
     authorized_keys="$(cat "$authorized_keys_file")"
     authorized_keys="''${authorized_keys//$'\r'/}"
     if [[ ! "$authorized_keys" =~ [^[:space:]] ]]; then
@@ -241,9 +278,12 @@ pkgs.writeShellApplication {
     # and round-trip exactly through sops.
     printf '%s' "$authorized_keys" | jq -Rs . > "$tmpdir/authorized-keys.json"
     printf '%s' "$tailscale_secret" | jq -Rs . > "$tmpdir/tailscale-secret.json"
+    printf '%s\n' "$builder_host_key" | jq -Rs . > "$tmpdir/builder-host-key.json"
     printf '%s\n' "$personal_client_key" | jq -Rs . > "$tmpdir/personal-client-key.json"
     {
-      printf 'builder-authorized-keys: '
+      printf 'builder-ssh-host-key: '
+      tr -d '\n' < "$tmpdir/builder-host-key.json"
+      printf '\nbuilder-authorized-keys: '
       tr -d '\n' < "$tmpdir/authorized-keys.json"
       printf '\nbuilder-tailscale-oauth-secret: '
       tr -d '\n' < "$tmpdir/tailscale-secret.json"
@@ -254,7 +294,7 @@ pkgs.writeShellApplication {
       tr -d '\n' < "$tmpdir/personal-client-key.json"
       printf '\n'
     } > "$personal_plaintext"
-    unset authorized_keys tailscale_secret personal_client_key
+    unset builder_host_key builder_host_public_key host_key_pin_text authorized_keys tailscale_secret personal_client_key
 
     # Encrypt both stores to their respective recipients before replacing
     # either destination. The builder recipient is derived from the

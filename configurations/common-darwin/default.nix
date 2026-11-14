@@ -102,7 +102,7 @@ let
 
   linuxBuilderHostKeyPinWarning =
     "nix-config: the Linux builder SSH host-key pin is missing at ${toString linuxBuilderHostKeyPin}. "
-    + "Copy the guest's /var/lib/ssh/ssh_host_ed25519_key.pub to "
+    + "Copy op://Infrastructure/Linux-Builder Host Key/public key to "
     + "certificates/linux-builder/ssh_host_ed25519_key.pub (see the design's "
     + "Operator Provisioning section); until then the Linux machine record "
     + "omits the pinned host key and remote builds fail closed.";
@@ -123,7 +123,7 @@ let
     else
       throw ''
         nix-config: the Linux builder SSH host-key pin is not an ssh-ed25519 public key: ${toString linuxBuilderHostKeyPin}.
-        Copy the guest's /var/lib/ssh/ssh_host_ed25519_key.pub to
+        Copy op://Infrastructure/Linux-Builder Host Key/public key to
         certificates/linux-builder/ssh_host_ed25519_key.pub (see the design's
         Operator Provisioning section).
       '';
