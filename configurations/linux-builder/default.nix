@@ -69,9 +69,8 @@ in
   # The encrypted builder store is operator-provisioned by task 5.1. The
   # evaluation-only empty file keeps the portable host evaluable in advance;
   # actual activation still requires the provisioned store and age key.
-  sops.defaultSopsFile = builtins.toString (
-    if builtins.pathExists secretStore then secretStore else evaluationOnlyStore
-  );
+  # Keep the selected path typed so the SOPS manifest derivation depends on it.
+  sops.defaultSopsFile = if builtins.pathExists secretStore then secretStore else evaluationOnlyStore;
   sops.secrets = {
     "builder-authorized-keys" = {
       path = "/run/secrets/builder-authorized-keys";
