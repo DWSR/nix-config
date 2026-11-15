@@ -398,7 +398,7 @@ test('Fabro sync manifest includes the distinct Linux client key', () => {
 
   assert.equal(
     config.manifest['linux-builder-client-key'],
-    'op://Infrastructure/Fabro Linux nix remote builder key/private key',
+    'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh',
   );
   assert.equal(config.manifest['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh');
   assert.deepEqual(config.linux, {

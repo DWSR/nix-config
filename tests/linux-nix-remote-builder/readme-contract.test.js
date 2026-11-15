@@ -69,7 +69,7 @@ test('documents the Linux builder store layout, sources, and recipients', () => 
     'op://Infrastructure/Linux-Builder Host Key/private key?ssh-format=openssh',
     'op://Infrastructure/mac-builder authorized keys/notesPlain',
     'op://Infrastructure/mac-builder Tailscale OAuth/Client Secret',
-    'op://Infrastructure/Fabro Linux nix remote builder key/private key',
+    'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh',
     'op://Infrastructure/Brandons Mac Linux nix remote builder key/private key',
   ]);
   assert.match(text, /fails closed/i, 'the empty .sops.yaml recipient list must be explained');

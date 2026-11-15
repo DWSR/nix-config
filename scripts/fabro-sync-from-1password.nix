@@ -166,17 +166,26 @@ pkgs.writeShellApplication {
     mapfile -t SECRET_KEYS < <(printf '%s\n' "$MANIFEST_JSON" | jq -r 'keys_unsorted | sort | .[]')
 
     # Gather phase: resolve EVERY URI before writing anything. Aborting
-    # on the first failure leaves the prior $DEST untouched.
+    # on the first failure leaves the prior $DEST untouched. URIs shared by
+    # more than one key (e.g. linux-builder-client-key reusing
+    # build-client-key) are fetched once and reused so both entries stay
+    # byte-identical.
     declare -A VALUES
+    declare -A URI_VALUES
     for key in "''${SECRET_KEYS[@]}"; do
-      uri="$(printf '%s\n' "$MANIFEST_JSON" | jq -r --arg k "$key" '.[$k]')"
+      uri="$(printf '%s\\n' "$MANIFEST_JSON" | jq -r --arg k "$key" '.[$k]')"
+      if [ "''${URI_VALUES[$uri]+x}" = "x" ]; then
+        VALUES["$key"]="''${URI_VALUES[$uri]}"
+        continue
+      fi
       if ! value="$(op read --no-newline "$uri" 2>/dev/null)"; then
-        echo "fabro-sync-from-1password: error: failed to resolve 1Password URI for \"$key\"" >&2
+        echo "fabro-sync-from-1password: error: failed to resolve 1Password URI for \\"$key\\"" >&2
         echo "  URI: $uri" >&2
         echo "  (item may be missing, field renamed, or vault inaccessible)" >&2
         exit 3
       fi
       VALUES["$key"]="$value"
+      URI_VALUES["$uri"]="$value"
     done
 
     # Multi-line manifest values are SSH private keys, including the

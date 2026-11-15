@@ -353,7 +353,7 @@ section is its operational runbook.
 | Personal client source | `op://Infrastructure/Brandons Mac Linux nix remote builder key/private key` (reused from the mac builder client key, read with `?ssh-format=openssh`) |
 | Personal runtime path | `/run/secrets/linux-builder-client-key` (mode `0400`, root) |
 | Fabro client store | `secrets/fabro.fabro.yaml` (key `linux-builder-client-key`) |
-| Fabro client source | `op://Infrastructure/Fabro Linux nix remote builder key/private key` |
+| Fabro client source | `op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh` (reused from the Fabro build client key) |
 | Fabro runtime path | `/run/secrets/linux-builder-client-key` (mode `0400`, root) |
 
 The builder age key is installed on the guest at `/var/lib/sops-nix/key.txt`

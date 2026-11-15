@@ -401,8 +401,7 @@ function assertFabroDispatchPolicy(config) {
   assert.match(config.linuxSecret.sopsFile, /\/secrets\/fabro\.fabro\.yaml$/, 'Fabro Linux client key must come from the Fabro SOPS store');
   assert.equal(
     config.linuxOnePasswordSource,
-    'op://Infrastructure/Fabro Linux nix remote builder key/private key',
-    'Fabro Linux client key must have an operator-provisioned 1Password source (Requirement 5.3)',
+    'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh',
   );
 
   // Darwin route unchanged.

@@ -104,7 +104,7 @@ function evaluateGuestWithDispatchDisabled() {
 function assertBuilderSecretMappings(secrets) {
   assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh');
   assert.equal(secrets['build-host-key'], 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key');
-  assert.equal(secrets['linux-builder-client-key'], 'op://Infrastructure/Fabro Linux nix remote builder key/private key');
+  assert.equal(secrets['linux-builder-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh');
 }
 
 function assertSandboxBoundary({ wiringText, sandboxSource, imageSource }) {
@@ -251,7 +251,7 @@ test('boundary assertions reject a missing 1Password mapping and leaked sandbox 
   const mappings = {
     'build-client-key': 'op://Infrastructure/Fabro nix remote builder key/private key',
     'build-host-key': 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key',
-    'linux-builder-client-key': 'op://Infrastructure/Fabro Linux nix remote builder key/private key',
+    'linux-builder-client-key': 'op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh',
   };
   const sandbox = { wiringText: '{}', sandboxSource: '', imageSource: '' };
 
