@@ -411,6 +411,11 @@ in
         "flakes"
       ];
       trusted-users = [ "@wheel" ];
+      # Fabro must never build derivations locally; all builds go through the
+      # configured remote builders (darwin-dispatch.nix sets the same value
+      # alongside distributedBuilds). Keep this here so the policy holds even
+      # when dispatch is disabled.
+      max-jobs = 0;
     };
 
     # Store maintenance. GC reaps the generation-per-switch accretion on
