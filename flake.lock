@@ -701,11 +701,11 @@
         "poetry2nix": "poetry2nix"
       },
       "locked": {
-        "lastModified": 1792343917,
-        "narHash": "sha256-gcDOCStmvUTOXWI8gggo/6Y5sEKDAFaqWJN5Ncd1wII=",
+        "lastModified": 1793912692,
+        "narHash": "sha256-11G4UKLE/3YoRDOiXFdHXTP/1V8zZ+YKh6GcSiyig2Y=",
         "owner": "NixNeovim",
         "repo": "NixNeovimPlugins",
-        "rev": "b39c2dfd85029086161c97cf97f787899c8c7f71",
+        "rev": "ee10b986aacf2fb5176ba53c12000257e656fa88",
         "type": "github"
       },
       "original": {
