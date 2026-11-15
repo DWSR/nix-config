@@ -107,8 +107,12 @@ in
       "build-client-key" =
         "op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh";
       "build-host-key" = "op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key";
-      # Linux builder client key is reused from the mac builder client key
-      # (build-client-key); no separate secret is declared.      # The OpenCode v1 server's secrets (opencode.nix): a dedicated
+      # The Fabro VM reuses the same build client key for both the mac and
+      # Linux builders, so the Linux builder client key is mirrored from the
+      # same 1Password item as build-client-key (not a separate item).
+      "linux-builder-client-key" =
+        "op://Infrastructure/Fabro nix remote builder key/private key?ssh-format=openssh";
+      # The OpenCode v1 server's secrets (opencode.nix): a dedicated
       # GitHub PAT, its basic-auth server password, and the SSH
       # commit-signing key (a 1Password SSH Key item — multi-line value;
       # fabro-sync-from-1password emits it as a YAML double-quoted scalar).
@@ -191,6 +195,17 @@ in
         };
         "build-host-key" = {
           path = "/run/secrets/build-host-key";
+          mode = "0400";
+          owner = "root";
+          group = "root";
+          restartUnits = [
+            "fabro-darwin-builders.service"
+            "nix-daemon.service"
+          ];
+        };
+
+        "linux-builder-client-key" = {
+          path = "/run/secrets/linux-builder-client-key";
           mode = "0400";
           owner = "root";
           group = "root";
