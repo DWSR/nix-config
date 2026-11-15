@@ -47,7 +47,11 @@ function assertBuilderCapability(builder) {
     [{ path: '/run/secrets/builder-ssh-host-key', type: 'ed25519' }],
     'the builder host identity must be restored from the runtime SOPS secret (Requirement 3.1)',
   );
-  assert.deepEqual(builder.ssh.settings.AllowUsers, ['builder'], 'sshd must allow only the builder account (Requirement 1.1)');
+  assert.deepEqual(
+    builder.ssh.settings.AllowGroups,
+    ['builder', 'wheel'],
+    'sshd must allow the builder and Lima operator groups',
+  );
   assert.equal(builder.ssh.settings.PermitRootLogin, 'no', 'root SSH must stay disabled (Requirement 1.3)');
   assert.equal(builder.ssh.settings.PasswordAuthentication, false, 'SSH must use keys, not passwords (Requirement 1.3)');
   assert.equal(builder.ssh.settings.KbdInteractiveAuthentication, false, 'SSH must use keys, not passwords (Requirement 1.3)');

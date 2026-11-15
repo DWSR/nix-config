@@ -180,7 +180,7 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
   const cfg = evalBuilder();
 
   assert.equal(cfg.ssh.enable, true);
-  assert.equal(cfg.ssh.openFirewall, true);
+  assert.equal(cfg.ssh.openFirewall, false);
   assert.deepEqual(cfg.ssh.hostKeys, [
     { path: '/run/secrets/builder-ssh-host-key', type: 'ed25519' },
   ]);
