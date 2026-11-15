@@ -15,7 +15,7 @@ concurrency:
 jobs:
   flake-check:
     name: nix flake check
-    if: ${{ github.event_name == 'push' || github.event.pull_request.stack == null || github.event.pull_request.stack.position <= 2 || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
+    if: ${{ github.event_name == 'push' || github.event.pull_request.stack == null || (github.event.pull_request.stack != null && (github.event.pull_request.stack.position <= 2 || github.event.pull_request.stack.position == github.event.pull_request.stack.size)) }}
     runs-on: macos-latest
     # `actions: write` is required by the cache action's purge feature.
     permissions:
@@ -110,7 +110,7 @@ jobs:
   # daemon to run builds as root, so Lima validation runs in its own job.
   lima-config:
     name: Validate Lima config
-    if: ${{ github.event_name == 'push' || github.event.pull_request.stack == null || github.event.pull_request.stack.position <= 2 || github.event.pull_request.stack.position == github.event.pull_request.stack.size }}
+    if: ${{ github.event_name == 'push' || github.event.pull_request.stack == null || (github.event.pull_request.stack != null && (github.event.pull_request.stack.position <= 2 || github.event.pull_request.stack.position == github.event.pull_request.stack.size)) }}
     runs-on: macos-latest
     timeout-minutes: 30
 
