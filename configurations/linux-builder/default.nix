@@ -53,7 +53,7 @@ in
 
   services.openssh = {
     enable = true;
-    openFirewall = true;
+    openFirewall = false;
     hostKeys = [
       {
         path = config.sops.secrets."builder-ssh-host-key".path;
