@@ -70,6 +70,7 @@ paths = [
   '''tests/opencode-nono/integration/hm-render\.test\.js''',
   '''tests/opencode-nono-audit/.*''',
   '''tests/pi-agent/.*''',
+  '''tests/fly-app/.*\.test\.py''',
   '''tests/binks-pr-review/hm-render\.test\.js''',
   '''tests/shopify-remote-builder/proxy\.test\.js''',
   '''scripts/gh-stack-mcp/internal/stackmcp/.*_test\.go''',
