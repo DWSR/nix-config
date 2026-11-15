@@ -7,11 +7,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789653231,
-        "narHash": "sha256-7MYDOtFZHPtnevCtW1hyK2mwCoORRDT0ePBFSJFLgd8=",
+        "lastModified": 1789739609,
+        "narHash": "sha256-6qcsBjMrSgBWC11Ye6ybhBFBUqhW5g84UERV/R6azk0=",
         "owner": "DWSR",
         "repo": "agentmemory",
-        "rev": "0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6",
+        "rev": "03b171b1424fd48940265308e89dcfd1d005ea3f",
         "type": "github"
       },
       "original": {
