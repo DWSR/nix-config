@@ -1,0 +1,64 @@
+{
+  "name": "prisma",
+  "version": "5.17.0",
+  "description": "Prisma is an open-source database toolkit. It includes a JavaScript/TypeScript ORM for Node.js, migrations and a modern GUI to view and edit your database. You can use Prisma in new projects or add it to an existing one.",
+  "keywords": [
+    "CLI",
+    "ORM",
+    "Prisma",
+    "Prisma CLI",
+    "prisma2",
+    "database",
+    "db",
+    "JavaScript",
+    "JS",
+    "TypeScript",
+    "TS",
+    "SQL",
+    "SQLite",
+    "pg",
+    "Postgres",
+    "PostgreSQL",
+    "CockroachDB",
+    "MySQL",
+    "MariaDB",
+    "MSSQL",
+    "SQL Server",
+    "SQLServer",
+    "MongoDB"
+  ],
+  "main": "build/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prisma/prisma.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://www.prisma.io",
+  "author": "Tim Suchanek <suchanek@prisma.io>",
+  "bugs": {
+    "url": "https://github.com/prisma/prisma/issues"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=16.13"
+  },
+  "files": [
+    "README.md",
+    "build",
+    "install",
+    "runtime/*.js",
+    "runtime/*.d.ts",
+    "runtime/utils",
+    "runtime/dist",
+    "runtime/llhttp",
+    "prisma-client",
+    "preinstall",
+    "scripts/preinstall-entry.js"
+  ],
+  "bin": {
+    "prisma": "build/index.js"
+  },
+  "dependencies": {
+    "@prisma/engines": "5.17.0"
+  }
+}
