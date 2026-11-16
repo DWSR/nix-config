@@ -61,7 +61,7 @@ back the rendered unit graph.
 
 - [ ] 3. Offline LiteLLM database package
 
-- [ ] 3.1 (P) Add the pinned Prisma 5.17.0 CLI and the patched query and schema engines
+- [x] 3.1 (P) Add the pinned Prisma 5.17.0 CLI and the patched query and schema engines
   - Create `overlays/litellm-db.nix` with `litellm-prisma-engines` fetching the 5.17.0 `query-engine` and `schema-engine` for `linux-arm64-openssl-3.0.x` from commit `393aa359c9ad4a4bb28630fb5613f9c281cde053`, applying `autoPatchelfHook` with glibc/gcc/openssl, and recording `passthru.engineCommit`
   - Add the `prisma@5.17.0` npm closure under `overlays/litellm-prisma/` (the design's `package-lock.json` plus the `package.json` it locks) and `litellm-prisma-cli` from `final.importNpmLock` with `NPM_CONFIG_IGNORE_SCRIPTS=1` and a wrapper exporting `PRISMA_SCHEMA_ENGINE_BINARY` and `PRISMA_QUERY_ENGINE_BINARY`; download no engine inside the CLI derivation
   - Register the overlay in `overlays/default.nix` (`custom-packages`) and leave the pinned package set unchanged: no `prisma_6`/`prisma_7` substitution and no runtime fetch
