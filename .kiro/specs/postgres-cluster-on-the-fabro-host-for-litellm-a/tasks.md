@@ -85,7 +85,7 @@ back the rendered unit graph.
 
 - [ ] 4. LiteLLM database wiring
 
-- [ ] 4.1 (P) Add the fixed `litellm` and `litellm-migrator` system accounts
+- [x] 4.1 (P) Add the fixed `litellm` and `litellm-migrator` system accounts
   - Declare `users.groups` and `users.users` entries `litellm` and `litellm-migrator` as system accounts in `configurations/fabro-vm/litellm-db.nix`, each in its matching group; add no unit in this task
   - Leave the Lima cidata account, `users.mutableUsers`, and the existing `svc:fabro`/`svc:litellm`/`svc:opencode` Serve lines untouched, and declare no `DynamicUser` and no privileged supplementary group
   - Completed when the guest evaluation lists both accounts as system users with their groups and no workload unit runs as `postgres`
