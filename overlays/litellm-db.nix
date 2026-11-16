@@ -115,4 +115,89 @@ in
       mainProgram = "prisma";
     };
   };
+
+  # prisma-client-py 0.15.0 with LiteLLM's Prisma models rendered in. LiteLLM
+  # imports `prisma` eagerly at startup and never runs a generate or an online
+  # CLI install, so the deployed client has to be generated at build time from
+  # the same pinned schema the init unit pushes. The base package keeps its
+  # Python dependency set; only its installed `prisma` package directory is
+  # replaced with the generated one, and the two console scripts are removed
+  # afterwards so the proxy's PATH holds no online Prisma CLI.
+  litellm-prisma-client = final.python3Packages.prisma.overridePythonAttrs (old: {
+    pname = "litellm-prisma-client";
+
+    # The base package's pythonImportsCheck imports the generated package
+    # after postInstall; without this the interpreter writes timestamp-based
+    # .pyc files into $out and the build output stops being reproducible.
+    env.PYTHONDONTWRITEBYTECODE = "1";
+
+    postInstall = (old.postInstall or "") + ''
+            schemaDir="$TMPDIR/litellm-prisma-schema"
+            generatedDir="$TMPDIR/litellm-prisma-client"
+            homeDir="$TMPDIR/litellm-prisma-home"
+            mkdir -p "$schemaDir" "$generatedDir" "$homeDir"
+
+            # The pinned LiteLLM package the init unit pushes the schema from: copy
+            # its schema and point the prisma-client-py generator at a fixed
+            # temporary output directory. A fixed path (not `mktemp -d`) keeps the
+            # prisma-formatted schema embedded in the generated package reproducible.
+            cp ${final.python3Packages.litellm}/lib/python*/site-packages/litellm/proxy/schema.prisma "$schemaDir/schema.prisma"
+            chmod u+w "$schemaDir/schema.prisma"
+            ${final.python3.interpreter} - "$schemaDir/schema.prisma" "$generatedDir" <<'PYTHON'
+      import re
+      import sys
+
+      path, output = sys.argv[1], sys.argv[2]
+      with open(path) as file:
+          schema = file.read()
+
+      patched, count = re.subn(
+          r"generator\s+client\s*\{",
+          lambda match: f'{match.group(0)}\n  output = "{output}"',
+          schema,
+          count=1,
+      )
+      if count != 1:
+          raise SystemExit(f"litellm-prisma-client: no generator client block in {path}")
+
+      with open(path, "w") as file:
+          file.write(patched)
+      PYTHON
+
+            # `$out/bin` holds the installed prisma-client-py generator the Prisma
+            # CLI invokes. The CLI wrapper already points its two engine variables at
+            # litellm-prisma-engines, so nothing is downloaded here.
+            PATH="$out/bin:$PATH" \
+              HOME="$homeDir" \
+              CHECKPOINT_DISABLE=1 \
+              PRISMA_HIDE_UPDATE_MESSAGE=1 \
+              ${final.litellm-prisma-cli}/bin/prisma generate --schema "$schemaDir/schema.prisma"
+
+            # Fail here rather than install an empty package if the generator
+            # ever exits zero without writing the models.
+            test -f "$generatedDir/client.py" || {
+              echo "litellm-prisma-client: prisma generate wrote no client.py" >&2
+              exit 1
+            }
+
+            # The generator copies the installed package into the output and renders
+            # the LiteLLM models over it, so the result is a complete `prisma`
+            # package rather than a partial model set.
+            sitePackages=$(echo "$out"/lib/python*/site-packages)
+            rm -rf "$sitePackages/prisma"
+            cp -r "$generatedDir" "$sitePackages/prisma"
+            chmod -R u+w "$sitePackages/prisma"
+
+            # Only after the generated package is installed: drop the online Prisma
+            # CLI entry points, including their wrapped counterparts, so the proxy's
+            # runtime PATH exposes no `prisma` executable at all.
+            rm -f "$out/bin/prisma" "$out/bin/prisma-client-py" \
+              "$out/bin/.prisma-wrapped" "$out/bin/.prisma-client-py-wrapped"
+            rmdir "$out/bin" 2>/dev/null || true
+    '';
+
+    meta = (old.meta or { }) // {
+      description = "prisma-client-py 0.15.0 with LiteLLM's Prisma schema generated in";
+    };
+  });
 }

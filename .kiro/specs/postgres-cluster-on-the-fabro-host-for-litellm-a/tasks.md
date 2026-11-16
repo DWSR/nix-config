@@ -69,7 +69,7 @@ back the rendered unit graph.
   - _Requirements: 7.4, 7.12_
   - _Boundary: overlays/litellm-db.nix, overlays/litellm-prisma/package-lock.json_
 
-- [ ] 3.2 Generate the Prisma client for LiteLLM's schema as `litellm-prisma-client`
+- [x] 3.2 Generate the Prisma client for LiteLLM's schema as `litellm-prisma-client`
   - Extend `overlays/litellm-db.nix` with `litellm-prisma-client`: the pinned `python3Packages.prisma` plus a `postInstall` that copies `litellm/proxy/schema.prisma` from the pinned LiteLLM package, sets the generator `output` to a temporary directory, runs `${litellm-prisma-cli}/bin/prisma generate`, replaces the installed `prisma` package with the generated one, and only then removes `bin/prisma` and `bin/prisma-client-py`
   - Keep the base package's Python dependencies and add no new runtime dependency list; the generated client and the `schema.prisma` the init step pushes must come from the same closure
   - Completed when `python -c 'from prisma import Prisma'` succeeds in the package, generation ran during the build, and the closure exposes no `prisma` executable
