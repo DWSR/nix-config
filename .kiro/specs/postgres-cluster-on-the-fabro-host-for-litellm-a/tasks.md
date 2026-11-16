@@ -39,7 +39,7 @@ back the rendered unit graph.
 
 - [ ] 2. Declarative provisioning adapter
 
-- [ ] 2.1 Project the declarations into `ensureDatabases` and `ensureUsers`
+- [x] 2.1 Project the declarations into `ensureDatabases` and `ensureUsers`
   - Set `services.postgresql.ensureDatabases = lib.attrNames cfg.databases` and `ensureUsers` from `cfg.roles` as `{ name = <role>; ensureClauses.connection_limit = <n>; }` only when `connectionLimit != -1`, never a `password` clause
   - Keep both lists derived only from `fabro.postgres`, so no second source creates a workload database or role and no caller can add one through the module's freeform clauses
   - Completed when adding `databases.<name>` changes exactly the `postgresql-setup` inputs, and `nix eval` shows the declared names in both lists with no `password` key anywhere
