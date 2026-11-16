@@ -27,6 +27,13 @@ const gatewayExpr = `
     pythonpath = vm.services.litellm.environment.PYTHONPATH;
     dontWrite = vm.services.litellm.environment.PYTHONDONTWRITEBYTECODE;
     dynamicUser = vm.systemd.services.litellm.serviceConfig.DynamicUser or null;
+    privateUsers = vm.systemd.services.litellm.serviceConfig.PrivateUsers or null;
+    user = vm.systemd.services.litellm.serviceConfig.User or null;
+    group = vm.systemd.services.litellm.serviceConfig.Group or null;
+    databaseUrl = vm.services.litellm.environment.DATABASE_URL or null;
+    disableSchemaUpdate = vm.services.litellm.environment.DISABLE_SCHEMA_UPDATE or null;
+    queryEngine = vm.services.litellm.environment.PRISMA_QUERY_ENGINE_BINARY or null;
+    requires = vm.systemd.services.litellm.requires;
     healthGate = vm.systemd.services.litellm.serviceConfig.ExecStartPost;
   }
 `;
@@ -204,8 +211,21 @@ test('callbacks names the affinity bridge instance', () => {
   );
 });
 
-test('the service runs the generated config directory', () => {
-  const { execStart, pythonpath, dontWrite, dynamicUser, healthGate } = gateway();
+test('the proxy service runs the generated config directory as the fixed litellm user', () => {
+  const {
+    execStart,
+    pythonpath,
+    dontWrite,
+    dynamicUser,
+    privateUsers,
+    user,
+    group,
+    databaseUrl,
+    disableSchemaUpdate,
+    queryEngine,
+    requires,
+    healthGate,
+  } = gateway();
 
   assert.match(pythonpath, /-litellm-config$/);
   assert.ok(
@@ -217,9 +237,26 @@ test('the service runs the generated config directory', () => {
     `ExecStart '${execStart}' does not pass --config`,
   );
   assert.equal(dontWrite, '1');
-  assert.equal(dynamicUser, true);
+  assert.equal(dynamicUser, false);
+  assert.equal(privateUsers, false);
+  assert.equal(user, 'litellm');
+  assert.equal(group, 'litellm');
   assert.equal(typeof healthGate, 'string');
   assert.ok(healthGate.length > 0, 'ExecStartPost health gate is empty');
+
+  // The proxy reaches the database over the Unix socket as the application
+  // role and never carries a password. Schema initialization belongs to the
+  // separate `litellm-db-init` unit, which the proxy requires.
+  assert.equal(
+    databaseUrl,
+    'postgresql://litellm_app@localhost/litellm?host=/run/postgresql',
+  );
+  assert.equal(disableSchemaUpdate, 'true');
+  assert.match(queryEngine, /\/bin\/query-engine$/);
+  assert.ok(requires.includes('litellm-db-init.service'));
+  assert.ok(requires.includes('postgres-grants.service'));
+  assert.equal(execStart.includes('db push'), false);
+  assert.equal(execStart.includes('--accept-data-loss'), false);
 });
 
 test('the real settings and rendered YAML carry no credential values', () => {
