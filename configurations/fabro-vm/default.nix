@@ -58,6 +58,8 @@ in
     ./litellm.nix
     # The `fabro.postgres` declaration surface for the shared cluster.
     ./postgres.nix
+    # LiteLLM's `fabro.postgres` declarations and fixed system accounts.
+    ./litellm-db.nix
     # The podman-bridge API bridge that lets dispatch workflow sandboxes
     # create and start (and the bridge transparently approves) child runs
     # without a Fabro credential in any sandbox environment.
