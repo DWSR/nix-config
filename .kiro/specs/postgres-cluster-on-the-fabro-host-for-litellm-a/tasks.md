@@ -92,7 +92,7 @@ back the rendered unit graph.
   - _Requirements: 5.1, 5.2, 5.9, 9.2_
   - _Boundary: configurations/fabro-vm/litellm-db.nix (users only)_
 
-- [ ] 4.2 (P) Transcribe the eight LiteLLM views into `configurations/fabro-vm/postgres/litellm-views.sql`
+- [x] 4.2 (P) Transcribe the eight LiteLLM views into `configurations/fabro-vm/postgres/litellm-views.sql`
   - Copy the pinned `litellm/proxy/db/create_views.py` bodies as `CREATE OR REPLACE VIEW` statements for `LiteLLM_VerificationTokenView` (including `p.project_alias`), `MonthlyGlobalSpend`, `Last30dKeysBySpend`, `Last30dModelsBySpend`, `MonthlyGlobalSpendPerKey`, `MonthlyGlobalSpendPerUserPerKey`, `Last30dTopEndUsersSpend`, and `DailyTagSpend`
   - Keep the file pure SQL with no owner, grant, or cluster-admin statement: the migration role creates the views and `postgres-grants` grants them
   - Completed when the file defines exactly those eight names and `psql -f` applies it twice without error on a database owned by the migration role
