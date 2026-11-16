@@ -32,6 +32,7 @@ updates:
       - /overlays/agentmemory-deps
       - /overlays/gcloud-mcp
       - /overlays/git-mcp-server
+      - /overlays/litellm-prisma
       - /overlays/observability-mcp
       - /overlays/obsidian-importer-deps
       - /overlays/opencode-cost-diagnosis-deps
