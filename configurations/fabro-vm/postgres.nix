@@ -224,6 +224,45 @@ let
     '';
 
   bootstrapSqlText = lib.concatMapStrings databaseBootstrapSql declaredDatabaseNames;
+
+  # Object grants are applied only after every schema-initialization unit has
+  # run, because the migration role's tables, sequences, and views do not exist
+  # before that. Each declaration becomes a statement in its database; the
+  # `\echo` marker names the declaration so `psql -v ON_ERROR_STOP=1
+  # --echo-errors` leaves the failing grant's database, role, and scope in the
+  # journal. Database-level grants stay in the bootstrap file, which is the
+  # only place a workload role receives CONNECT.
+  objectGrantSql =
+    grant:
+    {
+      database = [ ];
+      schema = [
+        "GRANT ${grantPrivilegeList grant} ON SCHEMA public TO ${sqlIdent grant.role};"
+      ];
+      all-tables = [
+        "GRANT ${grantPrivilegeList grant} ON ALL TABLES IN SCHEMA public TO ${sqlIdent grant.role};"
+      ];
+      all-sequences = [
+        "GRANT ${grantPrivilegeList grant} ON ALL SEQUENCES IN SCHEMA public TO ${sqlIdent grant.role};"
+      ];
+    }
+    .${grant.on};
+
+  databaseObjectGrantsSql =
+    name:
+    let
+      grants = lib.filter (grant: grant.database == name && grant.on != "database") cfg.grants;
+    in
+    ''
+      \echo 'fabro.postgres: database ${name}'
+      \connect ${sqlIdent name}
+      ${lib.concatMapStrings (grant: ''
+        \echo 'fabro.postgres: grant ${name} ${grant.role} ${grant.on}'
+        ${lib.concatStringsSep "\n" (objectGrantSql grant)}
+      '') grants}
+    '';
+
+  objectGrantsSqlText = lib.concatMapStrings databaseObjectGrantsSql declaredDatabaseNames;
 in
 {
   options.fabro.postgres = {
@@ -397,6 +436,18 @@ in
         exactly the text the unit applies.
       '';
     };
+
+    objectGrantsSqlFile = lib.mkOption {
+      type = lib.types.path;
+      readOnly = true;
+      default = pkgs.writeText "fabro-postgres-grants.sql" objectGrantsSqlText;
+      description = ''
+        Generated idempotent object-grant SQL that `postgres-grants.service`
+        applies after every schema-initialization unit: each declared
+        database's `public` schema USAGE and its table and sequence grants.
+        Exposed so a check runs exactly the text the unit applies.
+      '';
+    };
   };
 
   config = lib.mkMerge [
@@ -470,6 +521,31 @@ in
         };
         script = ''
           exec ${config.services.postgresql.finalPackage}/bin/psql -v ON_ERROR_STOP=1 --echo-errors -f ${cfg.bootstrapSqlFile}
+        '';
+      };
+
+      # The object-grant oneshot runs after every schema-initialization unit,
+      # because the migration role's tables, sequences, and views exist only
+      # then. It applies the generated grants with the cluster's own `psql`;
+      # `ON_ERROR_STOP=1` fails the unit and the `\echo` markers plus
+      # `--echo-errors` name the failing declaration in the journal.
+      systemd.services.postgres-grants = {
+        description = "Apply the declared PostgreSQL object grants";
+        wantedBy = [ "multi-user.target" ];
+        requires = [ "postgres-bootstrap.service" ] ++ cfg.schemaInitUnits;
+        after = [ "postgres-bootstrap.service" ] ++ cfg.schemaInitUnits;
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          User = "postgres";
+          Group = "postgres";
+        };
+        environment = {
+          PGHOST = cfg.socketDir;
+          PGPORT = toString config.services.postgresql.settings.port;
+        };
+        script = ''
+          exec ${config.services.postgresql.finalPackage}/bin/psql -v ON_ERROR_STOP=1 --echo-errors -f ${cfg.objectGrantsSqlFile}
         '';
       };
     })
