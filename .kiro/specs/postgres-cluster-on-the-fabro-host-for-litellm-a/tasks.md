@@ -52,7 +52,7 @@ back the rendered unit graph.
   - Completed when the file applies twice to a scratch cluster with no error and no catalog change, and the unit is enabled and ordered ahead of every `schemaInitUnits` entry
   - _Requirements: 1.5, 1.6, 4.4, 4.6, 4.7, 4.8, 4.9, 4.11, 5.11, 9.1_
 
-- [ ] 2.3 Generate the object-grant SQL and the `postgres-grants` unit
+- [x] 2.3 Generate the object-grant SQL and the `postgres-grants` unit
   - Emit one `psql -f` file with `\connect "<db>"` per database: `GRANT USAGE ON SCHEMA public`, `GRANT <privileges> ON ALL TABLES IN SCHEMA public`, and `GRANT <privileges> ON ALL SEQUENCES IN SCHEMA public` for each declared grant, covering the migration role's tables and the pre-created views
   - Add `systemd.services.postgres-grants` as a `oneshot` with `RemainAfterExit`, `User = "postgres"`, `requires`/`after` `postgres-bootstrap.service` and every `cfg.schemaInitUnits` entry, `wantedBy = [ "multi-user.target" ]`, and the same `finalPackage` client; grant no `CREATE` on the database or `public` and no `SUPERUSER`/`CREATEDB`/`CREATEROLE` class privilege to an application role
   - Keep the file idempotent and expose it from the module (the design's `objectGrantsSqlFile`); a failed statement must leave the unit failed with the declaration named by `psql -v ON_ERROR_STOP=1`
