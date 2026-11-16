@@ -136,6 +136,7 @@ test('copyToRoot exposes the tools on /bin, the CA bundle, and /usr/bin/env', ()
     'jq',
     'curl',
     'kiro-spec',
+    'fabro',
     'fabro-sandbox-usr-bin-env',
   ]) {
     assert.ok(
