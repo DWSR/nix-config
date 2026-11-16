@@ -23,7 +23,7 @@ back the rendered unit graph.
   - Completed when `nix eval .#nixosConfigurations.fabro-vm.config.fabro.postgres` shows the empty declaration sets with those defaults, and a temporary declaration with an undeclared owner or a `postgres` role fails evaluation naming the option path
   - _Requirements: 1.1, 4.1, 4.10, 4.11, 5.3, 5.4, 9.1, 9.4, 9.5_
 
-- [ ] 1.2 Run one PostgreSQL 18.6 server on the Unix socket with the three extensions
+- [x] 1.2 Run one PostgreSQL 18.6 server on the Unix socket with the three extensions
   - Set `services.postgresql = { enable = cfg.enable; package = cfg.package; extensions = ps: [ ps.pg_textsearch ps.pgvector ps.pg_uuidv7 ]; }`, `settings.shared_preload_libraries = "pg_textsearch"`, `settings.unix_socket_directories = cfg.socketDir`, and `settings.port = 5432`
   - Force `settings.listen_addresses = lib.mkForce ""` because the module's `enableTCPIP = false` still writes `localhost`; add no `allowedTCPPorts` entry, no `tailscale serve` line, and no second server, cluster, major version, or data directory
   - Set `fabro.postgres.enable = true` in `configurations/fabro-vm/default.nix`; the module's `postgres` account owns the server and `/var/lib/postgresql/18`, so a switch preserves databases, roles, and rows and nothing in this module drops an object, and a start failure surfaces as a failed/restarting unit with the server error in its journal
