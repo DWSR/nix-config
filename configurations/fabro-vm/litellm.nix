@@ -1,8 +1,9 @@
 # LiteLLM proxy on the fabro host: one loopback OpenAI-compatible gateway in
 # front of the subscription-backed models (the mac's `programs.litellm`
 # launchd agent, minus its Keychain machinery). Uses the upstream nixpkgs
-# `services.litellm` module (DynamicUser, state dir, seeded tiktoken cache,
-# writable-UI runtime dir).
+# `services.litellm` module (state dir, seeded tiktoken cache, writable-UI
+# runtime dir); the fixed `litellm` service account and `DynamicUser = false`
+# override live in `./litellm-db.nix`.
 #
 # The served model list and the header-forwarding list are generated from
 # `./litellm-catalog.nix`, the single source of the served logical ids: every
@@ -54,17 +55,18 @@ let
 
   # The ChatGPT provider credentials: litellm's chatgpt authenticator
   # (llms/chatgpt/authenticator) resolves CHATGPT_TOKEN_DIR, falling back to
-  # `~/.config/litellm/chatgpt`. The DynamicUser unit has no HOME, so both
-  # the unit and this login wrapper pin the path inside the state dir; the
-  # service reads and refreshes auth.json in place under the same path.
+  # `~/.config/litellm/chatgpt`. The fixed account's own HOME (/var/empty)
+  # is not writable, so both the unit environment and this login wrapper pin
+  # the path inside the state dir; the service reads and refreshes auth.json
+  # in place under the same path.
   litellmTokenDir = "${config.services.litellm.stateDir}/chatgpt";
 
   # Device-flow login for the ChatGPT providers (the mac's
   # `programs.litellm.litellmChatGptLogin` wrapper, pointed at the guest's
   # token dir). Prints a verification URL + code, waits for the human to
   # approve it, then writes auth.json under CHATGPT_TOKEN_DIR. Runs under
-  # sudo, so the credentials and token dir are handed to the DynamicUser
-  # proxy (numeric owner of the state dir) afterwards.
+  # sudo, so the credentials and token dir are handed to the fixed
+  # `litellm` proxy (owner of the state dir) afterwards.
   litellmChatGptLogin = pkgs.writeShellApplication {
     name = "litellm-chatgpt-login";
     runtimeInputs = [ pkgs.coreutils ];
@@ -77,9 +79,9 @@ let
         (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.litellm ])).interpreter
       } -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
 
-      # Hand the credentials to the DynamicUser proxy (the service reads
-      # and refreshes auth.json in place): copy the state dir's numeric
-      # owner onto the token dir tree.
+      # Hand the credentials to the fixed `litellm` proxy (the service
+      # reads and refreshes auth.json in place): copy the state dir's owner
+      # onto the token dir tree.
       chown -R --reference=${config.services.litellm.stateDir} "${litellmTokenDir}"
     '';
   };
@@ -164,11 +166,11 @@ in
       # it (LiteLLM imports the callback module at startup).
       PYTHONDONTWRITEBYTECODE = "1";
 
-      # A DynamicUser unit gets no $HOME from systemd. litellm 1.86's
-      # proxy_server imports prisma eagerly, and prisma's DefaultConfig
-      # evaluates Path.home() at import time, so startup aborts without
-      # one. The state dir is already WorkingDirectory, exists via
-      # StateDirectory, and is untouched by ProtectHome.
+      # systemd's HOME for this fixed system account is the non-writable
+      # /var/empty. litellm 1.86's proxy_server imports prisma eagerly, and
+      # prisma's DefaultConfig evaluates Path.home() at import time. The
+      # state dir is already WorkingDirectory, exists via StateDirectory,
+      # and is untouched by ProtectHome, so it is the proxy's writable HOME.
       HOME = config.services.litellm.stateDir;
     };
 
