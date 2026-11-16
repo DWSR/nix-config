@@ -115,7 +115,7 @@ back the rendered unit graph.
   - _Requirements: 4.9, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 9.2, 9.3_
   - _Depends: 2.2, 3.3, 4.2, 4.3_
 
-- [ ] 4.5 Run `litellm.service` as the fixed user against the socket database
+- [x] 4.5 Run `litellm.service` as the fixed user against the socket database
   - Set `services.litellm.package = pkgs.litellm-db` and add `DATABASE_URL = "postgresql://litellm_app@localhost/litellm?host=/run/postgresql"`, `DISABLE_SCHEMA_UPDATE = "true"`, and `PRISMA_QUERY_ENGINE_BINARY` to `services.litellm.environment`; keep `PYTHONPATH`, `HOME`, `CHATGPT_TOKEN_DIR`, the sops `environmentFile`, `model_list`, and `router_settings` unchanged
   - Force `User`/`Group` `litellm`, `DynamicUser = false`, and `PrivateUsers = false` on `systemd.services.litellm`, and add `requires`/`after` for `litellm-db-init.service`, `postgres-grants.service`, `postgresql.service`, and `postgresql-setup.service`
   - Add no `prisma db push` to the proxy unit, no schema-update flag, and no password in any rendered environment or unit file
