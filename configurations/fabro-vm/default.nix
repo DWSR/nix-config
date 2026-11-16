@@ -543,10 +543,11 @@ in
     environment.systemPackages = with pkgs; [
       # Packages installed with the pivot off macOS (the mac-side launchd
       # services were removed with it; the systemd services live in
-      # fabro.nix and litellm.nix). `fabro` comes from the repo's overlay
-      # (applied in flake.nix); litellm is nixpkgs'.
+      # fabro.nix and litellm.nix). `fabro` and `litellm-db` come from the
+      # repo's overlay (applied in flake.nix): `litellm-db` is the offline
+      # proxy build with the generated Prisma client, not nixpkgs' litellm.
       fabro
-      litellm
+      pkgs.litellm-db
 
       btop
       nextvi # small version of vi
