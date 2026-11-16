@@ -552,11 +552,11 @@
     "homebrew-tinycast": {
       "flake": false,
       "locked": {
-        "lastModified": 1792633905,
-        "narHash": "sha256-xlvdPvGWHIHzjV99w1sAKb6PXixSIvfVU1KFVC9rGLU=",
+        "lastModified": 1794160241,
+        "narHash": "sha256-HNCTo4pX78BPAVkpy/Q9o0xW/QkOgDqxTLHyVcB3Xe0=",
         "owner": "abue-ammar",
         "repo": "homebrew-tinycast",
-        "rev": "7af5ba845f6ccf6980e23c3c11c8fd062ad6bdf2",
+        "rev": "6cea28da011a2baafdb6fee2cd2083a742cac4aa",
         "type": "github"
       },
       "original": {
