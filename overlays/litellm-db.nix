@@ -200,4 +200,100 @@ in
       description = "prisma-client-py 0.15.0 with LiteLLM's Prisma schema generated in";
     };
   });
+
+  # The proxy package. `pkgs.litellm` is `toPythonApplication` over
+  # `python3Packages.litellm` with the proxy, extra-proxy, and proxy-runtime
+  # extras merged into the Python dependency list. `litellm-db` keeps that
+  # exact merge shape but replaces the bare `python3Packages.prisma` runtime
+  # with the generated `litellm-prisma-client`, so the proxy starts with the
+  # client generated from its own `schema.prisma` and never instantiates an
+  # ungenerated one. No Prisma CLI, generation, or download happens at run
+  # time: the only `prisma` module in the closure is the generated client, and
+  # that package installs no `bin/prisma`.
+  litellm-db =
+    let
+      litellm = final.python3Packages.litellm;
+      prismaClient = final.litellm-prisma-client;
+
+      # The wrapped `litellm` binary is the deployed proxy runtime; the
+      # `passthru` contract below is attached after this binding so the check
+      # can reference the runtime without a self-reference.
+      litellmProxy = final.python3Packages.toPythonApplication (
+        litellm.overridePythonAttrs (oldAttrs: {
+          dependencies =
+            builtins.filter (dep: (dep.pname or dep.name or "") != "prisma") (
+              (oldAttrs.dependencies or [ ])
+              ++ oldAttrs.optional-dependencies.proxy
+              ++ oldAttrs.optional-dependencies.extra_proxy
+              ++ oldAttrs.optional-dependencies.proxy-runtime
+            )
+            ++ [ prismaClient ];
+        })
+      );
+
+      # Runs against the proxy's own runtime closure: `nativeBuildInputs` puts
+      # every propagated dependency's site-packages on `PYTHONPATH`, exactly as
+      # the wrapped `litellm` binary does at start. Both imports are
+      # connection-free, so no PostgreSQL socket and no `DATABASE_URL` are
+      # needed.
+      prismaClientCheck = ''
+        import prisma
+        from prisma import Prisma
+        from prisma.models import LiteLLM_BudgetTable
+        from litellm.proxy.db import prisma_client
+
+        assert "litellm-prisma-client" in prisma.__file__, (
+            f"prisma resolved to {prisma.__file__}, not the generated client"
+        )
+        assert LiteLLM_BudgetTable.__name__ == "LiteLLM_BudgetTable"
+        assert prisma_client.PrismaWrapper is not None
+        print(f"imported {Prisma} and {prisma_client.PrismaWrapper} from {prisma.__file__}")
+      '';
+
+      prismaClientTest =
+        final.runCommand "litellm-db-prisma-client-test"
+          {
+            nativeBuildInputs = [ litellmProxy ];
+          }
+          ''
+            echo "litellm-db: the proxy ships LiteLLM's schema"
+            test -f "${litellmProxy}/${final.python3.sitePackages}/litellm/proxy/schema.prisma"
+
+            echo "litellm-db: importing prisma.Prisma and LiteLLM's prisma_client"
+            unset DATABASE_URL
+            ${final.python3.interpreter} -c ${final.lib.escapeShellArg prismaClientCheck}
+
+            echo "litellm-db: the proxy runtime exposes no Prisma CLI"
+            if command -v prisma > /dev/null; then
+              echo "FAIL: $(command -v prisma) is on the proxy's PATH" >&2
+              exit 1
+            fi
+
+            echo "litellm-db: the proxy CLI reports its pinned version"
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            version=$("${litellmProxy}/bin/litellm" --version 2>&1)
+            case "$version" in
+              *"LiteLLM: Current Version = 1.86.0"*) ;;
+              *)
+                echo "FAIL: litellm --version did not report 1.86.0:" >&2
+                echo "$version" >&2
+                exit 1
+                ;;
+            esac
+
+            echo "litellm-db: all checks passed"
+            touch $out
+          '';
+    in
+    litellmProxy.overrideAttrs (oldAttrs: {
+      passthru = (oldAttrs.passthru or { }) // {
+        schemaPath = "${litellmProxy}/${final.python3.sitePackages}/litellm/proxy/schema.prisma";
+        inherit prismaClient;
+        prismaVersion = engineVersion;
+        tests = (oldAttrs.passthru.tests or { }) // {
+          prismaClient = prismaClientTest;
+        };
+      };
+    });
 }

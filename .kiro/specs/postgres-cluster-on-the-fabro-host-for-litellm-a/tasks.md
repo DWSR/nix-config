@@ -76,7 +76,7 @@ back the rendered unit graph.
   - _Requirements: 6.12, 7.12_
   - _Depends: 3.1_
 
-- [ ] 3.3 Assemble the `litellm-db` proxy package with its `passthru` contract
+- [x] 3.3 Assemble the `litellm-db` proxy package with its `passthru` contract
   - Add `litellm-db` as the same `toPythonApplication`/proxy-dependency merge shape as `pkgs.litellm` with `prisma` removed and `litellm-prisma-client` added, keeping `pname = "litellm"` and `version = "1.86.0"`; expose `passthru.schemaPath`, `passthru.prismaClient`, `passthru.prismaVersion`, and `passthru.tests.prismaClient`
   - Add the attribute to the existing `custom-packages` overlay entry; add no second LiteLLM package, no Prisma CLI on the proxy's PATH, and no generate or download at run time
   - Completed when `nix build .#litellm-db` succeeds, `passthru.tests.prismaClient` imports `prisma.Prisma` and LiteLLM's `prisma_client` without connecting, and `litellm --version` reports 1.86.0
