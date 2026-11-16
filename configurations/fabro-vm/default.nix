@@ -56,6 +56,8 @@ in
     ./sandbox.nix
     ./darwin-dispatch.nix
     ./litellm.nix
+    # The `fabro.postgres` declaration surface for the shared cluster.
+    ./postgres.nix
     # The podman-bridge API bridge that lets dispatch workflow sandboxes
     # create and start (and the bridge transparently approves) child runs
     # without a Fabro credential in any sandbox environment.
@@ -89,6 +91,9 @@ in
 
   config = {
     fabro.darwinBuilder.enable = true;
+    # The single socket-only PostgreSQL 18.6 cluster and its declaration
+    # surface (./postgres.nix). Workload modules extend the declarations.
+    fabro.postgres.enable = true;
     # lima-init reconfigures the system from Lima's cidata userdata at boot
     # (user, SSH keys, mounts) and runs the lima-guestagent daemon as a
     # systemd service.

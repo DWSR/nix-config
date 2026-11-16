@@ -7,6 +7,7 @@ let
   iiiEngine = import ./agentmemory.nix { };
   omlx = import ./omlx { inherit inputs; };
   fabro = import ./fabro.nix;
+  litellmDb = import ./litellm-db.nix;
   agentmemoryFlake = final: _prev: {
     agentmemory =
       inputs.agentmemory.packages.${final.stdenv.hostPlatform.system}.agentmemory.overrideAttrs
@@ -165,6 +166,7 @@ in
     // (iiiEngine final prev)
     // (omlx final prev)
     // (fabro final prev)
+    // (litellmDb final prev)
     // (agentmemoryFlake final prev);
 
   inherit omlx fabro;

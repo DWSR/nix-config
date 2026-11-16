@@ -17,20 +17,20 @@ back the rendered unit graph.
 
 - [ ] 1. Socket-only PostgreSQL 18.6 cluster and the `fabro.postgres` interface
 
-- [ ] 1.1 Add `configurations/fabro-vm/postgres.nix` with the declaration surface and its assertions
+- [x] 1.1 Add `configurations/fabro-vm/postgres.nix` with the declaration surface and its assertions
   - Import it from `configurations/fabro-vm/default.nix` and declare `enable`, `package` (default `pkgs.unstable.postgresql_18`), read-only `dataDir` (`/var/lib/postgresql/18`) and `socketDir` (`/run/postgresql`), `roles` (`systemUser` defaulting to the role name, `connectionLimit` default `-1`), `databases` (`owner`, `extensions`), `grants` (`database`, `role`, `privileges`, `on` of `database`/`schema`/`all-tables`/`all-sequences`), and `schemaInitUnits`
   - Omit `password`, `superuser`, `createdb`, and `createrole` from every option; fail evaluation when a name breaks `[a-z_][a-z0-9_]*`, a database or role is `postgres`, a database owner or grant target is not a declared role, a `systemUser` is absent from `users.users`, or a grant pairs an `on` with a privilege outside its allowed set
   - Completed when `nix eval .#nixosConfigurations.fabro-vm.config.fabro.postgres` shows the empty declaration sets with those defaults, and a temporary declaration with an undeclared owner or a `postgres` role fails evaluation naming the option path
   - _Requirements: 1.1, 4.1, 4.10, 4.11, 5.3, 5.4, 9.1, 9.4, 9.5_
 
-- [ ] 1.2 Run one PostgreSQL 18.6 server on the Unix socket with the three extensions
+- [x] 1.2 Run one PostgreSQL 18.6 server on the Unix socket with the three extensions
   - Set `services.postgresql = { enable = cfg.enable; package = cfg.package; extensions = ps: [ ps.pg_textsearch ps.pgvector ps.pg_uuidv7 ]; }`, `settings.shared_preload_libraries = "pg_textsearch"`, `settings.unix_socket_directories = cfg.socketDir`, and `settings.port = 5432`
   - Force `settings.listen_addresses = lib.mkForce ""` because the module's `enableTCPIP = false` still writes `localhost`; add no `allowedTCPPorts` entry, no `tailscale serve` line, and no second server, cluster, major version, or data directory
   - Set `fabro.postgres.enable = true` in `configurations/fabro-vm/default.nix`; the module's `postgres` account owns the server and `/var/lib/postgresql/18`, so a switch preserves databases, roles, and rows and nothing in this module drops an object, and a start failure surfaces as a failed/restarting unit with the server error in its journal
   - Completed when the rendered guest shows one enabled cluster at 18.6 with `listen_addresses = ""`, `/var/lib/postgresql/18`, the three extension packages (`pgvector` at or above 0.8.6), `pg_textsearch` preloaded, and no 5432 firewall or Serve entry
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 1.8, 1.9, 2.1, 2.2, 2.5, 2.6, 3.1, 3.2, 3.5, 3.6_
 
-- [ ] 1.3 Force socket-only authentication and map each declared role to its system user
+- [x] 1.3 Force socket-only authentication and map each declared role to its system user
   - Build `services.postgresql.authentication` with `lib.mkForce` from `fabro.postgres.roles`: the module's `local all postgres peer map=postgres` line plus one `local all <role> peer map=fabro-services` line per declared role and a final `local all all reject`; emit no `host`, `md5`, `scram`, or `trust` line
   - Add `services.postgresql.identMap` with `lib.mkAfter` a `fabro-services <systemUser> <role>` entry per role, keeping the module's `postgres postgres postgres` entry so the superuser mapping survives
   - Drive both files from the same declaration set, and add no hand-written `pg_hba`/`pg_ident` copy, password, or network allowance
@@ -39,20 +39,20 @@ back the rendered unit graph.
 
 - [ ] 2. Declarative provisioning adapter
 
-- [ ] 2.1 Project the declarations into `ensureDatabases` and `ensureUsers`
+- [x] 2.1 Project the declarations into `ensureDatabases` and `ensureUsers`
   - Set `services.postgresql.ensureDatabases = lib.attrNames cfg.databases` and `ensureUsers` from `cfg.roles` as `{ name = <role>; ensureClauses.connection_limit = <n>; }` only when `connectionLimit != -1`, never a `password` clause
   - Keep both lists derived only from `fabro.postgres`, so no second source creates a workload database or role and no caller can add one through the module's freeform clauses
   - Completed when adding `databases.<name>` changes exactly the `postgresql-setup` inputs, and `nix eval` shows the declared names in both lists with no `password` key anywhere
   - _Requirements: 4.1, 4.2, 4.3, 4.10, 4.11, 9.1_
 
-- [ ] 2.2 Generate the bootstrap SQL and the `postgres-bootstrap` unit
+- [x] 2.2 Generate the bootstrap SQL and the `postgres-bootstrap` unit
   - Emit one `psql -f` file with a `\echo 'fabro.postgres: database <name>'` or `role <name>` marker before each block: guarded `ALTER DATABASE "<db>" OWNER TO "<owner>"`, `\connect "<db>"` with `CREATE EXTENSION IF NOT EXISTS "<ext>"`, `REVOKE ALL ON DATABASE ... FROM PUBLIC` plus the declared `CONNECT`, `REVOKE CREATE` on the database and on schema `public`, and `ALTER DEFAULT PRIVILEGES FOR ROLE "<owner>"` so the migration role's tables and sequences reach the declared roles
   - Add `systemd.services.postgres-bootstrap` as a `oneshot` with `RemainAfterExit`, `User = "postgres"`, `requires`/`after` `postgresql.service` and `postgresql-setup.service`, `before = cfg.schemaInitUnits`, `wantedBy = [ "multi-user.target" ]`, `PGHOST`/`PGPORT`, and `${config.services.postgresql.finalPackage}/bin/psql -v ON_ERROR_STOP=1` so client and server versions match
   - Keep every statement catalog-conditional or naturally idempotent, expose the generated file from the module (the design's `bootstrapSqlFile`) so a check runs the identical text, and let the `\echo` marker plus the failing statement reach the journal
   - Completed when the file applies twice to a scratch cluster with no error and no catalog change, and the unit is enabled and ordered ahead of every `schemaInitUnits` entry
   - _Requirements: 1.5, 1.6, 4.4, 4.6, 4.7, 4.8, 4.9, 4.11, 5.11, 9.1_
 
-- [ ] 2.3 Generate the object-grant SQL and the `postgres-grants` unit
+- [x] 2.3 Generate the object-grant SQL and the `postgres-grants` unit
   - Emit one `psql -f` file with `\connect "<db>"` per database: `GRANT USAGE ON SCHEMA public`, `GRANT <privileges> ON ALL TABLES IN SCHEMA public`, and `GRANT <privileges> ON ALL SEQUENCES IN SCHEMA public` for each declared grant, covering the migration role's tables and the pre-created views
   - Add `systemd.services.postgres-grants` as a `oneshot` with `RemainAfterExit`, `User = "postgres"`, `requires`/`after` `postgres-bootstrap.service` and every `cfg.schemaInitUnits` entry, `wantedBy = [ "multi-user.target" ]`, and the same `finalPackage` client; grant no `CREATE` on the database or `public` and no `SUPERUSER`/`CREATEDB`/`CREATEROLE` class privilege to an application role
   - Keep the file idempotent and expose it from the module (the design's `objectGrantsSqlFile`); a failed statement must leave the unit failed with the declaration named by `psql -v ON_ERROR_STOP=1`
@@ -61,7 +61,7 @@ back the rendered unit graph.
 
 - [ ] 3. Offline LiteLLM database package
 
-- [ ] 3.1 (P) Add the pinned Prisma 5.17.0 CLI and the patched query and schema engines
+- [x] 3.1 (P) Add the pinned Prisma 5.17.0 CLI and the patched query and schema engines
   - Create `overlays/litellm-db.nix` with `litellm-prisma-engines` fetching the 5.17.0 `query-engine` and `schema-engine` for `linux-arm64-openssl-3.0.x` from commit `393aa359c9ad4a4bb28630fb5613f9c281cde053`, applying `autoPatchelfHook` with glibc/gcc/openssl, and recording `passthru.engineCommit`
   - Add the `prisma@5.17.0` npm closure under `overlays/litellm-prisma/` (the design's `package-lock.json` plus the `package.json` it locks) and `litellm-prisma-cli` from `final.importNpmLock` with `NPM_CONFIG_IGNORE_SCRIPTS=1` and a wrapper exporting `PRISMA_SCHEMA_ENGINE_BINARY` and `PRISMA_QUERY_ENGINE_BINARY`; download no engine inside the CLI derivation
   - Register the overlay in `overlays/default.nix` (`custom-packages`) and leave the pinned package set unchanged: no `prisma_6`/`prisma_7` substitution and no runtime fetch
