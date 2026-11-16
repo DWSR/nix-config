@@ -30,7 +30,7 @@ back the rendered unit graph.
   - Completed when the rendered guest shows one enabled cluster at 18.6 with `listen_addresses = ""`, `/var/lib/postgresql/18`, the three extension packages (`pgvector` at or above 0.8.6), `pg_textsearch` preloaded, and no 5432 firewall or Serve entry
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 1.8, 1.9, 2.1, 2.2, 2.5, 2.6, 3.1, 3.2, 3.5, 3.6_
 
-- [ ] 1.3 Force socket-only authentication and map each declared role to its system user
+- [x] 1.3 Force socket-only authentication and map each declared role to its system user
   - Build `services.postgresql.authentication` with `lib.mkForce` from `fabro.postgres.roles`: the module's `local all postgres peer map=postgres` line plus one `local all <role> peer map=fabro-services` line per declared role and a final `local all all reject`; emit no `host`, `md5`, `scram`, or `trust` line
   - Add `services.postgresql.identMap` with `lib.mkAfter` a `fabro-services <systemUser> <role>` entry per role, keeping the module's `postgres postgres postgres` entry so the superuser mapping survives
   - Drive both files from the same declaration set, and add no hand-written `pg_hba`/`pg_ident` copy, password, or network allowance
