@@ -13,7 +13,65 @@
 # CONNECT, `public` schema USAGE, and the table/sequence DML the proxy needs,
 # with no CREATE anywhere and no cluster-admin attribute. The interface cannot
 # express a password, SUPERUSER, CREATEDB, or CREATEROLE.
-_: {
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+let
+  # The cluster's own client: `psql` and the server must come from the same
+  # package so the script never talks to 18.6 through an older client.
+  postgresql = config.services.postgresql.finalPackage;
+
+  # LiteLLM's pinned proxy schema: the generated Prisma client and this init
+  # step both read it from the same `litellm-db` closure.
+  schemaPath = pkgs.litellm-db.passthru.schemaPath;
+
+  viewsFile = ./postgres/litellm-views.sql;
+
+  # The schema-initialization step, shared by the systemd unit and the
+  # `litellm-db-init` repository check. `db push` applies the pinned schema as
+  # the migration role without generating a client and never receives
+  # `--accept-data-loss`, so a change that would drop data fails and prints
+  # the diff. The cluster's own `psql` then creates or refreshes the eight
+  # proxy views; `ON_ERROR_STOP=1` makes a failing statement fail the unit and
+  # print the offending SQL. `--help` names both inputs for the check and an
+  # operator.
+  litellmDbInit = pkgs.writeShellApplication {
+    name = "litellm-db-init";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      usage() {
+        cat <<'EOF'
+      Usage: litellm-db-init [--help]
+
+      Apply LiteLLM's pinned Prisma schema to the `litellm` database as
+      `litellm_migrator`, then re-apply the proxy's eight views.
+
+      Schema: ${schemaPath}
+      Views:  ${viewsFile}
+      EOF
+      }
+
+      if [ "''${1:-}" = "--help" ] || [ "''${1:-}" = "-h" ]; then
+        usage
+        exit 0
+      fi
+      if [ "''${#}" -ne 0 ]; then
+        usage >&2
+        exit 2
+      fi
+
+      echo "litellm-db-init: applying LiteLLM's Prisma schema"
+      ${pkgs.litellm-prisma-cli}/bin/prisma db push --skip-generate --schema ${schemaPath}
+
+      echo "litellm-db-init: applying the LiteLLM views"
+      ${postgresql}/bin/psql -v ON_ERROR_STOP=1 -f ${viewsFile}
+    '';
+  };
+in
+{
   fabro.postgres = {
     databases.litellm.owner = "litellm_migrator";
 
@@ -80,5 +138,50 @@ _: {
     isSystemUser = true;
     group = "litellm-migrator";
     description = "LiteLLM schema-initialization service account";
+  };
+
+  # Install the script as well as running it from the unit: `litellm-db-init`
+  # stays importable by the `litellm-db-init` repository check (and runnable by
+  # an operator), and the unit and the check execute the same store path.
+  environment.systemPackages = [ litellmDbInit ];
+
+  # The schema-initialization oneshot runs as the migration account after the
+  # bootstrap unit has created the `litellm` database and both roles, and
+  # before every unit that consumes the schema (the grant unit and the proxy).
+  # It is a oneshot with `RemainAfterExit`, so a switch re-runs it only when
+  # its configuration or dependencies change, and a failed Prisma or `psql`
+  # invocation leaves the unit failed with the output in the journal. The
+  # environment mirrors the design's unit matrix: Prisma connects through the
+  # socket URL, `psql` through the `PG*` variables, and both use the pinned
+  # engines from `litellm-prisma-engines` (never a download or a client
+  # generation at run time).
+  systemd.services.litellm-db-init = {
+    description = "Initialize the LiteLLM database schema and views";
+    wantedBy = [ "multi-user.target" ];
+    requires = [ "postgres-bootstrap.service" ];
+    after = [ "postgres-bootstrap.service" ];
+    before = [ "postgres-grants.service" ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      User = "litellm-migrator";
+      Group = "litellm-migrator";
+      ExecStart = lib.getExe litellmDbInit;
+    };
+
+    environment = {
+      DATABASE_URL = "postgresql://litellm_migrator@localhost/litellm?host=/run/postgresql";
+      PGHOST = "/run/postgresql";
+      PGPORT = toString config.services.postgresql.settings.port;
+      PGUSER = "litellm_migrator";
+      PGDATABASE = "litellm";
+      HOME = "/tmp";
+      CHECKPOINT_DISABLE = "1";
+      PRISMA_HIDE_UPDATE_MESSAGE = "1";
+      PRISMA_SCHEMA_ENGINE_BINARY = "${pkgs.litellm-prisma-engines}/bin/schema-engine";
+      PRISMA_QUERY_ENGINE_BINARY = "${pkgs.litellm-prisma-engines}/bin/query-engine";
+      PRISMA_CLI_QUERY_ENGINE_TYPE = "binary";
+    };
   };
 }

@@ -107,7 +107,7 @@ back the rendered unit graph.
   - _Requirements: 4.1, 5.3, 5.4, 5.5, 5.7, 5.11, 6.1, 7.2_
   - _Depends: 1.1, 4.1_
 
-- [ ] 4.4 Add the `litellm-db-init` script and schema-initialization unit
+- [x] 4.4 Add the `litellm-db-init` script and schema-initialization unit
   - Write the step as one `writeShellApplication` that runs `${pkgs.litellm-prisma-cli}/bin/prisma db push --skip-generate --schema ${pkgs.litellm-db.passthru.schemaPath}` and then `${config.services.postgresql.finalPackage}/bin/psql -v ON_ERROR_STOP=1 -f ${./postgres/litellm-views.sql}`; never pass `--accept-data-loss` and never generate a client
   - Add `systemd.services.litellm-db-init` as a `oneshot` with `RemainAfterExit`, `User`/`Group` `litellm-migrator`, `requires`/`after` `postgres-bootstrap.service`, `before = [ "postgres-grants.service" ]`, and the design's environment matrix (`DATABASE_URL=postgresql://litellm_migrator@localhost/litellm?host=/run/postgresql`, `PGHOST`/`PGPORT`/`PGUSER`/`PGDATABASE`, `HOME=/tmp`, `CHECKPOINT_DISABLE`, `PRISMA_HIDE_UPDATE_MESSAGE`, both `PRISMA_*` engine variables, `PRISMA_CLI_QUERY_ENGINE_TYPE=binary`)
   - Keep the script importable by the `litellm-db-init` check and make any Prisma or `psql` failure fail the unit, printing the destructive diff or the failing statement
