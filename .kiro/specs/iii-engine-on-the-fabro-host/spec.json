@@ -1,0 +1,22 @@
+{
+  "feature_name": "iii-engine-on-the-fabro-host",
+  "created_at": "2026-11-16T23:47:37Z",
+  "language": "en",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "updated_at": "2026-11-16T23:56:35Z",
+  "phase": "requirements-generated",
+  "ready_for_implementation": false
+}
