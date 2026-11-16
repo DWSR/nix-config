@@ -123,7 +123,7 @@ back the rendered unit graph.
   - _Requirements: 1.6, 5.1, 5.9, 6.2, 6.3, 6.10, 6.12, 6.13, 7.7, 7.9, 7.10, 7.11, 9.2, 9.3_
   - _Depends: 4.3, 4.4_
 
-- [ ] 4.6 Install `litellm-db` on the guest and re-own the ChatGPT credential directory
+- [x] 4.6 Install `litellm-db` on the guest and re-own the ChatGPT credential directory
   - Replace `litellm` with `pkgs.litellm-db` in `configurations/fabro-vm/default.nix`'s `environment.systemPackages`, and change only the `DynamicUser` comment in `configurations/fabro-vm/litellm.nix`
   - Add `systemd.tmpfiles.rules` `d` and `Z` entries for `${config.services.litellm.stateDir}/chatgpt` as `0700 litellm litellm` so the existing credential stays readable after the dynamic-account removal; leave the rest of the state directory to the module's `StateDirectory`, keep the login wrapper's `chown --reference`, and correct only its ownership comment
   - Add no credential read or write, no state-directory move, and no unit beyond the tmpfiles rules
