@@ -17,7 +17,7 @@ back the rendered unit graph.
 
 - [ ] 1. Socket-only PostgreSQL 18.6 cluster and the `fabro.postgres` interface
 
-- [ ] 1.1 Add `configurations/fabro-vm/postgres.nix` with the declaration surface and its assertions
+- [x] 1.1 Add `configurations/fabro-vm/postgres.nix` with the declaration surface and its assertions
   - Import it from `configurations/fabro-vm/default.nix` and declare `enable`, `package` (default `pkgs.unstable.postgresql_18`), read-only `dataDir` (`/var/lib/postgresql/18`) and `socketDir` (`/run/postgresql`), `roles` (`systemUser` defaulting to the role name, `connectionLimit` default `-1`), `databases` (`owner`, `extensions`), `grants` (`database`, `role`, `privileges`, `on` of `database`/`schema`/`all-tables`/`all-sequences`), and `schemaInitUnits`
   - Omit `password`, `superuser`, `createdb`, and `createrole` from every option; fail evaluation when a name breaks `[a-z_][a-z0-9_]*`, a database or role is `postgres`, a database owner or grant target is not a declared role, a `systemUser` is absent from `users.users`, or a grant pairs an `on` with a privilege outside its allowed set
   - Completed when `nix eval .#nixosConfigurations.fabro-vm.config.fabro.postgres` shows the empty declaration sets with those defaults, and a temporary declaration with an undeclared owner or a `postgres` role fails evaluation naming the option path
