@@ -138,6 +138,92 @@ let
       }
     ]
   ) cfg.grants;
+
+  # Quoted SQL identifier. `nameType`/`systemUserNameType` restrict every name
+  # to `[a-z_][a-z0-9_]*` (or the hyphenated system-account form), so the
+  # quotes cannot be escaped and no declaration can splice a second statement
+  # into the generated file.
+  sqlIdent = name: ''"${name}"'';
+
+  # The grants of one `on` scope in one database, in declaration order.
+  grantsOn =
+    database: scope: lib.filter (grant: grant.database == database && grant.on == scope) cfg.grants;
+
+  grantPrivilegeList = grant: lib.concatStringsSep ", " grant.privileges;
+
+  # Guarded ownership: `ALTER DATABASE ... OWNER TO` is a no-op catalog-wise
+  # when the declared owner already owns the database, and the guard keeps the
+  # bootstrap from touching an already-correct catalog on every switch. The
+  # `\echo` marker printed by the caller names the database when this block
+  # fails.
+  ownershipSql = name: database: ''
+    DO $fabro$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+          FROM pg_database
+         WHERE datname = '${name}'
+           AND pg_get_userbyid(datdba) <> '${database.owner}'
+      ) THEN
+        ALTER DATABASE ${sqlIdent name} OWNER TO ${sqlIdent database.owner};
+      END IF;
+    END
+    $fabro$;
+  '';
+
+  # Default privileges are keyed by the role that will create the objects, so
+  # each owner gets a role-marked block. They cover the Prisma tables and the
+  # views the migration role creates after this unit has run, which is why
+  # `postgres-grants` can then apply the same privileges to every existing
+  # object.
+  defaultPrivilegesSql =
+    name: database:
+    let
+      statements =
+        lib.map (
+          grant:
+          "ALTER DEFAULT PRIVILEGES FOR ROLE ${sqlIdent database.owner} IN SCHEMA public GRANT ${grantPrivilegeList grant} ON TABLES TO ${sqlIdent grant.role};"
+        ) (grantsOn name "all-tables")
+        ++ lib.map (
+          grant:
+          "ALTER DEFAULT PRIVILEGES FOR ROLE ${sqlIdent database.owner} IN SCHEMA public GRANT ${grantPrivilegeList grant} ON SEQUENCES TO ${sqlIdent grant.role};"
+        ) (grantsOn name "all-sequences");
+    in
+    lib.optionalString (statements != [ ]) ''
+      \echo 'fabro.postgres: role ${database.owner}'
+      ${lib.concatStringsSep "\n" statements}
+    '';
+
+  # One database block: guarded ownership and database-level revocation and
+  # grants happen from the maintenance database; the `\connect` then enters the
+  # declared database for extensions, the `public` schema posture, and the
+  # owner's default privileges. `REVOKE ALL ... FROM PUBLIC` is what keeps a
+  # role from another workload off this database (Requirement 5.11).
+  databaseBootstrapSql =
+    name:
+    let
+      database = cfg.databases.${name};
+    in
+    ''
+      \echo 'fabro.postgres: database ${name}'
+      ${ownershipSql name database}
+      REVOKE ALL ON DATABASE ${sqlIdent name} FROM PUBLIC;
+      REVOKE CREATE ON DATABASE ${sqlIdent name} FROM PUBLIC;
+      ${lib.concatMapStrings (
+        grant: "GRANT ${grantPrivilegeList grant} ON DATABASE ${sqlIdent name} TO ${sqlIdent grant.role};\n"
+      ) (grantsOn name "database")}
+      \connect ${sqlIdent name}
+      ${lib.concatMapStrings (
+        extension: "CREATE EXTENSION IF NOT EXISTS ${sqlIdent extension};\n"
+      ) database.extensions}
+      REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+      ${lib.concatMapStrings (
+        grant: "GRANT ${grantPrivilegeList grant} ON SCHEMA public TO ${sqlIdent grant.role};\n"
+      ) (grantsOn name "schema")}
+      ${defaultPrivilegesSql name database}
+    '';
+
+  bootstrapSqlText = lib.concatMapStrings databaseBootstrapSql declaredDatabaseNames;
 in
 {
   options.fabro.postgres = {
@@ -298,6 +384,19 @@ in
         starts after every entry.
       '';
     };
+
+    bootstrapSqlFile = lib.mkOption {
+      type = lib.types.path;
+      readOnly = true;
+      default = pkgs.writeText "fabro-postgres-bootstrap.sql" bootstrapSqlText;
+      description = ''
+        Generated idempotent bootstrap SQL that `postgres-bootstrap.service`
+        applies: each declared database's guarded ownership, database-level
+        revocation and CONNECT grants, extensions, the `public` schema
+        posture, and the owner's default privileges. Exposed so a check runs
+        exactly the text the unit applies.
+      '';
+    };
   };
 
   config = lib.mkMerge [
@@ -338,6 +437,40 @@ in
           shared_preload_libraries = "pg_textsearch";
           port = 5432;
         };
+      };
+
+      # The provisioning oneshot runs as the cluster superuser over the
+      # socket, after `postgresql-setup` has created the declared databases
+      # and roles and before every declared schema-initialization unit. It
+      # applies the generated bootstrap SQL with the cluster's own `psql`, so
+      # the client and server versions match; `ON_ERROR_STOP=1` fails the unit,
+      # and the `\echo` markers plus `--echo-errors` put the failing
+      # declaration and statement in the journal.
+      systemd.services.postgres-bootstrap = {
+        description = "Provision the declared PostgreSQL databases, extensions, and grants";
+        wantedBy = [ "multi-user.target" ];
+        requires = [
+          "postgresql.service"
+          "postgresql-setup.service"
+        ];
+        after = [
+          "postgresql.service"
+          "postgresql-setup.service"
+        ];
+        before = cfg.schemaInitUnits;
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          User = "postgres";
+          Group = "postgres";
+        };
+        environment = {
+          PGHOST = cfg.socketDir;
+          PGPORT = toString config.services.postgresql.settings.port;
+        };
+        script = ''
+          exec ${config.services.postgresql.finalPackage}/bin/psql -v ON_ERROR_STOP=1 --echo-errors -f ${cfg.bootstrapSqlFile}
+        '';
       };
     })
   ];
