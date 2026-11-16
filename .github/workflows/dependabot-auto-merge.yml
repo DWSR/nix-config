@@ -12,11 +12,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  auto-merge:
-    name: Enable auto-merge
+  changes:
+    name: Detect changed paths
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    outputs:
+      kiro_only: ${{ steps.filter.outputs.kiro_only }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Determine whether only .kiro changed
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "pull_request_target" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+          else
+            echo "kiro_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "${base:-}" || "$base" == "0000000000000000000000000000000000000000" ]]; then
+            echo "kiro_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$base" 2>/dev/null || true
+          changed="$(git diff --name-only "$base" "$head" 2>/dev/null || true)"
+          if [[ -z "$changed" ]]; then
+            echo "kiro_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -qv '^\.kiro/'; then
+            echo "kiro_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "kiro_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  auto-merge:
+    name: Enable auto-merge
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && needs.changes.outputs.kiro_only != 'true'
 
     steps:
       - name: Fetch Dependabot metadata
