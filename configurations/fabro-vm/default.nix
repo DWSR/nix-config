@@ -91,6 +91,9 @@ in
 
   config = {
     fabro.darwinBuilder.enable = true;
+    # The single socket-only PostgreSQL 18.6 cluster and its declaration
+    # surface (./postgres.nix). Workload modules extend the declarations.
+    fabro.postgres.enable = true;
     # lima-init reconfigures the system from Lima's cidata userdata at boot
     # (user, SSH keys, mounts) and runs the lima-guestagent daemon as a
     # systemd service.
