@@ -77,10 +77,11 @@ in
         jq
         curl
         kiro-spec
+        fabro
         usrBinEnv
       ];
       defaultText = lib.literalExpression ''
-        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep gnused python3 nix util-linux cacert ripgrep gawk jq curl kiro-spec usrBinEnv ]
+        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep gnused python3 nix util-linux cacert ripgrep gawk jq curl kiro-spec fabro usrBinEnv ]
       '';
       description = ''
         Packages the image exposes in its root: the `/bin` command path
@@ -107,7 +108,10 @@ in
         burn turns on `rg: command not found` / `awk: command not found`.
         The `kiro-spec` CLI must stay on the image's `/bin` command path:
         `/bin` is the image's only `PATH` entry, and the sandbox driver and
-        workflow command nodes invoke it by name.
+        workflow command nodes invoke it by name. The `fabro` CLI must also
+        stay on the image's `/bin` command path: dispatched oneshot runs
+        invoke `fabro preflight` during environment preflight, and a missing
+        binary aborts every such run with ENOENT.
       '';
     };
 
