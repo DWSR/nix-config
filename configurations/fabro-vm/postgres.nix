@@ -48,6 +48,27 @@ let
   declaredRoleNames = lib.attrNames cfg.roles;
   declaredDatabaseNames = lib.attrNames cfg.databases;
 
+  # Peer-only authentication for the Unix socket: the module's superuser
+  # mapping first, then one peer rule per declared role so `pg_ident` can map
+  # that role's system account, and a final reject for every other local
+  # connection. `lib.mkForce` replaces the module's default file, so its two
+  # `host ... md5` lines cannot survive and no network rule reaches the
+  # cluster.
+  authenticationLines =
+    lib.concatStringsSep "\n" (
+      [ "local all postgres peer map=postgres" ]
+      ++ lib.map (name: "local all ${name} peer map=fabro-services") declaredRoleNames
+      ++ [ "local all all reject" ]
+    )
+    + "\n";
+
+  # The `fabro-services` ident map maps each declared role's system account to
+  # the role. `lib.mkAfter` appends these entries to the module default, so
+  # the `postgres postgres postgres` superuser mapping survives.
+  identMapLines = lib.concatMapStrings (
+    name: "fabro-services ${cfg.roles.${name}.systemUser} ${name}\n"
+  ) declaredRoleNames;
+
   nameAssertions =
     kind: label: names:
     map (name: {
@@ -278,7 +299,9 @@ in
     # system account, and the data directory. `listen_addresses` is forced
     # empty because the module's `enableTCPIP = false` still writes
     # `localhost`; no firewall opening or Serve advertisement is added, so the
-    # socket is the cluster's only reachable endpoint.
+    # socket is the cluster's only reachable endpoint. Both authentication
+    # files are generated from `fabro.postgres.roles`, so a declared role is
+    # the only way to admit a workload connection.
     (lib.mkIf cfg.enable {
       services.postgresql = {
         inherit (cfg) enable package dataDir;
@@ -287,6 +310,8 @@ in
           ps.pgvector
           ps.pg_uuidv7
         ];
+        authentication = lib.mkForce authenticationLines;
+        identMap = lib.mkAfter identMapLines;
         settings = {
           listen_addresses = lib.mkForce "";
           unix_socket_directories = cfg.socketDir;
