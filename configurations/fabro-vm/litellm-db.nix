@@ -140,6 +140,16 @@ in
     description = "LiteLLM schema-initialization service account";
   };
 
+  # The rest of the state directory is owned by the nixpkgs module's
+  # `StateDirectory`; the OAuth credential directory predates the fixed
+  # account (the previous dynamic user owned it), so create it and
+  # recursively re-own the existing tree to the fixed `litellm` user. The
+  # rules only set ownership/mode: no credential value is read or written.
+  systemd.tmpfiles.rules = [
+    "d ${config.services.litellm.stateDir}/chatgpt 0700 litellm litellm - -"
+    "Z ${config.services.litellm.stateDir}/chatgpt 0700 litellm litellm - -"
+  ];
+
   # Install the script as well as running it from the unit: `litellm-db-init`
   # stays importable by the `litellm-db-init` repository check (and runnable by
   # an operator), and the unit and the check execute the same store path.
