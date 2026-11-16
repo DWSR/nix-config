@@ -1,0 +1,22 @@
+{
+  "feature_name": "postgres-cluster-on-the-fabro-host-for-litellm-a",
+  "created_at": "2026-11-16T02:26:24Z",
+  "language": "en",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "updated_at": "2026-11-16T02:54:53Z",
+  "phase": "requirements-generated",
+  "ready_for_implementation": false
+}
