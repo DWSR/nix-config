@@ -99,7 +99,7 @@ back the rendered unit graph.
   - _Requirements: 5.6, 5.7, 7.4_
   - _Boundary: configurations/fabro-vm/postgres/litellm-views.sql_
 
-- [ ] 4.3 Declare the `litellm` database, both roles, the grants, and the schema-init unit
+- [x] 4.3 Declare the `litellm` database, both roles, the grants, and the schema-init unit
   - In `configurations/fabro-vm/litellm-db.nix` set `fabro.postgres.databases.litellm.owner = "litellm_migrator"`, roles `litellm_migrator` (`systemUser = "litellm-migrator"`) and `litellm_app` (`systemUser = "litellm"`), and grants giving `litellm_app` database `CONNECT`, schema `USAGE`, and `all-tables`/`all-sequences` privileges
   - Set `fabro.postgres.schemaInitUnits = [ "litellm-db-init.service" ]` and declare no `SUPERUSER`/`CREATEDB`/`CREATEROLE`, no `CREATE` on the database or `public`, and no privilege reaching a future workload's database
   - Import `./litellm-db.nix` from `configurations/fabro-vm/default.nix`
