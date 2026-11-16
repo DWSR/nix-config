@@ -2,6 +2,8 @@ name: nix flake check
 
 on:
   pull_request:
+    paths-ignore:
+      - '.kiro/**'
   push:
     branches: [main]
 
