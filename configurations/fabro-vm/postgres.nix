@@ -69,6 +69,21 @@ let
     name: "fabro-services ${cfg.roles.${name}.systemUser} ${name}\n"
   ) declaredRoleNames;
 
+  # `postgresql-setup` creates the declared databases and roles. The role
+  # projection carries only the role name and, when declared, its connection
+  # limit: the declaration surface has no password, superuser, createdb, or
+  # createrole field, and `ensureClauses` is never fed a caller-supplied
+  # attrset, so no freeform clause can smuggle one in.
+  roleUsers = lib.mapAttrsToList (
+    name: role:
+    {
+      inherit name;
+    }
+    // lib.optionalAttrs (role.connectionLimit != -1) {
+      ensureClauses.connection_limit = role.connectionLimit;
+    }
+  ) cfg.roles;
+
   nameAssertions =
     kind: label: names:
     map (name: {
@@ -301,10 +316,15 @@ in
     # `localhost`; no firewall opening or Serve advertisement is added, so the
     # socket is the cluster's only reachable endpoint. Both authentication
     # files are generated from `fabro.postgres.roles`, so a declared role is
-    # the only way to admit a workload connection.
+    # the only way to admit a workload connection. `ensureDatabases` and
+    # `ensureUsers` are projected from the same declarations, so
+    # `postgresql-setup` cannot create an object the interface did not
+    # declare.
     (lib.mkIf cfg.enable {
       services.postgresql = {
         inherit (cfg) enable package dataDir;
+        ensureDatabases = lib.attrNames cfg.databases;
+        ensureUsers = roleUsers;
         extensions = ps: [
           ps.pg_textsearch
           ps.pgvector
