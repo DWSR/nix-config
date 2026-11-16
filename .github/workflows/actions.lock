@@ -17,6 +17,8 @@ workflows:
     '.github/workflows/prek.yml':
         - 'actions/checkout@v7.0.1'
         - 'cachix/install-nix-action@v31.11.3'
+    '.github/workflows/pr-commit-count.yml':
+        - 'actions/checkout@v7.0.1'
     '.github/workflows/secret-scan.yml':
         - 'actions/checkout@v7.0.1'
         - 'gitleaks/gitleaks-action@v3.0.0'
