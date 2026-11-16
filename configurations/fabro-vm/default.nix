@@ -56,6 +56,8 @@ in
     ./sandbox.nix
     ./darwin-dispatch.nix
     ./litellm.nix
+    # The `fabro.postgres` declaration surface for the shared cluster.
+    ./postgres.nix
     # The podman-bridge API bridge that lets dispatch workflow sandboxes
     # create and start (and the bridge transparently approves) child runs
     # without a Fabro credential in any sandbox environment.
