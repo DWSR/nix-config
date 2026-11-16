@@ -45,7 +45,7 @@ back the rendered unit graph.
   - Completed when adding `databases.<name>` changes exactly the `postgresql-setup` inputs, and `nix eval` shows the declared names in both lists with no `password` key anywhere
   - _Requirements: 4.1, 4.2, 4.3, 4.10, 4.11, 9.1_
 
-- [ ] 2.2 Generate the bootstrap SQL and the `postgres-bootstrap` unit
+- [x] 2.2 Generate the bootstrap SQL and the `postgres-bootstrap` unit
   - Emit one `psql -f` file with a `\echo 'fabro.postgres: database <name>'` or `role <name>` marker before each block: guarded `ALTER DATABASE "<db>" OWNER TO "<owner>"`, `\connect "<db>"` with `CREATE EXTENSION IF NOT EXISTS "<ext>"`, `REVOKE ALL ON DATABASE ... FROM PUBLIC` plus the declared `CONNECT`, `REVOKE CREATE` on the database and on schema `public`, and `ALTER DEFAULT PRIVILEGES FOR ROLE "<owner>"` so the migration role's tables and sequences reach the declared roles
   - Add `systemd.services.postgres-bootstrap` as a `oneshot` with `RemainAfterExit`, `User = "postgres"`, `requires`/`after` `postgresql.service` and `postgresql-setup.service`, `before = cfg.schemaInitUnits`, `wantedBy = [ "multi-user.target" ]`, `PGHOST`/`PGPORT`, and `${config.services.postgresql.finalPackage}/bin/psql -v ON_ERROR_STOP=1` so client and server versions match
   - Keep every statement catalog-conditional or naturally idempotent, expose the generated file from the module (the design's `bootstrapSqlFile`) so a check runs the identical text, and let the `\echo` marker plus the failing statement reach the journal
