@@ -264,10 +264,36 @@ in
     };
   };
 
-  config.assertions =
-    nameAssertions "roles" "role" declaredRoleNames
-    ++ nameAssertions "databases" "database" declaredDatabaseNames
-    ++ roleAssertions
-    ++ databaseAssertions
-    ++ lib.concatLists grantAssertions;
+  config = lib.mkMerge [
+    {
+      assertions =
+        nameAssertions "roles" "role" declaredRoleNames
+        ++ nameAssertions "databases" "database" declaredDatabaseNames
+        ++ roleAssertions
+        ++ databaseAssertions
+        ++ lib.concatLists grantAssertions;
+    }
+
+    # One server only: the module owns `postgresql.service`, the `postgres`
+    # system account, and the data directory. `listen_addresses` is forced
+    # empty because the module's `enableTCPIP = false` still writes
+    # `localhost`; no firewall opening or Serve advertisement is added, so the
+    # socket is the cluster's only reachable endpoint.
+    (lib.mkIf cfg.enable {
+      services.postgresql = {
+        inherit (cfg) enable package dataDir;
+        extensions = ps: [
+          ps.pg_textsearch
+          ps.pgvector
+          ps.pg_uuidv7
+        ];
+        settings = {
+          listen_addresses = lib.mkForce "";
+          unix_socket_directories = cfg.socketDir;
+          shared_preload_libraries = "pg_textsearch";
+          port = 5432;
+        };
+      };
+    })
+  ];
 }
