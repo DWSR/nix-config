@@ -184,4 +184,44 @@ in
       PRISMA_CLI_QUERY_ENGINE_TYPE = "binary";
     };
   };
+
+  # The proxy runs as the fixed `litellm` account against the socket database.
+  # It connects as `litellm_app` with peer authentication, so no password
+  # appears in its environment or unit: the socket `host` parameter names the
+  # cluster directory explicitly, and `PrivateUsers` must stay off or the peer
+  # credentials would carry the namespace's UID instead of `litellm`. Schema
+  # updates are disabled because the separate `litellm-db-init` unit owns
+  # `prisma db push`; the proxy starts only after that unit and the grant unit
+  # have succeeded, and only after the cluster itself is up.
+  systemd.services.litellm = {
+    requires = [
+      "litellm-db-init.service"
+      "postgres-grants.service"
+      "postgresql.service"
+      "postgresql-setup.service"
+    ];
+    after = [
+      "litellm-db-init.service"
+      "postgres-grants.service"
+      "postgresql.service"
+      "postgresql-setup.service"
+    ];
+
+    serviceConfig = {
+      User = "litellm";
+      Group = "litellm";
+      DynamicUser = lib.mkForce false;
+      PrivateUsers = lib.mkForce false;
+    };
+  };
+
+  services.litellm = {
+    package = pkgs.litellm-db;
+
+    environment = {
+      DATABASE_URL = "postgresql://litellm_app@localhost/litellm?host=/run/postgresql";
+      DISABLE_SCHEMA_UPDATE = "true";
+      PRISMA_QUERY_ENGINE_BINARY = "${pkgs.litellm-prisma-engines}/bin/query-engine";
+    };
+  };
 }
