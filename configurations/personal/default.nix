@@ -134,6 +134,7 @@ in
       "balenaetcher"
       "homerow"
       "obs"
+      "vorssaint"
     ];
   };
 }
