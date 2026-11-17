@@ -12,7 +12,7 @@
 
 - [ ] 1. Pinned engine and worker packages
 
-- [ ] 1.1 Create the pinned `iii` 0.26.0 engine derivation and register its overlay
+- [x] 1.1 Create the pinned `iii` 0.26.0 engine derivation and register its overlay
   - Add `overlays/iii.nix` in `overlays/agentmemory.nix`'s shape: a `supportedSystems = [ "aarch64-linux" "aarch64-darwin" ]` guard that throws `Unsupported iii system: ${system}`, and an `engineSources` table holding the tag-pinned release URL and SRI hash per system (`sha256-4u5E0es48OM30+d7O4YB2ib/G9k0zIpMhJubz0FKtAs=` on `aarch64-linux`, `sha256-JzApagiuWEN1ey55E61ltigpAcmLlR28IwGODrQl4oU=` on `aarch64-darwin`)
   - Build `stdenvNoCC.mkDerivation { pname = "iii"; version = "0.26.0"; }` from that `fetchurl`, unpack the single-file archive into `$out/bin` (`tar -xzf "$src" -C "$out/bin"`, `chmod 0555 "$out/bin/iii"`), and set `dontStrip = true`
   - Add `autoPatchelfHook` with `glibc` and `stdenv.cc.cc.lib` on Linux and `dontFixup = true` on Darwin; add no FHS wrapper, `nix-ld`, installer run, or hand-placed binary
@@ -21,7 +21,7 @@
   - Completed when `.#nixosConfigurations.fabro-vm.pkgs.iii.version` and `.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.iii.version` both report `0.26.0`, each `src.outputHash` equals its recorded SRI, and forcing the attribute on any other system fails with the named error
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 3.6, 3.8_
 
-- [ ] 1.2 (P) Add the pinned 73-worker manifest
+- [x] 1.2 (P) Add the pinned 73-worker manifest
   - Add `overlays/iii-workers.nix` as pure data: `engineVersion = "0.26.0"`, a system-to-target map (`aarch64-linux` → `aarch64-unknown-linux-gnu`, `aarch64-darwin` → `aarch64-apple-darwin`), and one entry per cataloged worker with `version`, `binary`, and `targets.<system>.{url,hash}`
   - Transcribe the 73 rows of `research.md` § Worker catalog snapshot, converting each hex digest to SRI (`nix hash convert --hash-algo sha256 --to sri <hex>`); use the `https://cdn.iii.cloud/workers/<name>/<version>/<name>-<target>.tar.gz` default and full URLs for `acp`, `compose-ui`, and `mcp`, with `iii-acp` as `acp`'s binary
   - Keep entries sorted by worker name, record the 2026-11-16 snapshot date in a comment, and resolve nothing at evaluation time: no `latest`, no registry query, no URL-template fallback
@@ -30,7 +30,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.7, 2.10_
   - _Boundary: overlays/iii-workers.nix_
 
-- [ ] 1.3 Build the generic worker derivation and expose `iii-workers`
+- [x] 1.3 Build the generic worker derivation and expose `iii-workers`
   - Extend `overlays/iii.nix` with one generic builder over the manifest: `pname = "iii-worker-${name}"`, the entry's `version`, a `fetchurl` on its per-system `url`/`hash`, the same Linux `autoPatchelfHook`/`glibc`/`stdenv.cc.cc.lib` inputs, `dontStrip = true`, and `dontFixup` on Darwin
   - Install the archive's single root executable as `$out/bin/${entry.binary}` and `test -x` it so a layout change fails the build naming the worker
   - Expose exactly the manifest names under `pkgs.iii-workers`, each with `passthru.workerName`, `passthru.iiiEngineVersion = manifest.engineVersion`, `meta.mainProgram = entry.binary`, and the two-element `meta.platforms`; a missing target must fail evaluation naming the worker and system
@@ -41,7 +41,7 @@
 
 - [ ] 2. Guest service
 
-- [ ] 2.1 Render the empty-worker configuration and expose the `fabro.iii` options
+- [x] 2.1 Render the empty-worker configuration and expose the `fabro.iii` options
   - Add `configurations/fabro-vm/iii.nix` with `fabro.iii` options: `package` (default `pkgs.iii`), `host` (default `"127.0.0.1"`), `port` (default `49134`), and read-only `config`/`configFile` values rendered by `(pkgs.formats.yaml { }).generate "iii-config.yaml" config.fabro.iii.config`
   - Default `config` to exactly one `workers` entry, `{ name = "iii-worker-manager"; config = { host = "127.0.0.1"; port = 49134; }; }`, deriving host and port from those two options so the rendered file has one source
   - Declare no project worker and no `configuration`, `iii-stream`, `http-functions`, or `sandbox` entry; add no unit, package install, or secret in this task
