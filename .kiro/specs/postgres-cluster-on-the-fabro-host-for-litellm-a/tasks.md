@@ -175,7 +175,7 @@ back the rendered unit graph.
   - _Requirements: 6.4, 6.5, 6.6, 6.7, 8.17, 8.18_
   - _Boundary: docs/postgres-litellm-runbook.md_
 
-- [ ] 6. Run the full verification set and read back the rendered unit graph
+- [x] 6. Run the full verification set and read back the rendered unit graph
   - Build `postgres-scratch` and `litellm-db-init`, run `nix flake check`, and evaluate `nixosConfigurations.fabro-vm` and `fabro-vm-guest-eval` in one pass
   - Read the rendered guest to confirm `postgresql -> postgresql-setup -> postgres-bootstrap -> litellm-db-init -> postgres-grants -> litellm`, that only the two provisioning oneshots run as `postgres`, and that `fabro.service` still requires `litellm.service`
   - Confirm no PostgreSQL password, hash, or credential appears in `configurations/`, `overlays/`, the rendered units, or the sops templates, and that the three existing `svc:*` Serve lines are byte-identical
