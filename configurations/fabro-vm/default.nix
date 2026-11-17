@@ -56,6 +56,10 @@ in
     ./sandbox.nix
     ./darwin-dispatch.nix
     ./litellm.nix
+    # The `fabro.postgres` declaration surface for the shared cluster.
+    ./postgres.nix
+    # LiteLLM's `fabro.postgres` declarations and fixed system accounts.
+    ./litellm-db.nix
     # The podman-bridge API bridge that lets dispatch workflow sandboxes
     # create and start (and the bridge transparently approves) child runs
     # without a Fabro credential in any sandbox environment.
@@ -89,6 +93,9 @@ in
 
   config = {
     fabro.darwinBuilder.enable = true;
+    # The single socket-only PostgreSQL 18.6 cluster and its declaration
+    # surface (./postgres.nix). Workload modules extend the declarations.
+    fabro.postgres.enable = true;
     # lima-init reconfigures the system from Lima's cidata userdata at boot
     # (user, SSH keys, mounts) and runs the lima-guestagent daemon as a
     # systemd service.
@@ -536,10 +543,11 @@ in
     environment.systemPackages = with pkgs; [
       # Packages installed with the pivot off macOS (the mac-side launchd
       # services were removed with it; the systemd services live in
-      # fabro.nix and litellm.nix). `fabro` comes from the repo's overlay
-      # (applied in flake.nix); litellm is nixpkgs'.
+      # fabro.nix and litellm.nix). `fabro` and `litellm-db` come from the
+      # repo's overlay (applied in flake.nix): `litellm-db` is the offline
+      # proxy build with the generated Prisma client, not nixpkgs' litellm.
       fabro
-      litellm
+      pkgs.litellm-db
 
       btop
       nextvi # small version of vi

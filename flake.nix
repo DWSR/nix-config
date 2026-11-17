@@ -2438,6 +2438,193 @@
             let
               vm = self.nixosConfigurations.fabro-vm.config;
               kernelConfig = builtins.readFile vm.boot.kernelPackages.kernel.configfile;
+
+              # Rendered PostgreSQL values for the cluster invariants below.
+              # Each assertMsg names the option, unit, role, or extension it
+              # guards, so a regression fails evaluation with that name instead
+              # of a module-internal error.
+              pg = vm.services.postgresql;
+              pgDeclaration = vm.fabro.postgres;
+              pgDeclaredRoles = builtins.attrNames pgDeclaration.roles;
+              pgDeclaredDatabases = builtins.attrNames pgDeclaration.databases;
+              pgExtensions = pg.finalPackage.installedExtensions or [ ];
+              pgExtension =
+                name: pkgs.lib.findFirst (package: (package.pname or package.name or "") == name) null pgExtensions;
+              pgMissingExtensions = builtins.filter (name: pgExtension name == null) [
+                "pg_textsearch"
+                "pgvector"
+                "pg_uuidv7"
+              ];
+              pgvector = pgExtension "pgvector";
+              # A server unit is one whose ExecStart token is the server binary
+              # or whose `script` runs it: `postgresql-setup` and the
+              # provisioning oneshots execute their own unit scripts, so they
+              # stay out. A second cluster adds a second executing unit here.
+              pgMentionsServer = text: builtins.match ".*/bin/postgres[^a-zA-Z0-9_-].*" text != null;
+              pgServerUnits = builtins.filter (
+                name:
+                let
+                  service = vm.systemd.services.${name};
+                  tokens = builtins.filter (token: token != "") (
+                    pkgs.lib.splitString " " (toString (service.serviceConfig.ExecStart or ""))
+                  );
+                in
+                builtins.any (token: builtins.match ".*/bin/postgres" token != null) tokens
+                || pgMentionsServer (service.script or "")
+              ) (builtins.attrNames vm.systemd.services);
+              pgAuthLines = builtins.filter (line: line != "") (
+                pkgs.lib.splitString "\n" (pg.authentication or "")
+              );
+              pgAuthTokens = line: builtins.filter (token: token != "") (pkgs.lib.splitString " " line);
+              pgNonLocalAuthLines = builtins.filter (line: !(pkgs.lib.hasPrefix "local " line)) pgAuthLines;
+              # Token match, not substring: a role or system account may contain
+              # `host` without being a network rule.
+              pgNetworkAuthLines = builtins.filter (
+                line:
+                builtins.any (
+                  token:
+                  builtins.elem token [
+                    "host"
+                    "hostssl"
+                    "hostnossl"
+                    "md5"
+                    "scram-sha-256"
+                  ]
+                ) (pgAuthTokens line)
+              ) pgAuthLines;
+              pgPort = pg.settings.port or 5432;
+              pgFirewallOpensPort =
+                builtins.elem pgPort (vm.networking.firewall.allowedTCPPorts or [ ])
+                || builtins.any (
+                  range:
+                  builtins.length range == 2 && pgPort >= builtins.head range && pgPort <= builtins.elemAt range 1
+                ) (vm.networking.firewall.allowedTCPPortRanges or [ ]);
+              pgServeExpected = [
+                "--service=svc:fabro --https=443 http://127.0.0.1:32276"
+                "--service=svc:litellm --https=443 http://127.0.0.1:4000"
+                "--service=svc:opencode --https=443 http://127.0.0.1:4096"
+              ];
+              pgServe = vm.systemd.services.tailscale-serve.serviceConfig.ExecStart or [ ];
+              pgServeUnchanged =
+                builtins.length pgServe == 3
+                && builtins.all (
+                  line: builtins.any (expected: pkgs.lib.hasSuffix expected line) pgServeExpected
+                ) pgServe
+                && !(builtins.any (line: builtins.match ".*(postgres|5432).*" line != null) pgServe);
+              # `ensureClauses` is the module's freeform role-clause surface;
+              # the cluster-admin clauses must stay unset so no workload role
+              # can create databases or roles.
+              pgPrivilegedClauses = builtins.filter (
+                user:
+                let
+                  clauses = user.ensureClauses or { };
+                in
+                builtins.any (clause: builtins.hasAttr clause clauses) [
+                  "superuser"
+                  "createdb"
+                  "createrole"
+                ]
+              ) pg.ensureUsers;
+              # Peer authentication needs no credential, and the declaration
+              # surface has no password option: a password anywhere on the
+              # declaration or on a provisioned role fails the check.
+              pgPasswordDeclarations =
+                map (name: "fabro.postgres.roles.${name}") (
+                  builtins.filter (name: pgDeclaration.roles.${name} ? password) pgDeclaredRoles
+                )
+                ++ map (name: "fabro.postgres.databases.${name}") (
+                  builtins.filter (name: pgDeclaration.databases.${name} ? password) pgDeclaredDatabases
+                )
+                ++ map (grant: "fabro.postgres.grants.${grant.database}.${grant.role}.${grant.on}") (
+                  builtins.filter (grant: grant ? password) pgDeclaration.grants
+                )
+                ++ map (user: "services.postgresql.ensureUsers.${user.name}") (
+                  builtins.filter (
+                    user: user ? password || builtins.hasAttr "password" (user.ensureClauses or { })
+                  ) pg.ensureUsers
+                );
+              # No workload's declared database identity may be the cluster
+              # superuser role.
+              pgPostgresIdentities =
+                map (name: "fabro.postgres.roles.${name}") (
+                  builtins.filter (name: name == "postgres") pgDeclaredRoles
+                )
+                ++ map (name: "fabro.postgres.databases.${name}") (
+                  builtins.filter (name: name == "postgres") pgDeclaredDatabases
+                )
+                ++ map (grant: "fabro.postgres.grants role ${grant.role}") (
+                  builtins.filter (grant: grant.role == "postgres") pgDeclaration.grants
+                );
+
+              # Rendered LiteLLM database wiring (configurations/fabro-vm/
+              # litellm-db.nix): the proxy's database identity, the package with
+              # its generated Prisma client, the socket URL, and the
+              # provisioning units that must precede the proxy. Each binding
+              # falls back to a null/empty value, so a missing element fails the
+              # matching assertion with its own message instead of a
+              # module-internal error.
+              litellm = vm.services.litellm;
+              litellmUnit = vm.systemd.services.litellm;
+              litellmDbInitUnit = vm.systemd.services.litellm-db-init or { };
+              litellmBootstrapUnit = vm.systemd.services.postgres-bootstrap or { };
+              litellmGrantsUnit = vm.systemd.services.postgres-grants or { };
+              litellmCatalog =
+                (import ./configurations/fabro-vm/litellm-catalog.nix {
+                  inherit (pkgs) lib;
+                }).catalog;
+              litellmDatabaseName = "litellm";
+              litellmAppRole = "litellm_app";
+              litellmMigratorRole = "litellm_migrator";
+              litellmDatabase =
+                pgDeclaration.databases.${litellmDatabaseName} or {
+                  owner = null;
+                  extensions = [ ];
+                };
+              litellmUrl = litellm.environment.DATABASE_URL or "";
+              litellmUrlUser = builtins.match "postgresql://([^:@/]+)@.*" litellmUrl;
+              litellmUrlDatabase = builtins.match "postgresql://[^/]*/([^?]*)\\?.*" litellmUrl;
+              litellmExecText = "${toString (litellmUnit.serviceConfig.ExecStart or "")} ${
+                toString (litellmUnit.script or "")
+              }";
+              litellmChatgptRules = builtins.filter (
+                rule: builtins.match ".*chatgpt.*" rule != null
+              ) vm.systemd.tmpfiles.rules;
+              litellmPassthru = litellm.package.passthru or { };
+              litellmPrismaClient = litellmPassthru.prismaClient or null;
+              litellmRouter = litellm.settings.router_settings or { };
+              litellmMissingUnits = builtins.filter (name: !(builtins.hasAttr name vm.systemd.services)) [
+                "postgresql-setup"
+                "postgres-bootstrap"
+                "litellm-db-init"
+                "postgres-grants"
+              ];
+              # Grants compared as "<scope>:<sorted privileges>" so an assertion
+              # checks scope and privilege sets instead of declaration order.
+              litellmGrantEntries =
+                grants:
+                builtins.sort builtins.lessThan (
+                  map (
+                    grant:
+                    "${grant.on}:${builtins.concatStringsSep " " (builtins.sort builtins.lessThan grant.privileges)}"
+                  ) grants
+                );
+              litellmAppGrantEntries = litellmGrantEntries (
+                builtins.filter (
+                  grant: grant.database == litellmDatabaseName && grant.role == litellmAppRole
+                ) pgDeclaration.grants
+              );
+              litellmMigratorGrantEntries = litellmGrantEntries (
+                builtins.filter (
+                  grant: grant.database == litellmDatabaseName && grant.role == litellmMigratorRole
+                ) pgDeclaration.grants
+              );
+              litellmExpectedAppGrantEntries = [
+                "all-sequences:SELECT USAGE"
+                "all-tables:DELETE INSERT SELECT UPDATE"
+                "database:CONNECT"
+                "schema:USAGE"
+              ];
+
               guestReport =
                 assert pkgs.lib.assertMsg vm.services.lima.enable
                   "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
@@ -2642,12 +2829,287 @@
                   vm.systemd.services.litellm.serviceConfig.EnvironmentFile
                   == [ vm.sops.templates."litellm-env".path ]
                 ) "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template.";
-                # The litellm module runs as a DynamicUser, so systemd does
-                # not export $HOME; litellm 1.86 imports prisma eagerly and
+                # systemd exports no $HOME for the fixed litellm account
+                # either; litellm 1.86 imports prisma eagerly and
                 # Path.home() would abort startup.
                 assert pkgs.lib.assertMsg
                   ((vm.systemd.services.litellm.environment.HOME or null) == vm.services.litellm.stateDir)
                   "fabro-vm: the litellm service must export HOME (its DynamicUser unit gets none, and litellm's eager prisma import calls Path.home()).";
+                # The shared PostgreSQL cluster and its declaration surface
+                # (configurations/fabro-vm/postgres.nix, litellm-db.nix). Each
+                # assertMsg names the option, unit, role, or extension it
+                # guards, so a regression fails pure evaluation (no guest
+                # package is built) with that name.
+                assert pkgs.lib.assertMsg
+                  (
+                    pg.enable
+                    && pgDeclaration.enable
+                    && builtins.elem "multi-user.target" (vm.systemd.targets.postgresql.wantedBy or [ ])
+                  )
+                  "fabro-vm: exactly one PostgreSQL cluster must be declared and enabled: fabro.postgres.enable and services.postgresql.enable must both be true, and postgresql.target must be wanted by multi-user.target.";
+                assert pkgs.lib.assertMsg (pgServerUnits == [ "postgresql" ])
+                  "fabro-vm: the guest must run exactly one PostgreSQL server unit (postgresql.service); the server binary is executed by [ ${pkgs.lib.concatStringsSep ", " pgServerUnits} ] instead.";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.postgresql.serviceConfig.User or "") == "postgres"
+                    && (vm.systemd.services.postgresql.serviceConfig.Group or "") == "postgres"
+                  )
+                  "fabro-vm: systemd.services.postgresql must run the cluster as the fixed postgres system account; got '${
+                    vm.systemd.services.postgresql.serviceConfig.User or "<unset>"
+                  }'.";
+                assert pkgs.lib.assertMsg (pg.package.version == "18.6" && pg.finalPackage.version == "18.6")
+                  "fabro-vm: services.postgresql.package (fabro.postgres.package) must be PostgreSQL 18.6 from the pinned unstable package set; got ${pg.package.version} and ${pg.finalPackage.version}.";
+                assert pkgs.lib.assertMsg (pg.dataDir == "/var/lib/postgresql/18")
+                  "fabro-vm: services.postgresql.dataDir (fabro.postgres.dataDir) must be /var/lib/postgresql/18 so a switch preserves databases, roles, and rows; got '${pg.dataDir}'.";
+                assert pkgs.lib.assertMsg ((pg.settings.listen_addresses or null) == "")
+                  "fabro-vm: services.postgresql.settings.listen_addresses must be \"\" so the cluster binds no TCP address; got '${
+                    toString (pg.settings.listen_addresses or "<unset>")
+                  }'.";
+                assert pkgs.lib.assertMsg (pgNonLocalAuthLines == [ ])
+                  "fabro-vm: every services.postgresql.authentication rule must start with 'local' (only Unix socket connections are admitted); found '${builtins.head pgNonLocalAuthLines}'.";
+                assert pkgs.lib.assertMsg (pgNetworkAuthLines == [ ])
+                  "fabro-vm: services.postgresql.authentication must contain no host/md5/scram rule (socket peer authentication stays credential-free); found '${builtins.head pgNetworkAuthLines}'.";
+                assert pkgs.lib.assertMsg (!pgFirewallOpensPort)
+                  "fabro-vm: networking.firewall must leave the PostgreSQL port ${toString pgPort} closed (no allowedTCPPorts entry and no allowedTCPPortRanges range opens it).";
+                assert pkgs.lib.assertMsg pgServeUnchanged
+                  "fabro-vm: systemd.services.tailscale-serve must keep exactly the svc:fabro, svc:litellm, and svc:opencode tcp:443 advertisements and publish nothing for PostgreSQL; got [ ${pkgs.lib.concatStringsSep " | " pgServe} ].";
+                assert pkgs.lib.assertMsg (pgMissingExtensions == [ ])
+                  "fabro-vm: services.postgresql.finalPackage.installedExtensions must contain the pg_textsearch, pgvector (vector), and pg_uuidv7 extension packages; missing '${builtins.head pgMissingExtensions}'.";
+                assert pkgs.lib.assertMsg (pgvector != null && pkgs.lib.versionAtLeast pgvector.version "0.8.6")
+                  "fabro-vm: the pgvector extension package must be version 0.8.6 or later; got '${
+                    if pgvector == null then "missing" else pgvector.version
+                  }'.";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasInfix "pg_textsearch" (pg.settings.shared_preload_libraries or ""))
+                  "fabro-vm: services.postgresql.settings.shared_preload_libraries must preload pg_textsearch; got '${
+                    toString (pg.settings.shared_preload_libraries or "<unset>")
+                  }'.";
+                assert pkgs.lib.assertMsg (pg.ensureDatabases == pgDeclaredDatabases)
+                  "fabro-vm: services.postgresql.ensureDatabases must equal the fabro.postgres.databases names ([ ${pkgs.lib.concatStringsSep ", " pgDeclaredDatabases} ]); got [ ${pkgs.lib.concatStringsSep ", " pg.ensureDatabases} ].";
+                assert pkgs.lib.assertMsg (map (user: user.name) pg.ensureUsers == pgDeclaredRoles)
+                  "fabro-vm: services.postgresql.ensureUsers names must equal the fabro.postgres.roles names ([ ${pkgs.lib.concatStringsSep ", " pgDeclaredRoles} ]); got [ ${
+                    pkgs.lib.concatStringsSep ", " (map (user: user.name) pg.ensureUsers)
+                  } ].";
+                assert pkgs.lib.assertMsg (pgPrivilegedClauses == [ ])
+                  "fabro-vm: services.postgresql.ensureUsers.${(builtins.head pgPrivilegedClauses).name}.ensureClauses must not set superuser, createdb, or createrole; no workload role administers the cluster.";
+                assert pkgs.lib.assertMsg (pgPasswordDeclarations == [ ])
+                  "fabro-vm: the guest must declare no PostgreSQL password (socket peer authentication needs no credential); '${builtins.head pgPasswordDeclarations}' carries one.";
+                assert pkgs.lib.assertMsg (pgPostgresIdentities == [ ])
+                  "fabro-vm: fabro.postgres must not declare the postgres superuser identity for a workload; '${builtins.head pgPostgresIdentities}' does.";
+                # LiteLLM's state store: the `litellm` database, its two
+                # distinct roles, and the application role's exact grant set
+                # (configurations/fabro-vm/litellm-db.nix). The migration role
+                # owns the database and the schema-initialization unit creates
+                # its objects; the application role holds only CONNECT, schema
+                # USAGE, and table/sequence DML, so it can never create, alter,
+                # or drop a persistent object.
+                assert pkgs.lib.assertMsg (pgDeclaration.databases ? litellm)
+                  "fabro-vm: fabro.postgres.databases.litellm must be declared (the proxy's state store); declared databases are [ ${pkgs.lib.concatStringsSep ", " pgDeclaredDatabases} ].";
+                assert pkgs.lib.assertMsg
+                  (pgDeclaration.roles ? litellm_app && pgDeclaration.roles ? litellm_migrator)
+                  "fabro-vm: fabro.postgres.roles must declare both litellm_app (the proxy) and litellm_migrator (schema initialization); declared roles are [ ${pkgs.lib.concatStringsSep ", " pgDeclaredRoles} ].";
+                assert pkgs.lib.assertMsg
+                  (litellmDatabase.owner == litellmMigratorRole && litellmDatabase.owner != litellmAppRole)
+                  "fabro-vm: fabro.postgres.databases.litellm.owner must be the migration role litellm_migrator and not the application role litellm_app (Requirement 5.5: one migration role and one separate application role); got '${toString litellmDatabase.owner}'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    pgDeclaration.roles.litellm_app.systemUser == "litellm"
+                    && pgDeclaration.roles.litellm_migrator.systemUser == "litellm-migrator"
+                    && pgDeclaration.roles.litellm_app.systemUser != pgDeclaration.roles.litellm_migrator.systemUser
+                  )
+                  "fabro-vm: fabro.postgres.roles.litellm_app.systemUser must be litellm and fabro.postgres.roles.litellm_migrator.systemUser must be litellm-migrator, as two distinct fixed accounts (peer authentication maps each to its own role); got '${pgDeclaration.roles.litellm_app.systemUser}' and '${pgDeclaration.roles.litellm_migrator.systemUser}'.";
+                assert pkgs.lib.assertMsg (litellmAppGrantEntries == litellmExpectedAppGrantEntries)
+                  "fabro-vm: fabro.postgres.grants for litellm_app on database litellm must be exactly [ ${pkgs.lib.concatStringsSep ", " litellmExpectedAppGrantEntries} ]: CONNECT on the database, USAGE on schema public, table DML, sequence USAGE/SELECT, and no DDL privilege; got [ ${pkgs.lib.concatStringsSep ", " litellmAppGrantEntries} ].";
+                assert pkgs.lib.assertMsg (litellmMigratorGrantEntries == [ ])
+                  "fabro-vm: fabro.postgres.grants must not target the migration role litellm_migrator on database litellm (it owns the database; the separate application role holds the object grants); got [ ${pkgs.lib.concatStringsSep ", " litellmMigratorGrantEntries} ].";
+                assert pkgs.lib.assertMsg (pgDeclaration.schemaInitUnits == [ "litellm-db-init.service" ])
+                  "fabro-vm: fabro.postgres.schemaInitUnits must be [ litellm-db-init.service ] so postgres-grants and the proxy wait for the schema-initialization step; got [ ${pkgs.lib.concatStringsSep ", " pgDeclaration.schemaInitUnits} ].";
+                # The proxy package and environment: `litellm-db` carries the
+                # client generated from the same schema the init unit pushes,
+                # the socket URL names the application role with no credential,
+                # and schema updates are disabled because `litellm-db-init`
+                # owns `prisma db push`.
+                assert pkgs.lib.assertMsg
+                  (
+                    toString litellm.package == toString self.nixosConfigurations.fabro-vm.pkgs.litellm-db
+                    && (litellm.package.pname or "") == "litellm"
+                    && (litellm.package.version or "") == "1.86.0"
+                  )
+                  "fabro-vm: services.litellm.package must be pkgs.litellm-db (litellm 1.86.0 with the generated Prisma client); got '${toString litellm.package}'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    litellmPassthru ? prismaClient
+                    && (litellmPrismaClient.pname or "") == "litellm-prisma-client"
+                    && (litellmPassthru.prismaVersion or "") == "5.17.0"
+                  )
+                  "fabro-vm: services.litellm.package.passthru.prismaClient must be the generated litellm-prisma-client at Prisma 5.17.0 (the proxy imports the client generated from its own schema, never a bare prisma package); got '${
+                    if litellmPrismaClient == null then "<missing>" else toString litellmPrismaClient
+                  }' at Prisma '${toString (litellmPassthru.prismaVersion or "<missing>")}'.";
+                assert pkgs.lib.assertMsg
+                  (builtins.any (package: toString package == toString litellm.package) vm.environment.systemPackages)
+                  "fabro-vm: environment.systemPackages must install the litellm-db proxy package (${toString litellm.package}).";
+                assert pkgs.lib.assertMsg
+                  (
+                    pkgs.lib.hasInfix "host=/run/postgresql" litellmUrl
+                    && litellmUrlUser == [ litellmAppRole ]
+                    && litellmUrlDatabase == [ litellmDatabaseName ]
+                  )
+                  "fabro-vm: services.litellm.environment.DATABASE_URL must connect as litellm_app to database litellm over the Unix socket (host=/run/postgresql, Requirement 6.3); rendered user '${toString litellmUrlUser}', database '${toString litellmUrlDatabase}'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.match "postgresql://[^/@]*:[^/@]*@.*" litellmUrl == null
+                    && builtins.match ".*password=.*" litellmUrl == null
+                  )
+                  "fabro-vm: services.litellm.environment.DATABASE_URL must carry no password in its user-information section and no password parameter (peer authentication needs no credential, Requirement 9.1).";
+                assert pkgs.lib.assertMsg ((litellm.environment.DISABLE_SCHEMA_UPDATE or "") == "true")
+                  "fabro-vm: services.litellm.environment.DISABLE_SCHEMA_UPDATE must be \"true\" (the separate litellm-db-init unit owns prisma db push, Requirement 7.11); got '${
+                    toString (litellm.environment.DISABLE_SCHEMA_UPDATE or "<unset>")
+                  }'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    litellm.environment ? PRISMA_QUERY_ENGINE_BINARY
+                    && pkgs.lib.hasInfix "litellm-prisma-engines" litellm.environment.PRISMA_QUERY_ENGINE_BINARY
+                    && pkgs.lib.hasSuffix "/bin/query-engine" litellm.environment.PRISMA_QUERY_ENGINE_BINARY
+                  )
+                  "fabro-vm: services.litellm.environment.PRISMA_QUERY_ENGINE_BINARY must be the pinned litellm-prisma-engines query engine (so the proxy never downloads an engine); got '${
+                    toString (litellm.environment.PRISMA_QUERY_ENGINE_BINARY or "<unset>")
+                  }'.";
+                assert pkgs.lib.assertMsg
+                  (builtins.match ".*prisma[[:space:]]+db[[:space:]]+push.*" litellmExecText == null)
+                  "fabro-vm: systemd.services.litellm must not run prisma db push (litellm-db-init owns schema initialization, Requirement 6.12); got '${litellmExecText}'.";
+                # The proxy unit: the fixed `litellm` account (peer
+                # authentication maps it to litellm_app) and hard dependencies
+                # on the schema-initialization and grant units.
+                assert pkgs.lib.assertMsg
+                  (
+                    (litellmUnit.serviceConfig.User or "") == "litellm"
+                    && (litellmUnit.serviceConfig.Group or "") == "litellm"
+                  )
+                  "fabro-vm: systemd.services.litellm must run as the fixed litellm user and group (peer authentication maps that account to litellm_app); got '${
+                    litellmUnit.serviceConfig.User or "<unset>"
+                  }':'${litellmUnit.serviceConfig.Group or "<unset>"}'.";
+                assert pkgs.lib.assertMsg (!(litellmUnit.serviceConfig.DynamicUser or false))
+                  "fabro-vm: systemd.services.litellm.serviceConfig.DynamicUser must be false (a dynamic account cannot peer-authenticate as litellm_app, Requirement 8.9); got 'true'.";
+                assert pkgs.lib.assertMsg ((litellmUnit.serviceConfig.PrivateUsers or false) == false)
+                  "fabro-vm: systemd.services.litellm.serviceConfig.PrivateUsers must stay false (a user namespace rewrites the socket peer credentials, so the connection could not assume litellm_app); got 'true'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "litellm-db-init.service" (litellmUnit.requires or [ ])
+                    && builtins.elem "postgres-grants.service" (litellmUnit.requires or [ ])
+                  )
+                  "fabro-vm: systemd.services.litellm.requires must contain litellm-db-init.service and postgres-grants.service (Requirement 8.8: the proxy requires the schema-initialization step); got [ ${
+                    pkgs.lib.concatStringsSep ", " (litellmUnit.requires or [ ])
+                  } ].";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "litellm-db-init.service" (litellmUnit.after or [ ])
+                    && builtins.elem "postgres-grants.service" (litellmUnit.after or [ ])
+                  )
+                  "fabro-vm: systemd.services.litellm.after must contain litellm-db-init.service and postgres-grants.service (Requirement 7.10: the proxy starts only after the schema step); got [ ${
+                    pkgs.lib.concatStringsSep ", " (litellmUnit.after or [ ])
+                  } ].";
+                # The provisioning chain the design's boot flow declares:
+                # postgresql -> postgresql-setup -> postgres-bootstrap ->
+                # litellm-db-init -> postgres-grants -> litellm. The two
+                # provisioning oneshots run the cluster superuser account and
+                # the schema-initialization oneshot its own migration account.
+                assert pkgs.lib.assertMsg (litellmMissingUnits == [ ])
+                  "fabro-vm: the provisioning chain must define postgresql-setup, postgres-bootstrap, litellm-db-init, and postgres-grants units; '${builtins.head litellmMissingUnits}' is missing.";
+                assert pkgs.lib.assertMsg
+                  (
+                    ((litellmDbInitUnit.serviceConfig or { }).Type or "") == "oneshot"
+                    && ((litellmDbInitUnit.serviceConfig or { }).RemainAfterExit or false)
+                    && ((litellmDbInitUnit.serviceConfig or { }).User or "") == "litellm-migrator"
+                    && ((litellmDbInitUnit.serviceConfig or { }).Group or "") == "litellm-migrator"
+                  )
+                  "fabro-vm: systemd.services.litellm-db-init must be a RemainAfterExit oneshot running as the litellm-migrator account (the schema-initialization role's system user); got Type='${
+                    (litellmDbInitUnit.serviceConfig or { }).Type or "<unset>"
+                  }' User='${(litellmDbInitUnit.serviceConfig or { }).User or "<unset>"}' Group='${
+                    (litellmDbInitUnit.serviceConfig or { }).Group or "<unset>"
+                  }' RemainAfterExit='${
+                    toString ((litellmDbInitUnit.serviceConfig or { }).RemainAfterExit or false)
+                  }'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "postgres-bootstrap.service" (litellmDbInitUnit.requires or [ ])
+                    && builtins.elem "postgres-bootstrap.service" (litellmDbInitUnit.after or [ ])
+                    && builtins.elem "postgres-grants.service" (litellmDbInitUnit.before or [ ])
+                    && builtins.elem "multi-user.target" (litellmDbInitUnit.wantedBy or [ ])
+                  )
+                  "fabro-vm: systemd.services.litellm-db-init must require and start after postgres-bootstrap.service, run before postgres-grants.service, and be wanted by multi-user.target (the chain is postgresql -> postgresql-setup -> postgres-bootstrap -> litellm-db-init -> postgres-grants -> litellm); got requires=[ ${
+                    pkgs.lib.concatStringsSep ", " (litellmDbInitUnit.requires or [ ])
+                  } ] before=[ ${pkgs.lib.concatStringsSep ", " (litellmDbInitUnit.before or [ ])} ].";
+                assert pkgs.lib.assertMsg
+                  (
+                    ((litellmBootstrapUnit.serviceConfig or { }).Type or "") == "oneshot"
+                    && ((litellmBootstrapUnit.serviceConfig or { }).RemainAfterExit or false)
+                    && ((litellmBootstrapUnit.serviceConfig or { }).User or "") == "postgres"
+                    && builtins.elem "postgresql.service" (litellmBootstrapUnit.requires or [ ])
+                    && builtins.elem "postgresql-setup.service" (litellmBootstrapUnit.requires or [ ])
+                    && builtins.elem "postgresql.service" (litellmBootstrapUnit.after or [ ])
+                    && builtins.elem "postgresql-setup.service" (litellmBootstrapUnit.after or [ ])
+                    && builtins.elem "litellm-db-init.service" (litellmBootstrapUnit.before or [ ])
+                  )
+                  "fabro-vm: systemd.services.postgres-bootstrap must be a RemainAfterExit oneshot running as postgres after postgresql.service and postgresql-setup.service and before litellm-db-init.service; got User='${
+                    (litellmBootstrapUnit.serviceConfig or { }).User or "<unset>"
+                  }' requires=[ ${pkgs.lib.concatStringsSep ", " (litellmBootstrapUnit.requires or [ ])} ] after=[ ${
+                    pkgs.lib.concatStringsSep ", " (litellmBootstrapUnit.after or [ ])
+                  } ] before=[ ${pkgs.lib.concatStringsSep ", " (litellmBootstrapUnit.before or [ ])} ].";
+                assert pkgs.lib.assertMsg
+                  (
+                    ((litellmGrantsUnit.serviceConfig or { }).Type or "") == "oneshot"
+                    && ((litellmGrantsUnit.serviceConfig or { }).RemainAfterExit or false)
+                    && ((litellmGrantsUnit.serviceConfig or { }).User or "") == "postgres"
+                    && builtins.elem "postgres-bootstrap.service" (litellmGrantsUnit.requires or [ ])
+                    && builtins.elem "postgres-bootstrap.service" (litellmGrantsUnit.after or [ ])
+                    && builtins.elem "litellm-db-init.service" (litellmGrantsUnit.requires or [ ])
+                    && builtins.elem "litellm-db-init.service" (litellmGrantsUnit.after or [ ])
+                  )
+                  "fabro-vm: systemd.services.postgres-grants must be a RemainAfterExit oneshot running as postgres after postgres-bootstrap.service and every fabro.postgres.schemaInitUnits entry (litellm-db-init.service); got User='${
+                    (litellmGrantsUnit.serviceConfig or { }).User or "<unset>"
+                  }' requires=[ ${pkgs.lib.concatStringsSep ", " (litellmGrantsUnit.requires or [ ])} ] after=[ ${
+                    pkgs.lib.concatStringsSep ", " (litellmGrantsUnit.after or [ ])
+                  } ].";
+                # The fixed account must inherit the existing ChatGPT
+                # credential: the state directory keeps its path and the
+                # tmpfiles rules re-own the `chatgpt` subdirectory (Requirement
+                # 6.11).
+                assert pkgs.lib.assertMsg
+                  (
+                    litellm.stateDir == "/var/lib/litellm"
+                    && (litellm.environment.CHATGPT_TOKEN_DIR or "") == "/var/lib/litellm/chatgpt"
+                  )
+                  "fabro-vm: services.litellm.stateDir must stay /var/lib/litellm with CHATGPT_TOKEN_DIR=/var/lib/litellm/chatgpt so the fixed account reuses the existing ChatGPT credential (Requirement 6.11); got '${litellm.stateDir}' and '${
+                    toString (litellm.environment.CHATGPT_TOKEN_DIR or "<unset>")
+                  }'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    litellmChatgptRules == [
+                      "d /var/lib/litellm/chatgpt 0700 litellm litellm - -"
+                      "Z /var/lib/litellm/chatgpt 0700 litellm litellm - -"
+                    ]
+                  )
+                  "fabro-vm: systemd.tmpfiles.rules must create and recursively re-own /var/lib/litellm/chatgpt 0700 to the fixed litellm user (the credential directory predates the dynamic-account removal); got [ ${pkgs.lib.concatStringsSep " | " litellmChatgptRules} ].";
+                # The proxy's placement and failover policy is part of the
+                # unchanged proxy contract (Requirement 6.9); `max_fallbacks`
+                # stays bounded by the catalog's largest logical-model group.
+                assert pkgs.lib.assertMsg
+                  (
+                    (litellmRouter.routing_strategy or "") == "simple-shuffle"
+                    && (litellmRouter.optional_pre_call_checks or [ ]) == [ "session_affinity" ]
+                    && (litellmRouter.deployment_affinity_ttl_seconds or null) == 21600
+                    && (litellmRouter.num_retries or null) == 0
+                    && (litellmRouter.enable_weighted_failover or false)
+                    && (litellmRouter.allowed_fails or null) == 0
+                    && (litellmRouter.cooldown_time or null) == 60
+                    && (litellmRouter.max_fallbacks or null) == (litellmCatalog.maxGroupSize - 1)
+                    && !(litellmRouter ? fallbacks)
+                    && !(litellmRouter ? context_window_fallbacks)
+                    && !(litellmRouter ? model_group_alias)
+                  )
+                  "fabro-vm: services.litellm.settings.router_settings must keep the pinned placement and failover policy (routing_strategy=simple-shuffle, session_affinity at 21600s, num_retries=0, weighted failover, allowed_fails=0, cooldown 60s, max_fallbacks=${
+                    toString (litellmCatalog.maxGroupSize - 1)
+                  }, and no cross-model fallback or alias); got ${builtins.toJSON litellmRouter}.";
                 assert pkgs.lib.assertMsg (builtins.hasAttr "opencode-api-key" vm.sops.secrets)
                   "fabro-vm: sops.secrets must declare the opencode provider key.";
                 assert pkgs.lib.assertMsg (
@@ -2914,7 +3376,7 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
                   builtins.readFile ./configurations/fabro-vm/fabro.nix
                 )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default";
 
             in
             pkgs.runCommand "fabro-vm-guest-eval"
@@ -3834,6 +4296,58 @@
                 node --test tests/fly-app/deploy.test.js
                 touch $out
               '';
+
+          # Scratch-cluster contract check (spec
+          # postgres-cluster-on-the-fabro-host-for-litellm-a, task 5.3;
+          # Requirements 2.8, 3.3-3.4, 3.6, 4.6, 4.7, 8.10-8.15). It starts the
+          # guest's own `services.postgresql.finalPackage` (the pinned 18.6
+          # server with pg_textsearch, pgvector, and pg_uuidv7) on a temporary
+          # Unix socket directory and a non-default port, asserts socket-only
+          # reachability plus the extension contract, and applies the guest's
+          # generated `fabro.postgres` bootstrap and grant SQL twice against
+          # the declared fixture identities. Both the server and the SQL come
+          # from `nixosConfigurations.fabro-vm`, so an extension or declaration
+          # that leaves the guest fails here. The check builds on a Linux
+          # builder and stays absent elsewhere, where initdb cannot run.
+          postgres-scratch =
+            let
+              guest = self.nixosConfigurations.fabro-vm.config;
+            in
+            import ./tests/postgres-scratch/default.nix {
+              inherit pkgs;
+              postgresql = guest.services.postgresql.finalPackage;
+              bootstrapSql = guest.fabro.postgres.bootstrapSqlFile;
+              objectGrantsSql = guest.fabro.postgres.objectGrantsSqlFile;
+              databaseNames = pkgs.lib.attrNames guest.fabro.postgres.databases;
+              roleNames = pkgs.lib.attrNames guest.fabro.postgres.roles;
+            };
+
+          # Schema-initialization contract check (spec
+          # postgres-cluster-on-the-fabro-host-for-litellm-a, task 5.4;
+          # Requirements 5.6-5.10, 7.4, 7.5, 7.8, 7.12, 8.15). It starts the
+          # same scratch cluster as `postgres-scratch`, creates the guest's
+          # declared `litellm` database and both roles, applies the guest's
+          # generated `fabro.postgres` bootstrap and grant SQL, and runs the
+          # installed `litellm-db-init` script twice. The script and the schema
+          # both come from `nixosConfigurations.fabro-vm`, so a script, schema,
+          # view, or grant change that leaves the guest fails here. The check
+          # builds on a Linux builder and stays absent elsewhere, where initdb
+          # cannot run.
+          litellm-db-init =
+            let
+              guest = self.nixosConfigurations.fabro-vm.config;
+              declaration = guest.fabro.postgres;
+            in
+            import ./tests/litellm-db-init/default.nix {
+              inherit pkgs;
+              postgresql = guest.services.postgresql.finalPackage;
+              litellmDbInit = guest.systemd.services.litellm-db-init.serviceConfig.ExecStart;
+              litellmSchema = guest.services.litellm.package.passthru.schemaPath;
+              bootstrapSql = declaration.bootstrapSqlFile;
+              objectGrantsSql = declaration.objectGrantsSqlFile;
+              databaseNames = pkgs.lib.attrNames declaration.databases;
+              roleNames = pkgs.lib.attrNames declaration.roles;
+            };
         }
       );
 
