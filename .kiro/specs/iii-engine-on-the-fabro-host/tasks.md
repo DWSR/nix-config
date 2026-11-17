@@ -113,7 +113,7 @@
 
 - [ ] 5. Build and runtime verification
 
-- [ ] 5.1 Build the engine and catalog samples on both targets and smoke-run them
+- [x] 5.1 Build the engine and catalog samples on both targets and smoke-run them
   - On `aarch64-darwin` build `.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.iii` and `...pkgs.iii-workers.database`, then run `iii --version` (expect `0.26.0`) and `database --help`
   - On `aarch64-linux` (guest or Linux builder) build `.#nixosConfigurations.fabro-vm.pkgs.iii` plus `...pkgs.iii-workers.{database,mesh,whatsapp,judge-clef}` — a dynamic worker, the two static ones, and a `libstdc++` one — then run the engine and each worker
   - Confirm the Linux binaries start from the store (interpreter and RPATH fixed by `autoPatchelfHook`) and that a wrong hash, a missing library, or an archive layout change fails the build instead of producing a broken package
