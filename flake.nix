@@ -2442,6 +2442,84 @@
               touch "$out"
             '';
 
+          # Pure-evaluation package check for the pinned iii engine (spec
+          # iii-engine-on-the-fabro-host, task 4.1; requirements 1.1–1.7, 7.1,
+          # 7.14, 7.15; design "C5: Verification" and "Testing Strategy →
+          # Pure-evaluation package checks"). Instantiates the repository
+          # overlay chain for both required systems and asserts the engine
+          # metadata plus the tag-pinned artifact URL and SRI recorded in
+          # overlays/iii.nix, so a repointed or floating fetch, a version bump,
+          # or a platform change fails evaluation. Nothing here builds the
+          # engine, runs the binary, or fetches during evaluation: the report
+          # embeds plain metadata only, and every store-path-shaped string is
+          # stripped of its context so the check depends on no derivation.
+          iii-packages =
+            let
+              inherit (pkgs) lib;
+              systems = [
+                "aarch64-linux"
+                "aarch64-darwin"
+              ];
+              # Expected engine metadata, mirroring the pinned source table in
+              # overlays/iii.nix (task 1.1). Keep this table next to the
+              # assertions: the check is the record that a bump must touch.
+              expected = {
+                version = "0.26.0";
+                sourceRevision = "iii/v0.26.0";
+                platforms = [
+                  "aarch64-darwin"
+                  "aarch64-linux"
+                ];
+                sources = {
+                  "aarch64-linux" = {
+                    url = "https://github.com/iii-hq/iii/releases/download/iii/v0.26.0/iii-aarch64-unknown-linux-gnu.tar.gz";
+                    hash = "sha256-4u5E0es48OM30+d7O4YB2ib/G9k0zIpMhJubz0FKtAs=";
+                  };
+                  "aarch64-darwin" = {
+                    url = "https://github.com/iii-hq/iii/releases/download/iii/v0.26.0/iii-aarch64-apple-darwin.tar.gz";
+                    hash = "sha256-JzApagiuWEN1ey55E61ltigpAcmLlR28IwGODrQl4oU=";
+                  };
+                };
+              };
+              checkSystem =
+                system:
+                let
+                  systemPkgs = import nixpkgs {
+                    inherit system;
+                    overlays = [ outputs.overlays.custom-packages ];
+                  };
+                  engine = systemPkgs.iii;
+                  version = engine.version or "";
+                  sourceRevision = engine.passthru.sourceRevision or "";
+                  platforms = lib.sort (a: b: a < b) (engine.meta.platforms or [ ]);
+                  urls = map builtins.unsafeDiscardStringContext (engine.src.urls or [ ]);
+                  hash = builtins.unsafeDiscardStringContext (engine.src.outputHash or "");
+                  source = expected.sources.${system};
+                in
+                assert lib.assertMsg (builtins.hasAttr "iii" systemPkgs)
+                  "iii-packages: ${system} pkgs.iii must be provided by the repository overlay chain.";
+                assert lib.assertMsg (
+                  version == expected.version
+                ) "iii-packages: ${system} iii.version must be \"${expected.version}\", got \"${version}\".";
+                assert lib.assertMsg (sourceRevision == expected.sourceRevision)
+                  "iii-packages: ${system} iii.passthru.sourceRevision must be \"${expected.sourceRevision}\", got \"${sourceRevision}\".";
+                assert lib.assertMsg (platforms == expected.platforms)
+                  "iii-packages: ${system} iii.meta.platforms must be exactly [ ${lib.concatStringsSep " " expected.platforms} ], got [ ${lib.concatStringsSep " " platforms} ].";
+                assert lib.assertMsg (urls == [ source.url ])
+                  "iii-packages: ${system} iii.src.urls must be exactly [ ${source.url} ], got [ ${lib.concatStringsSep " " urls} ].";
+                assert lib.assertMsg (
+                  hash == source.hash
+                ) "iii-packages: ${system} iii.src.outputHash must be \"${source.hash}\", got \"${hash}\".";
+                "${system}: iii ${version} (${sourceRevision}); platforms=[ ${lib.concatStringsSep " " platforms} ]; src=${source.url}; hash=${hash}";
+            in
+            pkgs.runCommand "iii-packages"
+              {
+                iiiPackageReport = lib.concatStringsSep "\n" (map checkSystem systems);
+              }
+              ''
+                printf '%s\n' "$iiiPackageReport" > "$out"
+              '';
+
           # Eval assertions for the fabro NixOS guest (pure eval over
           # nixosConfigurations.fabro-vm + trivial runCommand; no Linux
           # builder needed — building packages.aarch64-linux.fabro-vm-image
