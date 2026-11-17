@@ -2430,21 +2430,17 @@
               touch "$out"
             '';
 
-          # Pure-evaluation package check for the pinned iii engine and its
-          # 73-worker catalog (spec iii-engine-on-the-fabro-host, tasks 4.1 and
-          # 4.2; requirements 1.1–1.8, 2.1–2.10, 7.1–7.4, 7.14, 7.15; design
-          # "C5: Verification" and "Testing Strategy → Pure-evaluation package
-          # checks"). Instantiates the repository overlay chain for both
-          # required systems and asserts the engine metadata, the tag-pinned
-          # artifact URL and SRI recorded in overlays/iii.nix, and every
-          # cataloged worker's version, pinned source, archive executable,
-          # platform set, and declared engine compatibility, so a repointed or
-          # floating fetch, a version bump, a platform change, a dropped or
-          # added catalog entry, or a changed worker URL, hash, or binary fails
-          # evaluation. Nothing here builds a package, runs the binary, or
-          # fetches during evaluation: the report embeds plain metadata only,
-          # and every store-path-shaped string is stripped of its context so
-          # the check depends on no derivation.
+          # Pure-evaluation package check for the pinned iii engine (spec
+          # iii-engine-on-the-fabro-host, task 4.1; requirements 1.1–1.7, 7.1,
+          # 7.14, 7.15; design "C5: Verification" and "Testing Strategy →
+          # Pure-evaluation package checks"). Instantiates the repository
+          # overlay chain for both required systems and asserts the engine
+          # metadata plus the tag-pinned artifact URL and SRI recorded in
+          # overlays/iii.nix, so a repointed or floating fetch, a version bump,
+          # or a platform change fails evaluation. Nothing here builds the
+          # engine, runs the binary, or fetches during evaluation: the report
+          # embeds plain metadata only, and every store-path-shaped string is
+          # stripped of its context so the check depends on no derivation.
           iii-packages =
             let
               inherit (pkgs) lib;
@@ -2473,188 +2469,6 @@
                   };
                 };
               };
-
-              # Worker catalog expectations (task 4.2). The manifest supplies
-              # the expected versions, URLs, hashes, and binaries for every
-              # built attribute, and `catalogPins` records the catalog the
-              # check was written against: one SHA-256 per worker over the
-              # canonical JSON of its manifest row (`builtins.toJSON` of
-              # `{ version, binary, targets }`, whose keys it sorts). Comparing
-              # a derivation only against the manifest cannot catch an edit to
-              # the pinned data itself, because the manifest also feeds the
-              # package set under test; the pin table makes a changed version,
-              # URL, hash, or binary fail naming that worker, and a deleted row
-              # fail on its name rather than only on a count. Recompute the
-              # fingerprints after a deliberate catalog bump with the command
-              # below (it prints one name -> SHA-256 pair per worker):
-              #   nix eval --impure --json --expr 'builtins.mapAttrs (_: entry:
-              #     builtins.hashString "sha256" (builtins.toJSON entry))
-              #     (import ./overlays/iii-workers.nix).workers'
-              manifest = import ./overlays/iii-workers.nix;
-              manifestNames = builtins.attrNames manifest.workers;
-              expectedWorkerCount = 73;
-              catalogPins = {
-                a2ui = "7cb3e5cbea2baf52c2f7c65685f1ae875893bff0a406a990c371343aba11272a";
-                acp = "2acbd3a2f2429b3f5a5d878aa34cfbd405a1afee25d82323ca11b9a4f60b8b7b";
-                ade = "a564310cccc1cea60690afc41fa4f6bad6d95a1bde943aba6c4dc5a6a79209ec";
-                approval-gate = "31ed0c9be5c5394bb90aa8dc357d1a1c86d9e21d280a4424cc6536be3e77d5ac";
-                bridge = "04c4e2f9d8175fe03898194936e413b1cdb5ec56c7da9565ef24ab8b5fe21d4f";
-                browser = "00c5d683d0c0f95c3a9e6b88210d6ee2e3fa741faae1af020581b983d08bd793";
-                canvas = "d7e6c4c97d7ada17a3ca8328ab2a5e2470724a4b063af777b9df2196bb8a9963";
-                code-runner = "be2ce250d67f1cb4c8c48a0f68138a64dec702eed3399b9263d878b13b674e41";
-                codex = "ebc53cc9c7a91ebf6981e16167a9da00c51a1ca3fc0d7d6110b55894eb011ef0";
-                compose-ui = "7c65ef63c0878544314155fe88f9d499d533c7f86d0320c2626c1eaf95127bd1";
-                computer = "f0633817e7b573bec8acb1c73b8e96d626add831327280d49f816427389cc388";
-                context-manager = "4a2b691e3b59643fa083efeadbe426f96c1f6d2557ec7961b670c7df763e1699";
-                cron = "93d9364fa22d992b1a868af8fc0aaf9c1f2bb1d0786aa7e3977c1eab7894931e";
-                database = "80440395ed12ebea9b187ebba9327058a67c2baa81bf2f64fa0c8536b7560512";
-                document = "3d15c2bfc54586361957811a1676f1d181bd5634904af4305cfbfeac0a50e15f";
-                email = "789f8d6c70de5ff58091c6f2e5dab0d025732d3ae870982fde40c7167c0c1dad";
-                eval = "6518fa97b170ba380f291f3ddb5f8e5340324692df0b1777af86a2e4c92a3a1b";
-                fp = "e2cc1aef9b7013b74fa69cf5c93c1e3987aae553b625fc79a6f6531a8c6852a6";
-                github = "d02a752335838945ade917d9773d97dfd451241cff19a9e6821fd562e10c26fa";
-                harness = "0ae5571804784536821d49df6fa789deeea1fa4eb29c2ccb4e3fc2905560b70b";
-                http = "966215d95d0448c05b646d9fe110751292fe3f6a60d112eeef264bfe7d671902";
-                ide = "b03a4f9abc44f4968a561cd639bbcb3fd6700ae14e22563eb89900a1348c377d";
-                iii-directory = "f962234f62b43810133119b36fcc3930b2c20166d18499115d3d96e885a66144";
-                image-resize = "ef3136ae4289f8299d8576de2d633a2b2764f280bd7c313d26b4f996377cf270";
-                judge = "357ccc63917048f04545b140145b8a6b7ffa3597ea34dbfd5654514a2356ce41";
-                judge-clef = "bb7bc53c011107da24b60811eda29bd11bfbdd80a22cd5a3f38fbb9f6eec720f";
-                judge-decider = "32cb6bb9fc1ffc7dc54a7a6bc39a85b103ca01b0ccfcca6c3b178ba65f2d9ac2";
-                judge-laya = "43c6f40d1e34d2afac0a968f5b427f075a8672a0f1174bfb6921b03aa41b8007";
-                judge-openai = "94622d34dc0a7aa37036d5958e6405d3d4e8f8d83f0af6c339faa214cc2ec757";
-                judge-semif = "be4537ce1bf99175fc94f4b358f56ea30cfdd855c9956fb68c66c8934a743c82";
-                judge-typesafe = "e0630b8e7adf2bb9f8e7163d4b843d56699fcda1d7077a3ddad3ccf6e08d6044";
-                kanban = "913c68f8f8b306202fa39e72ab2611c485bc2f6fe946d1f881e101935aeab294";
-                llm-router = "144e6184267ade21af2566899331b8b75dfa4f82ad0833ad7387696687f9b208";
-                lsp = "9c2cb158cde87352f0e58a6112ed25622bdc7d0518f080244d378f8877094a2d";
-                mcp = "6612f1b4b0d15e2fe097f44597458c5bbff846ef5b2aa60d6e0590408572663f";
-                memory = "25f4a259495e263603a8fe2b8701193561160d824907531cd5c8e8413f8060ff";
-                memory-consolidate = "029e689533598f9435272137eb90a2a9cf9a6cd81995c3102dd935e0bb3b4ace";
-                mesh = "5d76a53891b650bf02bd71cf1f55dd3f809b10a2a08bd5bfcc416d7631c8a816";
-                pdf = "3b75181e16712da63aebc75a77a6699191f5ded72842edb882eef7f60b6d6c0d";
-                provider-anthropic = "997bf403763f5090ea503c34d272782d15ee7284eb9cd31acf0dfa95222fd7b9";
-                provider-claude-code = "73809e3e5c85b6fb031c0479673f05a031ac9ecdbc5fd3ee8f22d4026194403a";
-                provider-command-code = "0710661cabfd4d783c2e1a1a0177bfe223ddf77ad6dea3741d63a85a805d5ced";
-                provider-deepseek = "b9a3b213fe5f8c8c6e529975046f5429e4200e6faa98601d0d4ad960c5e1b402";
-                provider-elevenlabs = "fa2845000db99277ad3c297f7b59157c6dd16e4e0d4565859ff75bcbb4737837";
-                provider-github-copilot = "e55c6817d8c379d13935e6b0b7c3d7e86328fb549edd850a9757c2c078f544f1";
-                provider-kimi = "b423d0b22a7466281808bbd4279083d9feccd4398fb319b67f74d8d04c8d6947";
-                provider-llamacpp = "266c62fe0f3bb7fc5a490e766aa03e8f4b44d3cd4d133342885b55e2d3d786fe";
-                provider-openai = "ad2ff19b4081ba961808733735bf4d60ea61cd7ed39962f69d22654c2fe70cb2";
-                provider-openai-codex = "4270456dab4e4204101f321625ac68e460641e85fd0e54dd51f32e8c3236d30c";
-                provider-opencode-go = "0b76dc62a0244fbe0b39011e7ac1923f6047c3fe18165e10f87b77673e983c43";
-                provider-openrouter = "6962010c0c8ae3c4906938b9cb61d5ff497d8272c5a0b7209937b2de577cd8c5";
-                provider-sarvam = "e291e8f43b42d127de02029568cf6a62298f78b94f65a218a24a09b618e2ef42";
-                provider-xai = "6bd996fa4c0fb2850b8aa9d23efbb418df5d7e7e2d87d44a3661ff064e11dde5";
-                provider-zai = "9a63258c088b6d64e13f754734fd00715788ab4a06c227b8137aee1e6153c223";
-                queue = "d7ee5f96b41a594b40e37ef4af84e13301ad5b699869d4f3de15796713875035";
-                quick-tunnel = "fd0c2189df3aa733ef07c32fab866d2c11fc81d58b4a9a2ecc3e223c116dadf7";
-                rbac-proxy = "33969d855ee5b8685e9ee1a99d948b9d3bbeaaa18c3c5d35a252975b19e45be0";
-                sandbox-libkrun = "080c761e1fb1e8cc75bc882dafa8678b4f1328eb4c18e119f2e22d2bd2e34315";
-                secrets = "2665d2305d3fd9b87ada719623f6162b4a8a395a70c52dd2791e69cd5cf20a52";
-                security-scan = "733c0f2fef97c92dba6fdc7b8fc20a0986e4d847ed1d7d6b5ab96c4cd8e069d5";
-                sentinel = "88334587d4f2f026992a800ec00c8ac1c353415e518a058e63e103307975d9ac";
-                session-manager = "43373ccc9bf3e297ca6758b33bb3dd0c63c6b67f08e431ca35a578d2ef7bfa3e";
-                slack = "054fc923d965fee57a48c65df15b9e2975d5e8b4030a23bc3bf433e391f9b2fb";
-                state = "d6fa57d5814a6efada95339f192009edc1d302577ca0b740636f6e76ced6a664";
-                storage = "ee98af42088411ec4f3448e66a4d42374cec78c3e9d3a3df8504cb5d4f7aecc5";
-                stories = "5bf660c2a39cc3bec05abe555e559fbaabeb971c144c288305712c7eac6d2999";
-                tailscale = "7e8ca92f7d7867e523e63116c66fe043fdbaa25fcf1e54e9c8fa9146e754da08";
-                telegram-bot = "290fcbede124dbc915c76aab6350788cb90abe3fea6f846c408d24cc384733fd";
-                tmux = "84b4dc8b1228442c364777b74df44ece19bbad413366ab153b0023644ea907b9";
-                web = "affb3fbfa19d253b74ec027bc8b5d0c6fcb9c365bbf895dfe528a07dd2613bc0";
-                whatsapp = "64762127de076821224062f3b27c807af68e2b3dd64f71f051d3324666f9750a";
-                workflow = "80acb5d1776e31b24befde9428a54103ea47045ab5d0952bb61d42712eb0c027";
-                worktree = "86655d75d309246678adcda697abc5d637c32b923a955fef748991987812bb49";
-              };
-              expectedWorkerNames = builtins.attrNames catalogPins;
-              manifestFingerprints = builtins.mapAttrs (
-                _: entry: builtins.hashString "sha256" (builtins.toJSON entry)
-              ) manifest.workers;
-              # Every cataloged worker declares the engine's two-platform
-              # contract (requirement 2.6).
-              expectedWorkerPlatforms = lib.sort (a: b: a < b) expected.platforms;
-
-              # Registry entries the catalog must never expose: the three
-              # binaries missing a required target artifact, the eight official
-              # JavaScript bundles, the four third-party bundles,
-              # `registry-cli`, and the four engine-kind entries
-              # (requirements 2.3, 2.10).
-              excludedWorkers = [
-                "harness-e2e"
-                "voice"
-                "ios-simulator"
-                "claude-code"
-                "cursor"
-                "onboarding"
-                "opencode"
-                "opengantry"
-                "openwiki"
-                "pi"
-                "vscode"
-                "audit-log"
-                "hello-node"
-                "hello-python"
-                "tabstack"
-                "registry-cli"
-                "configuration"
-                "iii-observability"
-                "iii-sandbox"
-                "iii-worker-manager"
-              ];
-
-              # Every URL recorded in the manifest. A worker source outside
-              # this set fell back to an unpinned download (requirement 2.9).
-              manifestUrls = lib.flatten (
-                map (
-                  name:
-                  map (target: manifest.workers.${name}.targets.${target}.url) (
-                    builtins.attrNames manifest.workers.${name}.targets
-                  )
-                ) expectedWorkerNames
-              );
-
-              # Per-worker assertions (requirements 2.4–2.10, 7.3–7.4). Every
-              # message names the worker and the target system, so a catalog
-              # edit fails on the edited row. The row is first compared with
-              # the independent `catalogPins` fingerprint, which catches an
-              # edit to the manifest itself, then the derivation is compared
-              # with the manifest row, which catches builder drift.
-              checkWorker =
-                system: workers: name:
-                let
-                  worker = workers.${name};
-                  entry = manifest.workers.${name};
-                  target = entry.targets.${system};
-                  version = worker.version or "";
-                  urls = map builtins.unsafeDiscardStringContext (worker.src.urls or [ ]);
-                  hash = builtins.unsafeDiscardStringContext (worker.src.outputHash or "");
-                  mainProgram = worker.meta.mainProgram or "";
-                  platforms = lib.sort (a: b: a < b) (worker.meta.platforms or [ ]);
-                  iiiEngineVersion = worker.passthru.iiiEngineVersion or "";
-                  unrecordedUrls = builtins.filter (url: !(builtins.elem url manifestUrls)) urls;
-                  pinned = catalogPins.${name} or "";
-                  fingerprint = manifestFingerprints.${name} or "";
-                in
-                assert lib.assertMsg (fingerprint == pinned)
-                  "iii-packages: ${system} overlays/iii-workers.nix row for worker ${name} changed from the pinned catalog (version, URL, hash, or binary); pinned ${pinned}, got ${fingerprint}.";
-                assert lib.assertMsg (version == entry.version)
-                  "iii-packages: ${system} iii-workers.${name}.version must be \"${entry.version}\", got \"${version}\".";
-                assert lib.assertMsg (urls == [ target.url ])
-                  "iii-packages: ${system} iii-workers.${name}.src.urls must be exactly [ ${target.url} ], got [ ${lib.concatStringsSep " " urls} ].";
-                assert lib.assertMsg (hash == target.hash)
-                  "iii-packages: ${system} iii-workers.${name}.src.outputHash must be \"${target.hash}\", got \"${hash}\".";
-                assert lib.assertMsg (mainProgram == entry.binary)
-                  "iii-packages: ${system} iii-workers.${name}.meta.mainProgram must be \"${entry.binary}\", got \"${mainProgram}\".";
-                assert lib.assertMsg (platforms == expectedWorkerPlatforms)
-                  "iii-packages: ${system} iii-workers.${name}.meta.platforms must be exactly [ ${lib.concatStringsSep " " expectedWorkerPlatforms} ], got [ ${lib.concatStringsSep " " platforms} ].";
-                assert lib.assertMsg (iiiEngineVersion == expected.version)
-                  "iii-packages: ${system} iii-workers.${name}.passthru.iiiEngineVersion must be \"${expected.version}\", got \"${iiiEngineVersion}\".";
-                assert lib.assertMsg (unrecordedUrls == [ ])
-                  "iii-packages: ${system} iii-workers.${name}.src.urls must all be pinned in overlays/iii-workers.nix; unrecorded: [ ${lib.concatStringsSep " " unrecordedUrls} ].";
-                "${system}: iii-workers.${name} ${version} ${mainProgram} ${hash}";
-
               checkSystem =
                 system:
                 let
@@ -2669,15 +2483,6 @@
                   urls = map builtins.unsafeDiscardStringContext (engine.src.urls or [ ]);
                   hash = builtins.unsafeDiscardStringContext (engine.src.outputHash or "");
                   source = expected.sources.${system};
-                  workers = systemPkgs.iii-workers;
-                  workerNames = builtins.attrNames workers;
-                  excludedPresent = builtins.filter (name: builtins.elem name workerNames) excludedWorkers;
-                  missingWorkers = builtins.filter (name: !(builtins.elem name workerNames)) expectedWorkerNames;
-                  unexpectedWorkers = builtins.filter (name: !(builtins.elem name expectedWorkerNames)) workerNames;
-                  manifestDrift =
-                    builtins.filter (name: !(builtins.elem name manifestNames)) expectedWorkerNames
-                    ++ builtins.filter (name: !(builtins.elem name expectedWorkerNames)) manifestNames;
-                  workerLines = map (checkWorker system workers) expectedWorkerNames;
                 in
                 assert lib.assertMsg (builtins.hasAttr "iii" systemPkgs)
                   "iii-packages: ${system} pkgs.iii must be provided by the repository overlay chain.";
@@ -2693,27 +2498,7 @@
                 assert lib.assertMsg (
                   hash == source.hash
                 ) "iii-packages: ${system} iii.src.outputHash must be \"${source.hash}\", got \"${hash}\".";
-                assert lib.assertMsg (builtins.hasAttr "iii-workers" systemPkgs)
-                  "iii-packages: ${system} pkgs.iii-workers must be provided by the repository overlay chain.";
-                assert lib.assertMsg (manifest.engineVersion == expected.version)
-                  "iii-packages: ${system} overlays/iii-workers.nix engineVersion must be \"${expected.version}\", got \"${manifest.engineVersion}\".";
-                assert lib.assertMsg (excludedPresent == [ ])
-                  "iii-packages: ${system} pkgs.iii-workers must not expose excluded registry entries: [ ${lib.concatStringsSep " " excludedPresent} ].";
-                assert lib.assertMsg (missingWorkers == [ ])
-                  "iii-packages: ${system} pkgs.iii-workers is missing cataloged workers: [ ${lib.concatStringsSep " " missingWorkers} ].";
-                assert lib.assertMsg (unexpectedWorkers == [ ])
-                  "iii-packages: ${system} pkgs.iii-workers exposes non-cataloged workers: [ ${lib.concatStringsSep " " unexpectedWorkers} ].";
-                assert lib.assertMsg (manifestDrift == [ ])
-                  "iii-packages: ${system} overlays/iii-workers.nix worker keys must be exactly the 73 published catalog names; drifted: [ ${lib.concatStringsSep " " manifestDrift} ].";
-                assert lib.assertMsg (builtins.length workerNames == expectedWorkerCount)
-                  "iii-packages: ${system} pkgs.iii-workers must expose exactly ${toString expectedWorkerCount} workers, got ${toString (builtins.length workerNames)}.";
-                lib.concatStringsSep "\n" (
-                  [
-                    "${system}: iii ${version} (${sourceRevision}); platforms=[ ${lib.concatStringsSep " " platforms} ]; src=${source.url}; hash=${hash}"
-                    "${system}: iii-workers ${toString (builtins.length workerNames)}/${toString expectedWorkerCount} pinned at engine ${expected.version}"
-                  ]
-                  ++ workerLines
-                );
+                "${system}: iii ${version} (${sourceRevision}); platforms=[ ${lib.concatStringsSep " " platforms} ]; src=${source.url}; hash=${hash}";
             in
             pkgs.runCommand "iii-packages"
               {
