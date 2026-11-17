@@ -141,7 +141,7 @@ back the rendered unit graph.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.7, 1.8, 2.2, 2.4, 2.6, 2.7, 3.1, 3.2, 3.5, 4.1, 4.10, 4.11, 5.2, 5.3, 5.4, 8.1, 8.2, 8.3, 8.4, 8.5, 8.16, 9.1, 9.4, 9.5_
   - _Depends: 1.2, 1.3, 2.1_
 
-- [ ] 5.2 Assert the LiteLLM database, package, and unit-ordering invariants
+- [x] 5.2 Assert the LiteLLM database, package, and unit-ordering invariants
   - Extend the same check with the `litellm` database, the two distinct roles, their grant sets, `services.litellm.package` being `litellm-db` with the generated client, `DATABASE_URL` containing `host=/run/postgresql` and no password, `DISABLE_SCHEMA_UPDATE = "true"`, and `PRISMA_QUERY_ENGINE_BINARY` set
   - Assert `litellm.service` runs as `litellm` with `DynamicUser=false` and requires `litellm-db-init.service` and `postgres-grants.service`, that `postgres-bootstrap`, `postgres-grants`, and `litellm-db-init` exist with their declared users and ordering, and that the ChatGPT tmpfiles rule names the fixed user
   - Completed when a missing init dependency, a schema update left enabled, a shared migration/application role, or a dynamic user fails the check with a message naming that element
