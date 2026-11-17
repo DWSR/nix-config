@@ -2438,6 +2438,124 @@
             let
               vm = self.nixosConfigurations.fabro-vm.config;
               kernelConfig = builtins.readFile vm.boot.kernelPackages.kernel.configfile;
+
+              # Rendered PostgreSQL values for the cluster invariants below.
+              # Each assertMsg names the option, unit, role, or extension it
+              # guards, so a regression fails evaluation with that name instead
+              # of a module-internal error.
+              pg = vm.services.postgresql;
+              pgDeclaration = vm.fabro.postgres;
+              pgDeclaredRoles = builtins.attrNames pgDeclaration.roles;
+              pgDeclaredDatabases = builtins.attrNames pgDeclaration.databases;
+              pgExtensions = pg.finalPackage.installedExtensions or [ ];
+              pgExtension =
+                name: pkgs.lib.findFirst (package: (package.pname or package.name or "") == name) null pgExtensions;
+              pgMissingExtensions = builtins.filter (name: pgExtension name == null) [
+                "pg_textsearch"
+                "pgvector"
+                "pg_uuidv7"
+              ];
+              pgvector = pgExtension "pgvector";
+              # A server unit is one whose ExecStart token is the server binary
+              # or whose `script` runs it: `postgresql-setup` and the
+              # provisioning oneshots execute their own unit scripts, so they
+              # stay out. A second cluster adds a second executing unit here.
+              pgMentionsServer = text: builtins.match ".*/bin/postgres[^a-zA-Z0-9_-].*" text != null;
+              pgServerUnits = builtins.filter (
+                name:
+                let
+                  service = vm.systemd.services.${name};
+                  tokens = builtins.filter (token: token != "") (
+                    pkgs.lib.splitString " " (toString (service.serviceConfig.ExecStart or ""))
+                  );
+                in
+                builtins.any (token: builtins.match ".*/bin/postgres" token != null) tokens
+                || pgMentionsServer (service.script or "")
+              ) (builtins.attrNames vm.systemd.services);
+              pgAuthLines = builtins.filter (line: line != "") (
+                pkgs.lib.splitString "\n" (pg.authentication or "")
+              );
+              pgAuthTokens = line: builtins.filter (token: token != "") (pkgs.lib.splitString " " line);
+              pgNonLocalAuthLines = builtins.filter (line: !(pkgs.lib.hasPrefix "local " line)) pgAuthLines;
+              # Token match, not substring: a role or system account may contain
+              # `host` without being a network rule.
+              pgNetworkAuthLines = builtins.filter (
+                line:
+                builtins.any (
+                  token:
+                  builtins.elem token [
+                    "host"
+                    "hostssl"
+                    "hostnossl"
+                    "md5"
+                    "scram-sha-256"
+                  ]
+                ) (pgAuthTokens line)
+              ) pgAuthLines;
+              pgPort = pg.settings.port or 5432;
+              pgFirewallOpensPort =
+                builtins.elem pgPort (vm.networking.firewall.allowedTCPPorts or [ ])
+                || builtins.any (
+                  range:
+                  builtins.length range == 2 && pgPort >= builtins.head range && pgPort <= builtins.elemAt range 1
+                ) (vm.networking.firewall.allowedTCPPortRanges or [ ]);
+              pgServeExpected = [
+                "--service=svc:fabro --https=443 http://127.0.0.1:32276"
+                "--service=svc:litellm --https=443 http://127.0.0.1:4000"
+                "--service=svc:opencode --https=443 http://127.0.0.1:4096"
+              ];
+              pgServe = vm.systemd.services.tailscale-serve.serviceConfig.ExecStart or [ ];
+              pgServeUnchanged =
+                builtins.length pgServe == 3
+                && builtins.all (
+                  line: builtins.any (expected: pkgs.lib.hasSuffix expected line) pgServeExpected
+                ) pgServe
+                && !(builtins.any (line: builtins.match ".*(postgres|5432).*" line != null) pgServe);
+              # `ensureClauses` is the module's freeform role-clause surface;
+              # the cluster-admin clauses must stay unset so no workload role
+              # can create databases or roles.
+              pgPrivilegedClauses = builtins.filter (
+                user:
+                let
+                  clauses = user.ensureClauses or { };
+                in
+                builtins.any (clause: builtins.hasAttr clause clauses) [
+                  "superuser"
+                  "createdb"
+                  "createrole"
+                ]
+              ) pg.ensureUsers;
+              # Peer authentication needs no credential, and the declaration
+              # surface has no password option: a password anywhere on the
+              # declaration or on a provisioned role fails the check.
+              pgPasswordDeclarations =
+                map (name: "fabro.postgres.roles.${name}") (
+                  builtins.filter (name: pgDeclaration.roles.${name} ? password) pgDeclaredRoles
+                )
+                ++ map (name: "fabro.postgres.databases.${name}") (
+                  builtins.filter (name: pgDeclaration.databases.${name} ? password) pgDeclaredDatabases
+                )
+                ++ map (grant: "fabro.postgres.grants.${grant.database}.${grant.role}.${grant.on}") (
+                  builtins.filter (grant: grant ? password) pgDeclaration.grants
+                )
+                ++ map (user: "services.postgresql.ensureUsers.${user.name}") (
+                  builtins.filter (
+                    user: user ? password || builtins.hasAttr "password" (user.ensureClauses or { })
+                  ) pg.ensureUsers
+                );
+              # No workload's declared database identity may be the cluster
+              # superuser role.
+              pgPostgresIdentities =
+                map (name: "fabro.postgres.roles.${name}") (
+                  builtins.filter (name: name == "postgres") pgDeclaredRoles
+                )
+                ++ map (name: "fabro.postgres.databases.${name}") (
+                  builtins.filter (name: name == "postgres") pgDeclaredDatabases
+                )
+                ++ map (grant: "fabro.postgres.grants role ${grant.role}") (
+                  builtins.filter (grant: grant.role == "postgres") pgDeclaration.grants
+                );
+
               guestReport =
                 assert pkgs.lib.assertMsg vm.services.lima.enable
                   "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
@@ -2648,6 +2766,67 @@
                 assert pkgs.lib.assertMsg
                   ((vm.systemd.services.litellm.environment.HOME or null) == vm.services.litellm.stateDir)
                   "fabro-vm: the litellm service must export HOME (its DynamicUser unit gets none, and litellm's eager prisma import calls Path.home()).";
+                # The shared PostgreSQL cluster and its declaration surface
+                # (configurations/fabro-vm/postgres.nix, litellm-db.nix). Each
+                # assertMsg names the option, unit, role, or extension it
+                # guards, so a regression fails pure evaluation (no guest
+                # package is built) with that name.
+                assert pkgs.lib.assertMsg
+                  (
+                    pg.enable
+                    && pgDeclaration.enable
+                    && builtins.elem "multi-user.target" (vm.systemd.targets.postgresql.wantedBy or [ ])
+                  )
+                  "fabro-vm: exactly one PostgreSQL cluster must be declared and enabled: fabro.postgres.enable and services.postgresql.enable must both be true, and postgresql.target must be wanted by multi-user.target.";
+                assert pkgs.lib.assertMsg (pgServerUnits == [ "postgresql" ])
+                  "fabro-vm: the guest must run exactly one PostgreSQL server unit (postgresql.service); the server binary is executed by [ ${pkgs.lib.concatStringsSep ", " pgServerUnits} ] instead.";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.postgresql.serviceConfig.User or "") == "postgres"
+                    && (vm.systemd.services.postgresql.serviceConfig.Group or "") == "postgres"
+                  )
+                  "fabro-vm: systemd.services.postgresql must run the cluster as the fixed postgres system account; got '${
+                    vm.systemd.services.postgresql.serviceConfig.User or "<unset>"
+                  }'.";
+                assert pkgs.lib.assertMsg (pg.package.version == "18.6" && pg.finalPackage.version == "18.6")
+                  "fabro-vm: services.postgresql.package (fabro.postgres.package) must be PostgreSQL 18.6 from the pinned unstable package set; got ${pg.package.version} and ${pg.finalPackage.version}.";
+                assert pkgs.lib.assertMsg (pg.dataDir == "/var/lib/postgresql/18")
+                  "fabro-vm: services.postgresql.dataDir (fabro.postgres.dataDir) must be /var/lib/postgresql/18 so a switch preserves databases, roles, and rows; got '${pg.dataDir}'.";
+                assert pkgs.lib.assertMsg ((pg.settings.listen_addresses or null) == "")
+                  "fabro-vm: services.postgresql.settings.listen_addresses must be \"\" so the cluster binds no TCP address; got '${
+                    toString (pg.settings.listen_addresses or "<unset>")
+                  }'.";
+                assert pkgs.lib.assertMsg (pgNonLocalAuthLines == [ ])
+                  "fabro-vm: every services.postgresql.authentication rule must start with 'local' (only Unix socket connections are admitted); found '${builtins.head pgNonLocalAuthLines}'.";
+                assert pkgs.lib.assertMsg (pgNetworkAuthLines == [ ])
+                  "fabro-vm: services.postgresql.authentication must contain no host/md5/scram rule (socket peer authentication stays credential-free); found '${builtins.head pgNetworkAuthLines}'.";
+                assert pkgs.lib.assertMsg (!pgFirewallOpensPort)
+                  "fabro-vm: networking.firewall must leave the PostgreSQL port ${toString pgPort} closed (no allowedTCPPorts entry and no allowedTCPPortRanges range opens it).";
+                assert pkgs.lib.assertMsg pgServeUnchanged
+                  "fabro-vm: systemd.services.tailscale-serve must keep exactly the svc:fabro, svc:litellm, and svc:opencode tcp:443 advertisements and publish nothing for PostgreSQL; got [ ${pkgs.lib.concatStringsSep " | " pgServe} ].";
+                assert pkgs.lib.assertMsg (pgMissingExtensions == [ ])
+                  "fabro-vm: services.postgresql.finalPackage.installedExtensions must contain the pg_textsearch, pgvector (vector), and pg_uuidv7 extension packages; missing '${builtins.head pgMissingExtensions}'.";
+                assert pkgs.lib.assertMsg (pgvector != null && pkgs.lib.versionAtLeast pgvector.version "0.8.6")
+                  "fabro-vm: the pgvector extension package must be version 0.8.6 or later; got '${
+                    if pgvector == null then "missing" else pgvector.version
+                  }'.";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasInfix "pg_textsearch" (pg.settings.shared_preload_libraries or ""))
+                  "fabro-vm: services.postgresql.settings.shared_preload_libraries must preload pg_textsearch; got '${
+                    toString (pg.settings.shared_preload_libraries or "<unset>")
+                  }'.";
+                assert pkgs.lib.assertMsg (pg.ensureDatabases == pgDeclaredDatabases)
+                  "fabro-vm: services.postgresql.ensureDatabases must equal the fabro.postgres.databases names ([ ${pkgs.lib.concatStringsSep ", " pgDeclaredDatabases} ]); got [ ${pkgs.lib.concatStringsSep ", " pg.ensureDatabases} ].";
+                assert pkgs.lib.assertMsg (map (user: user.name) pg.ensureUsers == pgDeclaredRoles)
+                  "fabro-vm: services.postgresql.ensureUsers names must equal the fabro.postgres.roles names ([ ${pkgs.lib.concatStringsSep ", " pgDeclaredRoles} ]); got [ ${
+                    pkgs.lib.concatStringsSep ", " (map (user: user.name) pg.ensureUsers)
+                  } ].";
+                assert pkgs.lib.assertMsg (pgPrivilegedClauses == [ ])
+                  "fabro-vm: services.postgresql.ensureUsers.${(builtins.head pgPrivilegedClauses).name}.ensureClauses must not set superuser, createdb, or createrole; no workload role administers the cluster.";
+                assert pkgs.lib.assertMsg (pgPasswordDeclarations == [ ])
+                  "fabro-vm: the guest must declare no PostgreSQL password (socket peer authentication needs no credential); '${builtins.head pgPasswordDeclarations}' carries one.";
+                assert pkgs.lib.assertMsg (pgPostgresIdentities == [ ])
+                  "fabro-vm: fabro.postgres must not declare the postgres superuser identity for a workload; '${builtins.head pgPostgresIdentities}' does.";
                 assert pkgs.lib.assertMsg (builtins.hasAttr "opencode-api-key" vm.sops.secrets)
                   "fabro-vm: sops.secrets must declare the opencode provider key.";
                 assert pkgs.lib.assertMsg (
