@@ -12,7 +12,7 @@
 
 - [ ] 1. Pinned engine and worker packages
 
-- [ ] 1.1 Create the pinned `iii` 0.26.0 engine derivation and register its overlay
+- [x] 1.1 Create the pinned `iii` 0.26.0 engine derivation and register its overlay
   - Add `overlays/iii.nix` in `overlays/agentmemory.nix`'s shape: a `supportedSystems = [ "aarch64-linux" "aarch64-darwin" ]` guard that throws `Unsupported iii system: ${system}`, and an `engineSources` table holding the tag-pinned release URL and SRI hash per system (`sha256-4u5E0es48OM30+d7O4YB2ib/G9k0zIpMhJubz0FKtAs=` on `aarch64-linux`, `sha256-JzApagiuWEN1ey55E61ltigpAcmLlR28IwGODrQl4oU=` on `aarch64-darwin`)
   - Build `stdenvNoCC.mkDerivation { pname = "iii"; version = "0.26.0"; }` from that `fetchurl`, unpack the single-file archive into `$out/bin` (`tar -xzf "$src" -C "$out/bin"`, `chmod 0555 "$out/bin/iii"`), and set `dontStrip = true`
   - Add `autoPatchelfHook` with `glibc` and `stdenv.cc.cc.lib` on Linux and `dontFixup = true` on Darwin; add no FHS wrapper, `nix-ld`, installer run, or hand-placed binary
