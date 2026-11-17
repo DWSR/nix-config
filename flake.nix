@@ -2430,17 +2430,22 @@
               touch "$out"
             '';
 
-          # Pure-evaluation package check for the pinned iii engine (spec
-          # iii-engine-on-the-fabro-host, task 4.1; requirements 1.1–1.7, 7.1,
-          # 7.14, 7.15; design "C5: Verification" and "Testing Strategy →
-          # Pure-evaluation package checks"). Instantiates the repository
-          # overlay chain for both required systems and asserts the engine
-          # metadata plus the tag-pinned artifact URL and SRI recorded in
-          # overlays/iii.nix, so a repointed or floating fetch, a version bump,
-          # or a platform change fails evaluation. Nothing here builds the
-          # engine, runs the binary, or fetches during evaluation: the report
-          # embeds plain metadata only, and every store-path-shaped string is
-          # stripped of its context so the check depends on no derivation.
+          # Pure-evaluation package check for the pinned iii engine and the
+          # 73-worker catalog (spec iii-engine-on-the-fabro-host, tasks 4.1 and
+          # 4.2; requirements 1.1–1.7, 2.1–2.10, 7.1–7.4, 7.14, 7.15; design
+          # "C5: Verification" and "Testing Strategy → Pure-evaluation package
+          # checks"). Instantiates the repository overlay chain for both
+          # required systems and asserts the engine metadata plus the
+          # tag-pinned artifact URL and SRI recorded in overlays/iii.nix, so a
+          # repointed or floating fetch, a version bump, or a platform change
+          # fails evaluation. Then asserts every worker package against the
+          # pinned manifest in overlays/iii-workers.nix: the 73-entry count,
+          # the excluded names, and each worker's version, source URL and hash,
+          # archive binary, platform set, and engine-compatibility declaration.
+          # Nothing here builds a package, runs a binary, or fetches during
+          # evaluation: the report embeds plain metadata only, and every
+          # store-path-shaped string is stripped of its context so the check
+          # depends on no derivation.
           iii-packages =
             let
               inherit (pkgs) lib;
@@ -2448,6 +2453,28 @@
                 "aarch64-linux"
                 "aarch64-darwin"
               ];
+
+              # The worker catalog is data, and the check reads that same data:
+              # the overlay and the assertions cannot drift, so a derivation
+              # that repoints a source to an unpinned URL fails even while the
+              # manifest itself is untouched (requirements 2.1–2.2, 2.7, 2.9).
+              manifest = import ./overlays/iii-workers.nix;
+              manifestNames = builtins.attrNames manifest.workers;
+              manifestUrls = lib.sort (a: b: a < b) (
+                lib.unique (
+                  lib.concatMap (
+                    name:
+                    let
+                      targets = manifest.workers.${name}.targets;
+                    in
+                    [
+                      targets.aarch64-linux.url
+                      targets.aarch64-darwin.url
+                    ]
+                  ) manifestNames
+                )
+              );
+
               # Expected engine metadata, mirroring the pinned source table in
               # overlays/iii.nix (task 1.1). Keep this table next to the
               # assertions: the check is the record that a bump must touch.
@@ -2469,6 +2496,99 @@
                   };
                 };
               };
+
+              # Worker metadata contract (requirements 2.1–2.10, 7.2–7.4). The
+              # engine version is the literal pinned in overlays/iii.nix and
+              # requirement 2.8, not the manifest's own `engineVersion` field,
+              # so a catalog bump must also touch this record.
+              expectedWorkerCount = 73;
+              expectedWorkerEngineVersion = "0.26.0";
+              expectedWorkerPlatforms = [
+                "aarch64-darwin"
+                "aarch64-linux"
+              ];
+              # Names the catalog must never expose: the three binary workers
+              # without both required targets (2.3), the eight official
+              # JavaScript bundles, the four third-party bundles,
+              # `registry-cli`, and the four engine-kind registry entries
+              # (2.10; research.md § API and inventory).
+              excludedWorkerNames = [
+                "harness-e2e"
+                "voice"
+                "ios-simulator"
+                "claude-code"
+                "cursor"
+                "onboarding"
+                "opencode"
+                "opengantry"
+                "openwiki"
+                "pi"
+                "vscode"
+                "audit-log"
+                "hello-node"
+                "hello-python"
+                "tabstack"
+                "registry-cli"
+                "configuration"
+                "iii-observability"
+                "iii-sandbox"
+                "iii-worker-manager"
+              ];
+
+              # Every cataloged package is checked against its manifest entry
+              # for the target being evaluated, so a stale `src`, a renamed
+              # binary, a narrower platform set, or a missing engine
+              # declaration fails with the worker and target in the message
+              # (requirements 2.4–2.8).
+              checkWorkers =
+                system: systemPkgs:
+                let
+                  workers = systemPkgs.iii-workers;
+                  workerNames = builtins.attrNames workers;
+                  presentExcluded = builtins.filter (name: builtins.hasAttr name workers) excludedWorkerNames;
+                  checkWorker =
+                    name:
+                    let
+                      entry = manifest.workers.${name};
+                      target = entry.targets.${system};
+                      package = workers.${name};
+                      label = "iii-packages: ${system} iii-workers.${name}";
+                      version = package.version or "";
+                      urls = map builtins.unsafeDiscardStringContext (package.src.urls or [ ]);
+                      hash = builtins.unsafeDiscardStringContext (package.src.outputHash or "");
+                      mainProgram = package.meta.mainProgram or "";
+                      platforms = lib.sort (a: b: a < b) (package.meta.platforms or [ ]);
+                      engineVersion = package.passthru.iiiEngineVersion or "";
+                      unpinnedUrls = builtins.filter (url: !(builtins.elem url manifestUrls)) urls;
+                    in
+                    assert lib.assertMsg (
+                      version == entry.version
+                    ) "${label}.version must be \"${entry.version}\", got \"${version}\".";
+                    assert lib.assertMsg (unpinnedUrls == [ ])
+                      "${label}.src.urls must be pinned in overlays/iii-workers.nix; unpinned [ ${lib.concatStringsSep " " unpinnedUrls} ].";
+                    assert lib.assertMsg (
+                      urls == [ target.url ]
+                    ) "${label}.src.urls must be exactly [ ${target.url} ], got [ ${lib.concatStringsSep " " urls} ].";
+                    assert lib.assertMsg (
+                      hash == target.hash
+                    ) "${label}.src.outputHash must be \"${target.hash}\", got \"${hash}\".";
+                    assert lib.assertMsg (
+                      mainProgram == entry.binary
+                    ) "${label}.meta.mainProgram must be \"${entry.binary}\", got \"${mainProgram}\".";
+                    assert lib.assertMsg (platforms == expectedWorkerPlatforms)
+                      "${label}.meta.platforms must be exactly [ ${lib.concatStringsSep " " expectedWorkerPlatforms} ], got [ ${lib.concatStringsSep " " platforms} ].";
+                    assert lib.assertMsg (engineVersion == expectedWorkerEngineVersion)
+                      "${label}.passthru.iiiEngineVersion must be \"${expectedWorkerEngineVersion}\", got \"${engineVersion}\".";
+                    "${system} iii-worker ${name} ${version}; mainProgram=${mainProgram}; platforms=[ ${lib.concatStringsSep " " platforms} ]; engine=${engineVersion}; src=${target.url}; hash=${hash}";
+                in
+                assert lib.assertMsg (presentExcluded == [ ])
+                  "iii-packages: ${system} iii-workers must not expose the excluded catalog entries [ ${lib.concatStringsSep " " presentExcluded} ] (requirements 2.3, 2.10).";
+                assert lib.assertMsg (workerNames == manifestNames)
+                  "iii-packages: ${system} iii-workers attribute names must equal the overlays/iii-workers.nix manifest keys [ ${lib.concatStringsSep " " manifestNames} ], got [ ${lib.concatStringsSep " " workerNames} ].";
+                assert lib.assertMsg (builtins.length workerNames == expectedWorkerCount)
+                  "iii-packages: ${system} iii-workers must contain exactly ${toString expectedWorkerCount} entries, got ${toString (builtins.length workerNames)}: [ ${lib.concatStringsSep " " workerNames} ].";
+                map checkWorker manifestNames;
+
               checkSystem =
                 system:
                 let
@@ -2498,7 +2618,15 @@
                 assert lib.assertMsg (
                   hash == source.hash
                 ) "iii-packages: ${system} iii.src.outputHash must be \"${source.hash}\", got \"${hash}\".";
-                "${system}: iii ${version} (${sourceRevision}); platforms=[ ${lib.concatStringsSep " " platforms} ]; src=${source.url}; hash=${hash}";
+                assert lib.assertMsg (builtins.hasAttr "iii-workers" systemPkgs)
+                  "iii-packages: ${system} pkgs.iii-workers must be provided by the repository overlay chain.";
+                lib.concatStringsSep "\n" (
+                  [
+                    "${system}: iii ${version} (${sourceRevision}); platforms=[ ${lib.concatStringsSep " " platforms} ]; src=${source.url}; hash=${hash}"
+                    "${system}: iii-workers ${toString (builtins.length (builtins.attrNames systemPkgs.iii-workers))} entries; engine=${expectedWorkerEngineVersion}; platforms=[ ${lib.concatStringsSep " " expectedWorkerPlatforms} ]"
+                  ]
+                  ++ checkWorkers system systemPkgs
+                );
             in
             pkgs.runCommand "iii-packages"
               {
