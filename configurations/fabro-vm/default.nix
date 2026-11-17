@@ -539,10 +539,11 @@ in
     environment.systemPackages = with pkgs; [
       # Packages installed with the pivot off macOS (the mac-side launchd
       # services were removed with it; the systemd services live in
-      # fabro.nix and litellm.nix). `fabro` comes from the repo's overlay
-      # (applied in flake.nix); litellm is nixpkgs'.
+      # fabro.nix, litellm.nix, and iii.nix). `fabro` and `iii` come from
+      # the repo's overlays (applied in flake.nix); litellm is nixpkgs'.
       fabro
       litellm
+      iii
 
       btop
       nextvi # small version of vi
