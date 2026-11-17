@@ -4310,6 +4310,31 @@
                 node --test tests/fly-app/deploy.test.js
                 touch $out
               '';
+
+          # Scratch-cluster contract check (spec
+          # postgres-cluster-on-the-fabro-host-for-litellm-a, task 5.3;
+          # Requirements 2.8, 3.3-3.4, 3.6, 4.6, 4.7, 8.10-8.15). It starts the
+          # guest's own `services.postgresql.finalPackage` (the pinned 18.6
+          # server with pg_textsearch, pgvector, and pg_uuidv7) on a temporary
+          # Unix socket directory and a non-default port, asserts socket-only
+          # reachability plus the extension contract, and applies the guest's
+          # generated `fabro.postgres` bootstrap and grant SQL twice against
+          # the declared fixture identities. Both the server and the SQL come
+          # from `nixosConfigurations.fabro-vm`, so an extension or declaration
+          # that leaves the guest fails here. The check builds on a Linux
+          # builder and stays absent elsewhere, where initdb cannot run.
+          postgres-scratch =
+            let
+              guest = self.nixosConfigurations.fabro-vm.config;
+            in
+            import ./tests/postgres-scratch/default.nix {
+              inherit pkgs;
+              postgresql = guest.services.postgresql.finalPackage;
+              bootstrapSql = guest.fabro.postgres.bootstrapSqlFile;
+              objectGrantsSql = guest.fabro.postgres.objectGrantsSqlFile;
+              databaseNames = pkgs.lib.attrNames guest.fabro.postgres.databases;
+              roleNames = pkgs.lib.attrNames guest.fabro.postgres.roles;
+            };
         }
       );
 
