@@ -133,7 +133,7 @@ back the rendered unit graph.
 
 - [ ] 5. Evaluated and runtime verification
 
-- [ ] 5.1 Assert the cluster, exposure, extension, and declaration invariants in `fabro-vm-guest-eval`
+- [x] 5.1 Assert the cluster, exposure, extension, and declaration invariants in `fabro-vm-guest-eval`
   - Add one `assertMsg` per invariant to the `fabro-vm-guest-eval` `guestReport` in `flake.nix`: one enabled cluster at 18.6 with `/var/lib/postgresql/18` and no second server unit, `settings.listen_addresses == ""`, every `authentication` line starting with `local`, no `host`/`md5`/`scram` rule, and no 5432 `allowedTCPPorts` entry or PostgreSQL Serve line
   - Assert the three extension packages in `finalPackage.installedExtensions` (`pg_textsearch`, `pgvector`, `pg_uuidv7`), the `pgvector` version floor, `pg_textsearch` in `shared_preload_libraries`, `ensureDatabases`/`ensureUsers` matching the `fabro.postgres` names, no `superuser`/`createdb`/`createrole` clause, no declared password, and the three existing `svc:*` Serve lines unchanged
   - Keep the check pure evaluation (the report stays a string in a trivial `runCommand`, no guest package built) and name the offending option, unit, role, or extension in every message
