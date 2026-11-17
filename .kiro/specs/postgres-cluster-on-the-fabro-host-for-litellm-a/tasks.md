@@ -148,7 +148,7 @@ back the rendered unit graph.
   - _Requirements: 5.1, 5.5, 6.2, 6.8, 6.9, 6.10, 6.11, 6.12, 6.13, 7.9, 7.10, 7.11, 7.12, 8.6, 8.7, 8.8, 8.9_
   - _Depends: 4.5, 4.6, 5.1_
 
-- [ ] 5.3 Add the `postgres-scratch` aarch64-linux check
+- [x] 5.3 Add the `postgres-scratch` aarch64-linux check
   - Add `tests/postgres-scratch/{default.nix,cluster.sh,run.sh}`: start the pinned PostgreSQL 18.6 with the three extensions, `listen_addresses = ''`, a temporary socket directory, a non-default port, and `shared_preload_libraries = 'pg_textsearch'`
   - Create `scratch`, install `pg_textsearch`, `vector`, and `pg_uuidv7`, assert `uuid_generate_v7()` returns a v7 UUID and the `vector` `extversion` is at least 0.8.6, connect over the socket, and assert a `127.0.0.1:<port>` connection is refused
   - Create the fixture databases and roles, take the guest's generated bootstrap and grant SQL from `self.nixosConfigurations.fabro-vm`, apply both twice, and compare `pg_dump --schema-only` output after stripping pg_dump's per-run `\restrict`/`\unrestrict` lines
