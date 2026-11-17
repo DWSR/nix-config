@@ -2430,6 +2430,88 @@
               touch "$out"
             '';
 
+          # Evaluated package check for the pinned iii engine (spec
+          # iii-engine-on-the-fabro-host, task 4.1; requirements 1.1–1.7, 7.1,
+          # 7.14, 7.15; design "Testing Strategy → Pure-evaluation package
+          # checks"). The check instantiates the repository package set for both
+          # declared platforms and asserts metadata only, so it never builds the
+          # engine, runs the binary, or fetches an artifact during evaluation —
+          # it passes on a host without a Linux builder. Task 4.2 extends the
+          # same check with the 73-worker catalog assertions.
+          iii-packages =
+            let
+              inherit (pkgs) lib;
+
+              # Expected values are restated here instead of read back from the
+              # derivation, so a change on either side — the pin recorded in
+              # task 1.1 or the value below — fails evaluation.
+              expectedVersion = "0.26.0";
+              expectedSourceRevision = "iii/v0.26.0";
+              expectedPlatforms = [
+                "aarch64-linux"
+                "aarch64-darwin"
+              ];
+              enginePins = {
+                aarch64-linux = {
+                  url = "https://github.com/iii-hq/iii/releases/download/iii/v0.26.0/iii-aarch64-unknown-linux-gnu.tar.gz";
+                  hash = "sha256-4u5E0es48OM30+d7O4YB2ib/G9k0zIpMhJubz0FKtAs=";
+                };
+                aarch64-darwin = {
+                  url = "https://github.com/iii-hq/iii/releases/download/iii/v0.26.0/iii-aarch64-apple-darwin.tar.gz";
+                  hash = "sha256-JzApagiuWEN1ey55E61ltigpAcmLlR28IwGODrQl4oU=";
+                };
+              };
+
+              # The overlay chain the host configurations use; `custom-packages`
+              # owns the `iii` attribute.
+              packageSet =
+                system:
+                import nixpkgs {
+                  inherit system;
+                  overlays = [ outputs.overlays.custom-packages ];
+                };
+
+              # Platform order is not part of the contract, but the exact
+              # membership and count are.
+              samePlatformSet =
+                actual:
+                builtins.length actual == builtins.length expectedPlatforms
+                && builtins.all (platform: builtins.elem platform actual) expectedPlatforms;
+
+              checkSystem =
+                system: expected:
+                let
+                  inherit (packageSet system) iii;
+                  # Plain metadata only: every store-path-capable string loses
+                  # its context here, so the check derivation depends on its
+                  # report string alone and not on the evaluated derivations.
+                  srcUrls = map builtins.unsafeDiscardStringContext (iii.src.urls or [ ]);
+                  srcOutputHash = builtins.unsafeDiscardStringContext (iii.src.outputHash or "");
+                  sourceRevision = builtins.unsafeDiscardStringContext (iii.passthru.sourceRevision or "");
+                  platforms = map builtins.unsafeDiscardStringContext (iii.meta.platforms or [ ]);
+                  mainProgram = builtins.unsafeDiscardStringContext (iii.meta.mainProgram or "");
+                in
+                assert lib.assertMsg (iii.version == expectedVersion)
+                  "iii-packages: ${system}: iii.version must be \"${expectedVersion}\", got \"${toString iii.version}\".";
+                assert lib.assertMsg (sourceRevision == expectedSourceRevision)
+                  "iii-packages: ${system}: iii.passthru.sourceRevision must be \"${expectedSourceRevision}\", got \"${sourceRevision}\".";
+                assert lib.assertMsg (samePlatformSet platforms)
+                  "iii-packages: ${system}: iii.meta.platforms must be exactly [ ${lib.concatStringsSep " " expectedPlatforms} ], got [ ${lib.concatStringsSep " " platforms} ].";
+                assert lib.assertMsg (srcUrls == [ expected.url ])
+                  "iii-packages: ${system}: iii.src.urls must be [ ${expected.url} ], got [ ${lib.concatStringsSep " " srcUrls} ].";
+                assert lib.assertMsg (srcOutputHash == expected.hash)
+                  "iii-packages: ${system}: iii.src.outputHash must be \"${expected.hash}\", got \"${srcOutputHash}\".";
+                assert lib.assertMsg (
+                  mainProgram == "iii"
+                ) "iii-packages: ${system}: iii.meta.mainProgram must be \"iii\", got \"${mainProgram}\".";
+                "${system}: iii version=${iii.version}; sourceRevision=${sourceRevision}; platforms=[ ${lib.concatStringsSep " " platforms} ]; srcUrls=[ ${lib.concatStringsSep " " srcUrls} ]; srcOutputHash=${srcOutputHash}; mainProgram=${mainProgram}";
+
+              engineReport = lib.concatStringsSep "\n" (lib.mapAttrsToList checkSystem enginePins);
+            in
+            pkgs.runCommand "iii-packages" { inherit engineReport; } ''
+              printf '%s\n' "$engineReport" > "$out"
+            '';
+
           # Eval assertions for the fabro NixOS guest (pure eval over
           # nixosConfigurations.fabro-vm + trivial runCommand; no Linux
           # builder needed — building packages.aarch64-linux.fabro-vm-image
