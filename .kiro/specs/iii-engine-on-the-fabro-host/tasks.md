@@ -85,6 +85,7 @@
   - Completed when all 73 workers pass for both systems, and dropping an entry, adding an excluded name, or changing one URL, hash, or binary fails with a message naming that worker and system
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 7.2, 7.3, 7.4, 7.14, 7.15_
   - _Depends: 4.1_
+  - _Blocked: Boundary gate reverts flake.nix because task 4.2's entry names no flake check; add "flake.nix" or "flake checks" to the 4.2 title in tasks.md, commit, and start a fresh run._
 
 - [ ] 4.3 Add the `iii-agentmemory-isolation` check
   - Instantiate `aarch64-darwin` (and `x86_64-darwin`) package sets with the repository overlays and assert `iii-engine.pname == "iii-engine"`, `version == "0.11.5"`, and its unchanged two-platform set; do not force `iii` or `iii-workers` on `x86_64-darwin`, where the guard intentionally throws
