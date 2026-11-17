@@ -30,6 +30,10 @@ PROTECTED = (
             r"\s+[^\n]{0,40}?flake\s+checks?",
             r"(?:add|adds|register|registers|wire|wires|bind|binds|expose|exposes)"
             r"\s+[^\n]{0,60}?checks[.`]",
+            # A task that extends the check its predecessor established (for
+            # example "Extend the same check with ..." right after a task that
+            # names the check in `flake.nix`) claims the flake it extends.
+            r"\b(?:extend|extends|extending)\s+the\s+same\s+check\b",
             # Assertions added to an existing flake check make it fail by name.
             r"fails?\s+[^\n]{0,80}?flake\s+checks?\b",
             # A task that delivers flake checks writes "flake checks"; the
