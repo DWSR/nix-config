@@ -87,7 +87,7 @@
   - _Depends: 4.1_
   - _Boundary: flake.nix_
 
-- [ ] 4.3 Add the `iii-agentmemory-isolation` check
+- [x] 4.3 Add the `iii-agentmemory-isolation` check
   - Instantiate `aarch64-darwin` (and `x86_64-darwin`) package sets with the repository overlays and assert `iii-engine.pname == "iii-engine"`, `version == "0.11.5"`, and its unchanged two-platform set; do not force `iii` or `iii-workers` on `x86_64-darwin`, where the guard intentionally throws
   - On `aarch64-darwin` assert `agentmemory` still carries `passthru.iiiVersion = "0.11.5"` and `iiiRevision = "iii/v0.11.5"`, that `iii` and `iii-workers` are attributes distinct from `iii-engine`, that every engine and worker source and output hash differs from `iii-engine`'s, and that neither new package carries `passthru.iiiVersion` or `passthru.iiiRevision`
   - Assert the `agentmemory-opencode-matrix` check is still declared for `aarch64-darwin`, and leave `overlays/agentmemory.nix`, `home-manager/common/agentmemory.nix`, `agentMemoryChecks`, `agentMemoryHostMatrix`, and `tests/agentmemory-opencode/host-matrix.nix` untouched
