@@ -21,7 +21,7 @@
   - Completed when `.#nixosConfigurations.fabro-vm.pkgs.iii.version` and `.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.iii.version` both report `0.26.0`, each `src.outputHash` equals its recorded SRI, and forcing the attribute on any other system fails with the named error
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 3.6, 3.8_
 
-- [ ] 1.2 (P) Add the pinned 73-worker manifest
+- [x] 1.2 (P) Add the pinned 73-worker manifest
   - Add `overlays/iii-workers.nix` as pure data: `engineVersion = "0.26.0"`, a system-to-target map (`aarch64-linux` → `aarch64-unknown-linux-gnu`, `aarch64-darwin` → `aarch64-apple-darwin`), and one entry per cataloged worker with `version`, `binary`, and `targets.<system>.{url,hash}`
   - Transcribe the 73 rows of `research.md` § Worker catalog snapshot, converting each hex digest to SRI (`nix hash convert --hash-algo sha256 --to sri <hex>`); use the `https://cdn.iii.cloud/workers/<name>/<version>/<name>-<target>.tar.gz` default and full URLs for `acp`, `compose-ui`, and `mcp`, with `iii-acp` as `acp`'s binary
   - Keep entries sorted by worker name, record the 2026-11-16 snapshot date in a comment, and resolve nothing at evaluation time: no `latest`, no registry query, no URL-template fallback
