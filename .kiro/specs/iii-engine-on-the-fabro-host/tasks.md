@@ -30,7 +30,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.7, 2.10_
   - _Boundary: overlays/iii-workers.nix_
 
-- [ ] 1.3 Build the generic worker derivation and expose `iii-workers`
+- [x] 1.3 Build the generic worker derivation and expose `iii-workers`
   - Extend `overlays/iii.nix` with one generic builder over the manifest: `pname = "iii-worker-${name}"`, the entry's `version`, a `fetchurl` on its per-system `url`/`hash`, the same Linux `autoPatchelfHook`/`glibc`/`stdenv.cc.cc.lib` inputs, `dontStrip = true`, and `dontFixup` on Darwin
   - Install the archive's single root executable as `$out/bin/${entry.binary}` and `test -x` it so a layout change fails the build naming the worker
   - Expose exactly the manifest names under `pkgs.iii-workers`, each with `passthru.workerName`, `passthru.iiiEngineVersion = manifest.engineVersion`, `meta.mainProgram = entry.binary`, and the two-element `meta.platforms`; a missing target must fail evaluation naming the worker and system
