@@ -391,6 +391,18 @@
             }/bin/fabro-darwin-live-failure-validate";
           };
         }
+        # Declared Fly apps (spec nix-module-for-fly-io-app): each entry in
+        # `fly-apps/` becomes a `deploy-<name>` flake app backed by the Linux
+        # deployment runtime. The generator asserts a Linux package set, so
+        # the apps stay absent on the Darwin systems.
+        // pkgs.lib.optionalAttrs (system == "aarch64-linux") (
+          outputs.lib.mkFlyApps {
+            inherit pkgs;
+            inherit (pkgs) lib;
+            appModules = import ./fly-apps;
+            deployProgram = self.packages.${system}.fly-app-deploy;
+          }
+        )
       );
 
       checks = forAllSystems (

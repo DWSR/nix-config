@@ -1,0 +1,3 @@
+{
+  moodist = import ./moodist.nix;
+}
