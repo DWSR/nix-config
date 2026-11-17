@@ -157,7 +157,7 @@ back the rendered unit graph.
   - _Requirements: 2.8, 3.3, 3.4, 3.6, 4.6, 4.7, 8.10, 8.11, 8.12, 8.13, 8.14, 8.15_
   - _Depends: 1.2, 2.2, 2.3_
 
-- [ ] 5.4 Add the `litellm-db-init` aarch64-linux check
+- [x] 5.4 Add the `litellm-db-init` aarch64-linux check
   - Add `tests/litellm-db-init/{default.nix,run.sh}`: start the same scratch cluster, create the `litellm` database and both roles, apply the guest's generated bootstrap and grant SQL, and run the installed `litellm-db-init` script twice
   - Assert the first run creates the Prisma tables and the eight views, the second run succeeds with a normalized `pg_dump --schema-only` equal to the first, and `LiteLLM_VerificationTokenView` contains `project_alias`
   - Assert `litellm_app` can `SELECT`/`INSERT` on a migrator-owned table and a view, that `CREATE TABLE` fails with `permission denied for schema public`, and that a destructive fixture schema fails the script without touching the database
