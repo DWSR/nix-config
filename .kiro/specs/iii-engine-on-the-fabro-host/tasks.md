@@ -129,3 +129,4 @@
   - Completed when the loopback listener, the `svc:iii` handler, restart and state durability, and both engine error paths are observed, with the deployed configuration still declaring zero project workers
   - _Requirements: 4.5, 4.6, 4.13, 4.14, 5.2, 5.8, 5.9, 6.2, 6.3_
   - _Depends: 2.2, 3, 4.5_
+  - _Blocked: the svc:iii Tailscale Service is not provisioned (iii.tuxedo-musical.ts.net does not resolve from the guest or another tailnet device), and iii 0.26.0 logs a bind failure but stays active, so the unit never reaches failed (requirement 5.9); re-switch convergence, state durability across restart/reboot, the listener, the Serve handler, and the unsupported-worker error were verified._
