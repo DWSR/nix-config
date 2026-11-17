@@ -166,7 +166,7 @@ back the rendered unit graph.
   - _Requirements: 5.6, 5.7, 5.8, 5.9, 5.10, 7.4, 7.5, 7.8, 7.12, 8.15_
   - _Depends: 4.2, 4.3, 4.4_
 
-- [ ] 5.5 (P) Write `docs/postgres-litellm-runbook.md`
+- [x] 5.5 (P) Write `docs/postgres-litellm-runbook.md`
   - Record the data directory, socket directory, LiteLLM state directory, and the single `fabro.postgres` declaration site, with how to add a database, role, extension, grant, or schema-init unit and what a switch does to each
   - Document how to inspect the schema-initialization result (`systemctl status`/`journalctl -u litellm-db-init`, `psql -h /run/postgresql -d litellm -c '\dt'`, `SELECT viewname FROM pg_views WHERE schemaname = 'public'`) and name LiteLLM's expected `prisma package not found` line so an operator does not read it as a database failure
   - Write the five smoke steps with the expected observation for each: unit states, socket-only reachability plus a refused TCP probe and no `ss -ltn` 5432 listener, the three extensions with `uuid_generate_v7()`, both roles' attributes with the application role's DDL denial, and key/spend/admin-login persistence across a `litellm` restart
