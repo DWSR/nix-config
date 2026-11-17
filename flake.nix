@@ -3558,6 +3558,75 @@
                   vm.sops.templates."fabro-env".restartUnits == [ "fabro.service" ]
                   && vm.sops.templates."litellm-env".restartUnits == [ "litellm.service" ]
                 ) "fabro-vm: sops templates must restart their consumers when the rendered values change.";
+                # iii engine (spec `iii-engine-on-the-fabro-host`, task 4.4;
+                # design C3 "Unit field contract" and C5 "Guest assertions";
+                # requirements 4.1–4.14, 7.6–7.8). Each assertion reads the
+                # evaluated guest configuration only: no `builtins.readFile`
+                # of the rendered config and no image build. Every message
+                # starts with `fabro-vm:` and names the missing unit or
+                # field so a regression fails evaluation with the element.
+                assert pkgs.lib.assertMsg
+                  (builtins.any (p: (p.pname or p.name or "") == "iii") vm.environment.systemPackages)
+                  "fabro-vm: environment.systemPackages must contain the iii engine package (pname \"iii\", requirement 4.1).";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services ? iii
+                ) "fabro-vm: systemd.services.iii must be defined (the supervised engine unit, requirement 4.2).";
+                assert pkgs.lib.assertMsg (builtins.elem "multi-user.target" vm.systemd.services.iii.wantedBy)
+                  "fabro-vm: iii.service must be wantedBy multi-user.target (enabled across reboots, requirement 4.5).";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.iii.serviceConfig.DynamicUser or false)
+                    && !(vm.systemd.services.iii.serviceConfig ? User)
+                    && !(vm.systemd.services.iii.serviceConfig ? Group)
+                  )
+                  "fabro-vm: iii.service must run as a DynamicUser with no static User or Group (requirements 4.7–4.8).";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "iii" (vm.systemd.services.iii.serviceConfig.StateDirectory or [ ])
+                    && (vm.systemd.services.iii.serviceConfig.WorkingDirectory or "") == "/var/lib/iii"
+                    && builtins.elem "HOME=/var/lib/iii" (vm.systemd.services.iii.serviceConfig.Environment or [ ])
+                    && builtins.elem "III_TELEMETRY_ENABLED=false" (
+                      vm.systemd.services.iii.serviceConfig.Environment or [ ]
+                    )
+                  )
+                  "fabro-vm: iii.service must keep state in /var/lib/iii (StateDirectory \"iii\", WorkingDirectory /var/lib/iii, Environment HOME=/var/lib/iii and III_TELEMETRY_ENABLED=false); requirements 4.10–4.11.";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.iii.serviceConfig.Restart or "") == "always"
+                    && (vm.systemd.services.iii.serviceConfig.RestartSec or null) == 2
+                  )
+                  "fabro-vm: iii.service must restart on unexpected exit (Restart \"always\" and RestartSec 2, requirement 4.6).";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.iii.serviceConfig.NoNewPrivileges or false)
+                    && (vm.systemd.services.iii.serviceConfig.PrivateTmp or false)
+                    && (vm.systemd.services.iii.serviceConfig.ProtectSystem or "") == "strict"
+                    && (vm.systemd.services.iii.serviceConfig.ProtectHome or false)
+                    &&
+                      (vm.systemd.services.iii.serviceConfig.RestrictAddressFamilies or [ ]) == [
+                        "AF_UNIX"
+                        "AF_INET"
+                        "AF_INET6"
+                      ]
+                    && (vm.systemd.services.iii.serviceConfig.ReadWritePaths or [ ]) == [ "/var/lib/iii" ]
+                  )
+                  "fabro-vm: iii.service must carry the C3 hardening (NoNewPrivileges, PrivateTmp, ProtectSystem=strict, ProtectHome, RestrictAddressFamilies AF_UNIX/AF_INET/AF_INET6, ReadWritePaths=/var/lib/iii).";
+                assert pkgs.lib.assertMsg
+                  (
+                    let
+                      configFile = builtins.unsafeDiscardStringContext (toString vm.fabro.iii.configFile);
+                      expectedExecStart = "${pkgs.lib.getExe vm.fabro.iii.package} --config ${configFile} --no-update-check";
+                    in
+                    vm.systemd.services.iii.serviceConfig.ExecStart == expectedExecStart
+                  )
+                  "fabro-vm: iii.service ExecStart must be lib.getExe config.fabro.iii.package with `--config <fabro.iii.configFile>` and `--no-update-check` (requirements 4.4, 4.9, 4.12).";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasPrefix "/nix/store/" (
+                    builtins.unsafeDiscardStringContext (toString vm.fabro.iii.configFile)
+                  ))
+                  "fabro-vm: fabro.iii.configFile must be a /nix/store path (the unit reads its engine configuration from a read-only store path, requirements 4.9 and 7.8).";
+                assert pkgs.lib.assertMsg (!(vm.systemd.services.iii.serviceConfig ? EnvironmentFile))
+                  "fabro-vm: iii.service must not declare an EnvironmentFile (the unit carries no secret material).";
                 assert pkgs.lib.assertMsg vm.services.tailscale.enable
                   "fabro-vm: services.tailscale must be enabled (tailnet node + service host).";
                 assert pkgs.lib.assertMsg (

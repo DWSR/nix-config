@@ -94,7 +94,7 @@
   - Completed when a changed `iii-engine` version or platform set, a shared source or hash, or a leaked `iiiVersion` passthru fails the check with a message naming the package, while the current tree passes in pure evaluation
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 7.5_
 
-- [ ] 4.4 Extend `fabro-vm-guest-eval` with the package and unit assertions
+- [x] 4.4 Extend `fabro-vm-guest-eval` with the package and unit assertions
   - Assert `environment.systemPackages` contains a derivation whose `pname` is `iii`, using the existing predicate shape
   - Assert `systemd.services.iii` exists, is `wantedBy [ "multi-user.target" ]`, has `DynamicUser = true` and no `User`/`Group`, `StateDirectory` containing `iii`, `WorkingDirectory` and `HOME` at `/var/lib/iii`, `Restart = "always"`, `RestartSec = 2`, and the design's hardening fields
   - Assert `ExecStart` is `lib.getExe config.fabro.iii.package` with `--config <configFile>` and `--no-update-check`, that the config path starts with `/nix/store/`, and that the unit declares no `EnvironmentFile`
