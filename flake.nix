@@ -4335,6 +4335,33 @@
               databaseNames = pkgs.lib.attrNames guest.fabro.postgres.databases;
               roleNames = pkgs.lib.attrNames guest.fabro.postgres.roles;
             };
+
+          # Schema-initialization contract check (spec
+          # postgres-cluster-on-the-fabro-host-for-litellm-a, task 5.4;
+          # Requirements 5.6-5.10, 7.4, 7.5, 7.8, 7.12, 8.15). It starts the
+          # same scratch cluster as `postgres-scratch`, creates the guest's
+          # declared `litellm` database and both roles, applies the guest's
+          # generated `fabro.postgres` bootstrap and grant SQL, and runs the
+          # installed `litellm-db-init` script twice. The script and the schema
+          # both come from `nixosConfigurations.fabro-vm`, so a script, schema,
+          # view, or grant change that leaves the guest fails here. The check
+          # builds on a Linux builder and stays absent elsewhere, where initdb
+          # cannot run.
+          litellm-db-init =
+            let
+              guest = self.nixosConfigurations.fabro-vm.config;
+              declaration = guest.fabro.postgres;
+            in
+            import ./tests/litellm-db-init/default.nix {
+              inherit pkgs;
+              postgresql = guest.services.postgresql.finalPackage;
+              litellmDbInit = guest.systemd.services.litellm-db-init.serviceConfig.ExecStart;
+              litellmSchema = guest.services.litellm.package.passthru.schemaPath;
+              bootstrapSql = declaration.bootstrapSqlFile;
+              objectGrantsSql = declaration.objectGrantsSqlFile;
+              databaseNames = pkgs.lib.attrNames declaration.databases;
+              roleNames = pkgs.lib.attrNames declaration.roles;
+            };
         }
       );
 
