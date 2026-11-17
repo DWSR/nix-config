@@ -13,10 +13,10 @@
 # the module's `image.location` to the store path) or for remote deployment
 # into the running instance (`nixos-rebuild --target`). The guest runs
 # Podman with a Docker-compatible API socket (fabro's docker sandbox
-# provider) plus the fabro, LiteLLM, and OpenCode services, with their
-# secrets from sops-nix (`sops` block below), and joins the tailnet as a
-# Tailscale Services host advertising all three applications
-# (./tailscale.nix).
+# provider) plus the fabro, LiteLLM, and OpenCode services (with their
+# secrets from sops-nix, `sops` block below) and a loopback-only iii engine
+# (./iii.nix), and joins the tailnet as a Tailscale Services host advertising
+# all three applications (./tailscale.nix).
 {
   rsync34,
   config,
@@ -62,6 +62,10 @@ in
     ./api-bridge.nix
     # The OpenCode v1 web console (DynamicUser service; svc:opencode).
     ./opencode.nix
+    # The loopback-only iii engine: the `fabro.iii` configuration
+    # rendered to a store path plus `iii.service` (DynamicUser, state in
+    # /var/lib/iii) that executes the `iii` package installed below.
+    ./iii.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
     # of the fabro, litellm, and opencode services (svc:fabro /
     # svc:litellm / svc:opencode).
@@ -540,6 +544,9 @@ in
       # (applied in flake.nix); litellm is nixpkgs'.
       fabro
       litellm
+      # The pinned iii 0.26.0 engine (overlays/iii.nix) that iii.service
+      # (./iii.nix) executes with `lib.getExe`.
+      iii
 
       btop
       nextvi # small version of vi
