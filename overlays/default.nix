@@ -5,6 +5,7 @@ let
   misc = import ./misc.nix { inherit inputs; };
   litestream = import ./litestream.nix;
   iiiEngine = import ./agentmemory.nix { };
+  iii = import ./iii.nix { };
   omlx = import ./omlx { inherit inputs; };
   fabro = import ./fabro.nix;
   agentmemoryFlake = final: _prev: {
@@ -163,6 +164,7 @@ in
     // (misc final prev)
     // (litestream final prev)
     // (iiiEngine final prev)
+    // (iii final prev)
     // (omlx final prev)
     // (fabro final prev)
     // (agentmemoryFlake final prev);
