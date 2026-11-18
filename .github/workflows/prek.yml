@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31.11.3
+        uses: cachix/install-nix-action@v31.11.5
 
       - name: Run prek hooks
         # Run in the devShell rather than building the sandboxed
