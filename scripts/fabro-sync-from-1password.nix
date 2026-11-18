@@ -115,7 +115,10 @@ pkgs.writeShellApplication {
 
     # Pre-flight: confirm an authenticated 1Password session before any
     # evaluation or key fetch, so an `op signin` reminder comes first.
-    if ! op whoami >/dev/null 2>&1; then
+    # `op whoami` is not usable with app-integration sessions on op 2.34
+    # (it reports "account is not signed in" while reads succeed), so
+    # probe with a vault listing instead.
+    if ! op vault list --format json >/dev/null 2>&1; then
       echo "fabro-sync-from-1password: error: 1Password CLI not authenticated" >&2
       echo "  run \"op signin\" and retry" >&2
       exit 2
@@ -173,13 +176,13 @@ pkgs.writeShellApplication {
     declare -A VALUES
     declare -A URI_VALUES
     for key in "''${SECRET_KEYS[@]}"; do
-      uri="$(printf '%s\\n' "$MANIFEST_JSON" | jq -r --arg k "$key" '.[$k]')"
+      uri="$(printf '%s\n' "$MANIFEST_JSON" | jq -r --arg k "$key" '.[$k]')"
       if [ "''${URI_VALUES[$uri]+x}" = "x" ]; then
         VALUES["$key"]="''${URI_VALUES[$uri]}"
         continue
       fi
       if ! value="$(op read --no-newline "$uri" 2>/dev/null)"; then
-        echo "fabro-sync-from-1password: error: failed to resolve 1Password URI for \\"$key\\"" >&2
+        printf 'fabro-sync-from-1password: error: failed to resolve 1Password URI for "%s"\n' "$key" >&2
         echo "  URI: $uri" >&2
         echo "  (item may be missing, field renamed, or vault inaccessible)" >&2
         exit 3

@@ -1,7 +1,10 @@
 { pkgs }:
 pkgs.writeShellApplication {
   name = "fabro-darwin-machines";
-  runtimeInputs = [ pkgs.coreutils ];
+  runtimeInputs = [
+    pkgs.coreutils
+    pkgs.gawk
+  ];
   text = ''
     set -euo pipefail
 
