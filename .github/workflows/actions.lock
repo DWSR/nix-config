@@ -12,13 +12,13 @@ workflows:
     '.github/workflows/nix-flake-check.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
-        - 'cachix/install-nix-action@v31.11.3'
+        - 'cachix/install-nix-action@v31.11.5'
         - 'nix-community/cache-nix-action@v7.0.2'
-    '.github/workflows/prek.yml':
-        - 'actions/checkout@v7.0.1'
-        - 'cachix/install-nix-action@v31.11.3'
     '.github/workflows/pr-commit-count.yml':
         - 'actions/checkout@v7.0.1'
+    '.github/workflows/prek.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'cachix/install-nix-action@v31.11.5'
     '.github/workflows/secret-scan.yml':
         - 'actions/checkout@v7.0.1'
         - 'gitleaks/gitleaks-action@v3.0.0'
@@ -33,9 +33,9 @@ dependencies:
         commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
         owner_id: 44036562
         repo_id: 197814629
-    'cachix/install-nix-action@v31.11.3':
-        ref: 'v31.11.3'
-        commit: 'sha1-75c75c31ebece974e48ebc36b4ad125bd97bd97b'
+    'cachix/install-nix-action@v31.11.5':
+        ref: 'v31.11.5'
+        commit: 'sha1-3dc140bfc76c49fbd4dd958429132e3746bcb086'
         owner_id: 36824654
         repo_id: 212301524
     'dependabot/fetch-metadata@v3.1.0':
