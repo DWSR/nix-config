@@ -50,7 +50,7 @@
   - _Requirements: 5.1, 5.3, 5.6, 5.7_
   - _Depends: 1.1_
 
-- [ ] 2.2 Add `iii.service` and install the engine package
+- [x] 2.2 Add `iii.service` and install the engine package
   - Add `systemd.services.iii` with `ExecStart = "${lib.getExe config.fabro.iii.package} --config ${config.fabro.iii.configFile} --no-update-check"`, `wantedBy = [ "multi-user.target" ]`, `DynamicUser = true`, no `User`/`Group`, `StateDirectory = [ "iii" ]`, `WorkingDirectory = "/var/lib/iii"`, `Restart = "always"`, and `RestartSec = 2`
   - Set `serviceConfig.Environment = [ "HOME=/var/lib/iii" "III_TELEMETRY_ENABLED=false" ]` plus the guest's hardening style (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem = "strict"`, `ProtectHome`, `RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ]`, `ReadWritePaths = [ "/var/lib/iii" ]`)
   - Add `iii` to the guest's `environment.systemPackages` in `configurations/fabro-vm/default.nix`; add no firewall opening, `EnvironmentFile`, static account, or runtime state under `/var/lib/fabro`
