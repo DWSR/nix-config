@@ -66,8 +66,9 @@ in
     ./api-bridge.nix
     # The OpenCode v1 web console (DynamicUser service; svc:opencode).
     ./opencode.nix
-    # The loopback-only iii engine configuration rendered from
-    # `fabro.iii` (the service and system package land in later tasks).
+    # The loopback-only iii engine: the `fabro.iii` configuration
+    # rendered to a store path plus `iii.service` (DynamicUser, state in
+    # /var/lib/iii) that executes the `iii` package installed below.
     ./iii.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
     # of the fabro, litellm, and opencode services (svc:fabro /
@@ -551,6 +552,9 @@ in
       # proxy build with the generated Prisma client, not nixpkgs' litellm.
       fabro
       pkgs.litellm-db
+      # The pinned iii 0.26.0 engine (overlays/iii.nix) that iii.service
+      # (./iii.nix) executes with `lib.getExe`.
+      iii
 
       btop
       nextvi # small version of vi
