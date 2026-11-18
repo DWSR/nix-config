@@ -1,4 +1,4 @@
-# Tailscale on the fabro host: the guest joins the tailnet as a persistent
+# Tailscale on the fabro host: the guest joins the tailnet as an ephemeral,
 # tagged node and advertises the three application services as Tailscale
 # Services (`svc:fabro`, `svc:litellm`, and `svc:opencode`, defined in the
 # admin console).
@@ -9,8 +9,9 @@
 # tailscale.com/kb/1215 ("Register new nodes using OAuth credentials") the
 # client secret doubles as the auth key (`tskey-client-…`), and nodes
 # registered this way are tag-owned, so:
-#   * ephemeral (the OAuth-parameter default) is overridden to false — an
-#     ephemeral node would vanish between reboots;
+#   * ephemeral=true releases the node from the tailnet shortly after it
+#     disconnects, so recreating the guest does not accumulate stale node
+#     records; the next boot re-registers it from this OAuth credential;
 #   * preauthorized=true skips manual device approval;
 #   * extraUpFlags passes `--advertise-tags=tag:fabro`, the tag granted to
 #     this OAuth client.
@@ -46,9 +47,11 @@ in
     authKeyFile = config.sops.secrets."tailscale-oauth-secret".path;
 
     authKeyParameters = {
-      # OAuth credential registration defaults to ephemeral nodes; this is
-      # a persistent host.
-      ephemeral = false;
+      # OAuth credential registration defaults to ephemeral nodes. Keep it
+      # explicit: a disconnected node is released from the tailnet, so a
+      # recreated guest leaves no stale record, and the next boot
+      # re-registers from this OAuth credential.
+      ephemeral = true;
 
       # Skip manual device approval in the admin console.
       preauthorized = true;

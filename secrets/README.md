@@ -103,9 +103,12 @@ in the `Infrastructure` vault, not `Private`. The item
 secret doubles as the node auth key (tailscale.com/kb/1215). Only the
 secret is mirrored into the store; the client ID is embedded in the
 secret value. Registration tags the guest `tag:fabro`
-(`services.tailscale.extraUpFlags`), and rotation affects only future
-node registrations — an already-registered guest keeps its bond until
-`tailscale logout` runs in-guest.
+(`services.tailscale.extraUpFlags`) and is ephemeral
+(`services.tailscale.authKeyParameters.ephemeral`): the tailnet releases
+the node shortly after the guest disconnects, and the next boot
+re-registers it from this credential. Rotation affects only future
+registrations — a running guest keeps its bond until `tailscale logout`
+runs in-guest.
 
 ### Syncing the store from 1Password
 
