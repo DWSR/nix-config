@@ -103,7 +103,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 4.13, 4.14, 7.6, 7.7, 7.8, 7.14, 7.15_
   - _Depends: 2.2_
 
-- [ ] 4.5 Extend `fabro-vm-guest-eval` with the configuration and exposure assertions
+- [x] 4.5 Extend `fabro-vm-guest-eval` with the configuration and exposure assertions
   - Assert `builtins.length config.fabro.iii.config.workers == 1`, that the entry is `iii-worker-manager` with host `127.0.0.1` and port `49134`, and that the serialized value contains exactly that one worker name and no `0.0.0.0`, `3112`, or `.ts.net`
   - Assert `tailscale-serve` has four `ExecStart` entries, the three existing handler substrings verbatim, the new `--service=svc:iii --https=443 http://127.0.0.1:49134`, and exactly one reference to `49134`
   - Extend the `guestReport` string so the output names the engine package, the DynamicUser unit, the loopback listener, and the `svc:iii` handler; keep the assertions pure (no `readFile` of `configFile`, no image build)
