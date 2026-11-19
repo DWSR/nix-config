@@ -217,6 +217,11 @@ in
       "postgresql-setup.service"
     ];
 
+    # prisma-client-py shells out to `openssl version -v` on every connect to
+    # pick its query-engine target, even though the binary is already pinned;
+    # without it the proxy cannot reach the database.
+    path = lib.mkBefore [ pkgs.openssl ];
+
     serviceConfig = {
       User = "litellm";
       Group = "litellm";
