@@ -140,6 +140,13 @@ test('builder adapter renders an independent NixOS Lima instance', () => {
   assert.match(rendered.configYaml, /cpus: ?['"]?4/);
   assert.match(rendered.configYaml, /memory: ?['"]?8GiB/);
   assert.match(rendered.configYaml, /disk: ?['"]?128GiB/);
+
+  // Dynamic port forwarding is disabled by Lima's catch-all ignore rule.
+  assert.match(rendered.configYaml, /\s*guestIP: ?['"]?0\.0\.0\.0['"]?/);
+  assert.match(rendered.configYaml, /\s*guestIPMustBeZero: ?false/);
+  assert.match(rendered.configYaml, /\s*proto: ?['"]?any['"]?/);
+  assert.match(rendered.configYaml, /\s*ignore: ?true/);
+  assert.doesNotMatch(rendered.configYaml, /\s*guestPort: ?68\b/);
 });
 
 test('builder adapter exposes its dedicated lifecycle and deployment wiring', () => {
@@ -322,10 +329,35 @@ darwinTest('rendered Lima YAML matches the module defaults', () => {
   assert.match(yaml, /containerd:\n(?:.*\n)*?\s+system: ?false/);
   assert.match(yaml, /containerd:\n(?:.*\n)*?\s+user: ?false/);
 
-  assert.match(yaml, /\s*proto: ?['"]?udp['"]?/);
-  assert.match(yaml, /\s*guestPort: ?68\b/);
+  // Dynamic port forwarding is disabled by Lima's catch-all ignore rule:
+  // no guest listener is mirrored onto the host loopback.
   assert.match(yaml, /\s*guestIP: ?['"]?0\.0\.0\.0['"]?/);
+  assert.match(yaml, /\s*guestIPMustBeZero: ?false/);
+  assert.match(yaml, /\s*proto: ?['"]?any['"]?/);
   assert.match(yaml, /\s*ignore: ?true/);
+  assert.doesNotMatch(yaml, /\s*guestPort: ?68\b/);
+});
+
+darwinTest('explicit portForwards render before the catch-all ignore rule', () => {
+  const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
+    virtualisation.limaVM.enable = true;
+    virtualisation.limaVM.portForwards = [
+      {
+        guestPort = 4000;
+        guestIP = "127.0.0.1";
+      }
+    ];
+  }`));
+
+  const yaml = rendered.configYaml;
+  const explicit = yaml.indexOf('guestPort: 4000');
+  const catchAll = yaml.indexOf('guestIPMustBeZero: false');
+
+  assert.ok(explicit >= 0, `expected the explicit forward in the YAML, got: ${yaml}`);
+  assert.ok(
+    catchAll > explicit,
+    `expected the catch-all to follow the explicit forward, got: ${yaml}`,
+  );
 });
 
 darwinTest('mounts entries render into the Lima YAML', () => {

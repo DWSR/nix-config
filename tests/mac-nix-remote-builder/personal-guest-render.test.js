@@ -135,6 +135,13 @@ test('rendered guest YAML matches the module contract', () => {
   assert.match(yaml, /digest: ?['"]?sha256:2f016638293c3e641b8b25391a76fbc16563b3711915a5551cf8aa0f5598a5c1['"]?/);
   assert.match(yaml, /suppressFirstLoginSetup: ?true/);
   assert.match(yaml, /mounts: ?\[\]/);
+
+  // Dynamic port forwarding is disabled by Lima's catch-all ignore rule.
+  assert.match(yaml, /\s*guestIP: ?['"]?0\.0\.0\.0['"]?/);
+  assert.match(yaml, /\s*guestIPMustBeZero: ?false/);
+  assert.match(yaml, /\s*proto: ?['"]?any['"]?/);
+  assert.match(yaml, /\s*ignore: ?true/);
+
   assert.doesNotMatch(yaml, /containerd:/);
 });
 
@@ -204,6 +211,9 @@ test('personal host enables the guest and keeps the fabro instance', { timeout: 
   assert.match(yaml, /vmType: ?['"]?vz['"]?/);
   assert.match(yaml, /suppressFirstLoginSetup: ?true/);
   assert.match(yaml, /mounts: ?\[\]/);
+  assert.match(yaml, /\s*guestIPMustBeZero: ?false/);
+  assert.match(yaml, /\s*proto: ?['"]?any['"]?/);
+  assert.match(yaml, /\s*ignore: ?true/);
   assert.doesNotMatch(yaml, /containerd:/);
 
   assert.equal(rendered.limaVmEnable, true);
@@ -215,4 +225,7 @@ test('personal host enables the guest and keeps the fabro instance', { timeout: 
   assert.match(limaVmYaml, /echo ?['"]?fabro['"]? ?>>?\/proc\/sys\/kernel\/hostname/);
   assert.match(limaVmYaml, /usermod -aG podman/);
   assert.match(limaVmYaml, /location: ?['"]?~\/\.local\/state\/fabro['"]?/);
+  assert.match(limaVmYaml, /\s*guestIPMustBeZero: ?false/);
+  assert.match(limaVmYaml, /\s*proto: ?['"]?any['"]?/);
+  assert.match(limaVmYaml, /\s*ignore: ?true/);
 });

@@ -45,11 +45,14 @@ let
       user = false;
     };
 
+    # Dynamic port forwarding is disabled: nothing the guest listens on is
+    # mirrored onto the host. The builder is reached over SSH through the
+    # instance's ssh.config, so no forward is needed.
     portForwards = [
       {
-        proto = "udp";
-        guestPort = 68;
         guestIP = "0.0.0.0";
+        guestIPMustBeZero = false;
+        proto = "any";
         ignore = true;
       }
     ];
