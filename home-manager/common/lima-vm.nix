@@ -39,12 +39,15 @@ let
 
   yamlFormat = pkgs.formats.yaml { };
   # The Lima instance configuration. Mirrors upstream's nixos.yaml template:
-  # no host mounts, no containerd, and the UDP/68 ignore rule that keeps
-  # Lima's port forwarding away from the guest DHCP port (nixos-lima issue
-  # #50). {option}`extraLimaConfig` merges at the top level, so it can
+  # no host mounts and no containerd. Dynamic port forwarding is disabled, so
+  # no guest listener is mirrored onto the host loopback (a host process
+  # already bound to the same port, e.g. AgentMemory on 49134, would
+  # otherwise collide with the Lima proxy). Explicit {option}`portForwards`
+  # entries are matched before the catch-all rule, so static forwards still
+  # work. {option}`extraLimaConfig` merges at the top level, so it can
   # override any key here — note that replacing a list key replaces it
-  # wholesale (e.g. a custom `portForwards` drops the UDP/68 rule unless it
-  # is re-added; use {option}`portForwards` to append instead).
+  # wholesale (a custom `portForwards` drops the catch-all unless it is
+  # re-added; use {option}`portForwards` to append instead).
   limaYaml = {
     images = [
       (
@@ -76,15 +79,16 @@ let
       user = false;
     };
 
-    portForwards = [
+    portForwards = cfg.portForwards ++ [
       {
-        proto = "udp";
-        guestPort = 68;
+        # Lima's documented catch-all: disable every dynamic forward
+        # (except the SSH port) across all protocols and bind addresses.
         guestIP = "0.0.0.0";
+        guestIPMustBeZero = false;
+        proto = "any";
         ignore = true;
       }
-    ]
-    ++ cfg.portForwards;
+    ];
 
     provision = [
       # The Lima cidata user is created imperatively by lima-init on every
@@ -417,8 +421,9 @@ in
       type = types.listOf types.attrs;
       default = [ ];
       description = ''
-        Additional `portForwards` entries appended after the module's
-        built-in UDP/68 ignore rule.
+        Additional `portForwards` entries inserted before the module's
+        catch-all ignore rule. An explicit (non-ignore) rule still forwards
+        its port; every port not matched earlier stays guest-only.
       '';
     };
 

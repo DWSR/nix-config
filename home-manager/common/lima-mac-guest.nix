@@ -36,6 +36,18 @@ let
 
     mounts = [ ];
 
+    # Dynamic port forwarding is disabled: nothing the guest listens on is
+    # mirrored onto the host. The builder's sshd is exposed by the dedicated
+    # lima-<name>-forward agent instead.
+    portForwards = [
+      {
+        guestIP = "0.0.0.0";
+        guestIPMustBeZero = false;
+        proto = "any";
+        ignore = true;
+      }
+    ];
+
     osOpts = {
       Darwin = {
         inherit (cfg) suppressFirstLoginSetup;
