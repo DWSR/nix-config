@@ -18,6 +18,7 @@ function evaluateGuest() {
     in {
       dispatchOptions = vm.fabro.darwinBuilder;
       dispatchEnabled = vm.fabro.darwinBuilder.enable;
+      linuxHostKeyPathHasContext = builtins.hasContext vm.fabro.darwinBuilder.linuxHostKeyPath;
       distributedBuilds = vm.nix.distributedBuilds;
       maxJobs = vm.nix.settings.max-jobs;
       buildMachines = vm.nix.buildMachines;
@@ -96,6 +97,7 @@ function evaluateGuestWithDispatchDisabled() {
       cfg = vm.config;
     in {
       options = cfg.fabro.darwinBuilder;
+      linuxHostKeyPathHasContext = builtins.hasContext cfg.fabro.darwinBuilder.linuxHostKeyPath;
       serviceExists = builtins.hasAttr "fabro-darwin-builders" cfg.systemd.services;
     }
   `);
@@ -121,24 +123,26 @@ test('guest dispatch options expose the dedicated Linux builder inputs', () => {
   assert.equal(config.dispatchOptions.linuxMachine.system, 'aarch64-linux');
   assert.equal(config.dispatchOptions.linuxMachine.maxJobs, 4);
   assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
-  assert.match(config.dispatchOptions.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
+  assert.match(config.dispatchOptions.linuxHostKeyPath, /^\/nix\/store\/[a-z0-9]+-linux-builder-ssh_host_ed25519_key\.pub$/);
+  assert.equal(config.linuxHostKeyPathHasContext, true, 'the pinned host key path must carry store context so nix-gc keeps it');
   assert.equal(config.dispatchOptions.machinesFile, '/run/fabro-darwin-builders/machines');
   assert.match(config.dispatchUnit.execStart, /--linux-host-name linux-builder\.tuxedo-musical\.ts\.net/);
   assert.match(config.dispatchUnit.execStart, /--linux-system aarch64-linux/);
   assert.match(config.dispatchUnit.execStart, /--linux-max-jobs 4/);
   assert.match(config.dispatchUnit.execStart, /--linux-client-key \/run\/secrets\/linux-builder-client-key/);
-  assert.match(config.dispatchUnit.execStart, /--linux-host-key \/nix\/store\/[^\s]+-source\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub/);
+  assert.match(config.dispatchUnit.execStart, /--linux-host-key \/nix\/store\/[a-z0-9]+-linux-builder-ssh_host_ed25519_key\.pub/);
 });
 
 test('guest dispatch option defaults remain available when dispatch is disabled', () => {
-  const { options, serviceExists } = evaluateGuestWithDispatchDisabled();
+  const { options, linuxHostKeyPathHasContext, serviceExists } = evaluateGuestWithDispatchDisabled();
 
   assert.equal(options.enable, false);
   assert.equal(options.linuxMachine.hostName, 'linux-builder.tuxedo-musical.ts.net');
   assert.equal(options.linuxMachine.system, 'aarch64-linux');
   assert.equal(options.linuxMachine.maxJobs, 4);
   assert.equal(options.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
-  assert.match(options.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
+  assert.match(options.linuxHostKeyPath, /^\/nix\/store\/[a-z0-9]+-linux-builder-ssh_host_ed25519_key\.pub$/);
+  assert.equal(linuxHostKeyPathHasContext, true, 'the pinned host key path must carry store context so nix-gc keeps it');
   assert.equal(options.machine.hostName, 'mac-builder.tuxedo-musical.ts.net');
   assert.equal(options.machine.sshUser, 'nix-builder');
   assert.equal(options.machine.system, 'aarch64-darwin');
@@ -162,7 +166,8 @@ test('fabro-vm enables dispatch and Nix distributed builds from the real configu
   assert.equal(config.dispatchOptions.clientKeyPath, '/run/secrets/build-client-key');
   assert.equal(config.dispatchOptions.hostKeyPath, '/run/secrets/build-host-key');
   assert.equal(config.dispatchOptions.linuxClientKeyPath, '/run/secrets/linux-builder-client-key');
-  assert.match(config.dispatchOptions.linuxHostKeyPath, /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/);
+  assert.match(config.dispatchOptions.linuxHostKeyPath, /^\/nix\/store\/[a-z0-9]+-linux-builder-ssh_host_ed25519_key\.pub$/);
+  assert.equal(config.linuxHostKeyPathHasContext, true, 'the pinned host key path must carry store context so nix-gc keeps it');
   assert.equal(config.dispatchOptions.machinesFile, '/run/fabro-darwin-builders/machines');
   assert.equal(config.distributedBuilds, true);
   assert.equal(config.maxJobs, 0);

@@ -17,7 +17,7 @@ const linuxHostName = 'linux-builder.tuxedo-musical.ts.net';
 const linuxSystem = 'aarch64-linux';
 const linuxClientKeyPath = '/run/secrets/linux-builder-client-key';
 const machinesFile = '/run/fabro-darwin-builders/machines';
-const pinnedHostKeyPattern = /\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub$/;
+const pinnedHostKeyPattern = /^\/nix\/store\/[a-z0-9]+-linux-builder-ssh_host_ed25519_key\.pub$/;
 const fixtureLinuxHostKey =
   'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f linux-builder\n';
 
@@ -336,6 +336,7 @@ function evaluateFabro(extraModule = null) {
       hostKeyPath = vm.fabro.darwinBuilder.hostKeyPath;
       linuxClientKeyPath = vm.fabro.darwinBuilder.linuxClientKeyPath;
       linuxHostKeyPath = vm.fabro.darwinBuilder.linuxHostKeyPath;
+      linuxHostKeyPathHasContext = builtins.hasContext vm.fabro.darwinBuilder.linuxHostKeyPath;
       machinesFile = vm.fabro.darwinBuilder.machinesFile;
       distributedBuilds = vm.nix.distributedBuilds;
       maxJobs = vm.nix.settings.max-jobs;
@@ -389,6 +390,7 @@ function assertFabroDispatchPolicy(config) {
   assert.equal(config.linuxMachine.maxJobs, 4, 'Fabro Linux route must allow four remote jobs (Requirement 3.1)');
   assert.equal(config.linuxClientKeyPath, linuxClientKeyPath, 'Fabro Linux route must reference the dedicated runtime client key (Requirement 3.1)');
   assert.match(config.linuxHostKeyPath, pinnedHostKeyPattern, 'Fabro Linux route must use the checked-in host-key pin (Requirements 3.1, 5.3)');
+  assert.equal(config.linuxHostKeyPathHasContext, true, 'the pinned host key path must carry store context so nix-gc keeps it');
   assert.equal(config.linuxSecret.path, linuxClientKeyPath, 'Fabro Linux client key must use its runtime secret path (Requirement 3.1)');
   assert.equal(config.linuxSecret.mode, '0400', 'Fabro Linux client key must be mode 0400 (Requirement 3.1)');
   assert.equal(config.linuxSecret.owner, 'root', 'Fabro Linux client key must be owned by root (Requirement 3.1)');
@@ -429,7 +431,7 @@ function assertFabroDispatchPolicy(config) {
   assert.match(config.dispatchUnit.execStart, /--linux-client-key \/run\/secrets\/linux-builder-client-key/);
   assert.match(
     config.dispatchUnit.execStart,
-    /--linux-host-key \/nix\/store\/[^\s]+-source\/certificates\/linux-builder\/ssh_host_ed25519_key\.pub/,
+    /--linux-host-key \/nix\/store\/[a-z0-9]+-linux-builder-ssh_host_ed25519_key\.pub/,
     'the renderer must consume the checked-in Linux host-key pin',
   );
 

@@ -7,6 +7,17 @@
 let
   cfg = config.fabro.darwinBuilder;
   renderer = import ../../scripts/fabro-darwin-machines.nix { inherit pkgs; };
+
+  # The renderer reads the pinned host key at runtime, so the path must be a
+  # store path the system closure references. A flake-source path string has
+  # no store context and nix-gc collects it, leaving the renderer unable to
+  # validate the endpoint. An empty fallback keeps a missing pin a runtime
+  # renderer failure instead of an evaluation failure.
+  linuxHostKeyPin = ../../certificates/linux-builder/ssh_host_ed25519_key.pub;
+  linuxHostKeyFile = pkgs.writeText "linux-builder-ssh_host_ed25519_key.pub" (
+    if builtins.pathExists linuxHostKeyPin then builtins.readFile linuxHostKeyPin else ""
+  );
+
   buildSmoke = import ../../scripts/fabro-darwin-build-smoke.nix {
     inherit pkgs;
     inherit (cfg) clientKeyPath hostKeyPath machinesFile;
@@ -68,7 +79,7 @@ in
     };
     linuxHostKeyPath = lib.mkOption {
       type = lib.types.str;
-      default = "${toString ../..}/certificates/linux-builder/ssh_host_ed25519_key.pub";
+      default = "${linuxHostKeyFile}";
       description = "Pinned public SSH host key used to validate the Linux builder endpoint.";
     };
     machinesFile = lib.mkOption {
