@@ -144,7 +144,7 @@
   - _Requirements: 4.6, 4.14, 4.15, 4.16, 4.17, 4.18, 4.19, 5.9_
   - _Boundary: configurations/fabro-vm/iii-supervisor/_
 
-- [ ] 6.2 Wire `iii.service` to the supervisor and add the unit options
+- [x] 6.2 Wire `iii.service` to the supervisor and add the unit options
   - Build `supervisorPackage` in `configurations/fabro-vm/iii.nix` with `pkgs.rustPlatform.buildRustPackage`, `src = lib.cleanSource ./iii-supervisor`, and `cargoLock.lockFile = ./iii-supervisor/Cargo.lock`; expose read-only `supervisorPackage` plus `watchdogSec` (30), `readinessTimeoutSec` (15), and `stopTimeoutSec` (10) options
   - Set `Type = "notify"`, `NotifyAccess = "main"`, `WatchdogSec`/`TimeoutStartSec`/`TimeoutStopSec` from those options, and `ExecStart = lib.escapeShellArgs [ (lib.getExe cfg.supervisorPackage) "--listen" "${cfg.host}:${toString cfg.port}" "--ready-timeout" (toString cfg.readinessTimeoutSec) "--stop-timeout" (toString cfg.stopTimeoutSec) "--" (lib.getExe cfg.package) "--config" (toString cfg.configFile) "--no-update-check" ]`
   - Keep `DynamicUser`, `StateDirectory`, `WorkingDirectory`, `Restart = "always"`, `RestartSec = 2`, the hardening fields, and the engine package install unchanged; add no `NotifySocket`, `EnvironmentFile`, static account, or non-loopback path
@@ -176,3 +176,4 @@
 
 - `lib.cleanSource` does not honour `.gitignore` for the crate directory: a local `configurations/fabro-vm/iii-supervisor/target/` changes the derivation hash and ships cargo artifacts. Remove it before evaluating or building task 6.2's `supervisorPackage`.
 - The `svc:iii` prerequisite fix `f4daca87` also had to reconcile the PostgreSQL block of `fabro-vm-guest-eval`, which still demanded exactly three Serve handlers; keeping the four-handler expectation in that block is what makes `nix flake check --no-build` pass for 6.1.
+- 6.2's unit swap forced the `fabro-vm-guest-eval` `ExecStart` assertion rewrite in the same commit: the 4.4 assertion expected the bare engine command. `TimeoutStartSec`/`TimeoutStopSec` are `2 ×` the readiness/stop options (30/20 at the 15/10 defaults), so task 6.3 must assert the derived values, not direct equality with the options.
