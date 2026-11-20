@@ -163,6 +163,14 @@ in
     systemd.services.iii = {
       description = "iii engine (loopback-only, readiness-gated by iii-supervisor)";
       wantedBy = [ "multi-user.target" ];
+      # A bounded start limit is explicit: with the required RestartSec=2 the
+      # default 5-starts-per-10s window sits exactly at the restart rate and
+      # resets instead of tripping, so a permanently broken start would retry
+      # forever instead of reaching `failed`. The wider window keeps
+      # Restart=always for transient exits while still ending a permanently
+      # broken unit in `failed` with the error in the journal.
+      unitConfig.StartLimitIntervalSec = 120;
+      unitConfig.StartLimitBurst = 5;
       serviceConfig = {
         # Readiness is explicit: only the supervisor may notify, and it sends
         # READY=1 after the engine child owns the loopback listener. The finite
@@ -202,9 +210,9 @@ in
           "III_TELEMETRY_ENABLED=false"
         ];
 
-        # Restart on any unexpected exit; systemd's default start limit still
-        # ends a permanently broken unit in `failed` with the engine error in
-        # the journal.
+        # Restart on any unexpected exit; the explicit start limit above still
+        # ends a permanently broken unit in `failed` with the error in the
+        # journal.
         Restart = "always";
         RestartSec = 2;
 

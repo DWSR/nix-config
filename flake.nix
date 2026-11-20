@@ -3615,6 +3615,12 @@
                   "fabro-vm: iii.service must restart on unexpected exit (Restart \"always\" and RestartSec 2, requirement 4.6).";
                 assert pkgs.lib.assertMsg
                   (
+                    (vm.systemd.services.iii.unitConfig.StartLimitIntervalSec or null) == 120
+                    && (vm.systemd.services.iii.unitConfig.StartLimitBurst or null) == 5
+                  )
+                  "fabro-vm: iii.service must bound its start limit (StartLimitIntervalSec 120, StartLimitBurst 5) so a permanently broken start reaches failed instead of restarting forever at the RestartSec=2 boundary (requirement 4.14).";
+                assert pkgs.lib.assertMsg
+                  (
                     (vm.systemd.services.iii.serviceConfig.NoNewPrivileges or false)
                     && (vm.systemd.services.iii.serviceConfig.PrivateTmp or false)
                     && (vm.systemd.services.iii.serviceConfig.ProtectSystem or "") == "strict"
