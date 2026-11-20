@@ -418,6 +418,17 @@ in
       '';
     };
 
+    # The guest is headless and must not power off on an input event. Apple
+    # Virtualization exposes the host keyboard and the ACPI power button to
+    # the guest (`/dev/input/event0` PNP0C0C, plus the virtual USB keyboard),
+    # and a stray host key mapped to KEY_POWER was logged by systemd-logind as
+    # `Power key pressed short` about 30-90 s after boot, shutting the guest
+    # down before the reboot-durability check could run. The action is
+    # logind's default (`poweroff`), so it is disabled at the source: no
+    # guest-side key handler can power the VM off, and the host stays in
+    # control of its lifecycle.
+    services.logind.settings.Login.HandlePowerKey = "ignore";
+
     # Remote deployment into the instance's nix store.
     nix.settings = {
       experimental-features = [
