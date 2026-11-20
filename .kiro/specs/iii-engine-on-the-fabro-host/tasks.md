@@ -134,7 +134,7 @@
 
 - [ ] 6. Readiness-gated supervisor (unblocks requirement 5.9)
 
-- [ ] 6.1 Add the `iii-supervisor` Rust crate and its tests
+- [x] 6.1 Add the `iii-supervisor` Rust crate and its tests
   - Add `configurations/fabro-vm/iii-supervisor/` with `Cargo.toml`, `Cargo.lock`, source, and integration tests; depend only on `sd-notify = "0.5"` and `libc = "0.2"`, with no `libsystemd`, `pkg-config`, or C binding
   - Implement `--listen <ip:port> --ready-timeout <secs> --stop-timeout <secs> -- <engine> <args...>`: preflight-bind and release the address, exit 1 with `cannot bind ...: Address already in use` before spawning on conflict, then spawn the engine with inherited stdout/stderr
   - Report `READY=1` and `STATUS=listening ...` only after `/proc/<child>/fd` socket inodes match a `LISTEN` (`0A`) entry for the exact address and port in `/proc/net/tcp` or `/proc/net/tcp6`; a foreign listener or a `0.0.0.0` bind must never satisfy readiness
@@ -171,3 +171,8 @@
   - Completed when the normal start, bind-conflict failure, watchdog restart, and graceful stop are observed on the guest and the `journalctl`/`systemctl` output matches the contracts above
   - _Requirements: 4.6, 4.14, 4.15, 4.16, 4.17, 4.18, 4.19, 5.9_
   - _Depends: 6.2, 6.3_
+
+## Implementation Notes
+
+- `lib.cleanSource` does not honour `.gitignore` for the crate directory: a local `configurations/fabro-vm/iii-supervisor/target/` changes the derivation hash and ships cargo artifacts. Remove it before evaluating or building task 6.2's `supervisorPackage`.
+- The `svc:iii` prerequisite fix `f4daca87` also had to reconcile the PostgreSQL block of `fabro-vm-guest-eval`, which still demanded exactly three Serve handlers; keeping the four-handler expectation in that block is what makes `nix flake check --no-build` pass for 6.1.
