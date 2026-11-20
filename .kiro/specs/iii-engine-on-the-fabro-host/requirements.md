@@ -79,6 +79,11 @@ This feature gives the Fabro guest a fresh, pinned iii 0.26.0 engine package and
 12. The `iii.service` shall run with the engine's update check disabled.
 13. When the rendered engine configuration changes and the guest switches configuration, `iii.service` shall restart and use the new configuration.
 14. If the engine fails to start, then the guest shall mark `iii.service` failed and record the failure in the unit journal.
+15. The `iii.service` shall execute the engine under a repository-owned supervisor process that remains the unit's main process.
+16. The `iii.service` shall use systemd's notification service type and shall restart the unit when the supervisor stops sending watchdog keep-alives.
+17. The supervisor shall report service readiness only after the engine process owns a listening socket on `127.0.0.1:49134`.
+18. The supervisor shall send systemd watchdog keep-alives while the engine process is running.
+19. The supervisor shall forward termination signals to the engine process and exit with the engine's status.
 
 ### Requirement 5: Empty worker configuration and loopback-only listener
 
@@ -94,7 +99,7 @@ This feature gives the Fabro guest a fresh, pinned iii 0.26.0 engine package and
 6. The engine shall leave `iii-stream` disabled.
 7. Where the engine configuration declares its single engine-lifecycle listener, that entry shall not add a project worker.
 8. If the rendered engine configuration names a project worker, then the engine shall refuse to start and record the unsupported-worker error in the unit journal.
-9. If the engine cannot bind `127.0.0.1:49134`, then the guest shall mark `iii.service` failed and record the bind error in the unit journal.
+9. If the engine cannot bind `127.0.0.1:49134`, then the supervisor shall fail readiness and the guest shall mark `iii.service` failed and record the bind error in the unit journal within the configured readiness timeout.
 
 ### Requirement 6: Tailnet service exposure
 
@@ -132,3 +137,6 @@ This feature gives the Fabro guest a fresh, pinned iii 0.26.0 engine package and
 13. When `nix flake check` evaluates the repository, the checks shall verify that the guest leaves the existing `svc:*` entries unchanged.
 14. While the checks run on a host without a Linux builder, the guest checks shall complete through pure evaluation of the guest configuration.
 15. If a check fails, then the check message shall name the missing or misconfigured element.
+16. When `nix flake check` evaluates the repository, the checks shall verify that `iii.service` is a notification service with a finite watchdog interval, readiness timeout, and stop timeout, and that its main process is the supervisor.
+17. When `nix flake check` evaluates the repository, the checks shall verify that the unit's command line invokes the supervisor with the loopback listen address and the engine executable with the read-only configuration.
+18. When `nix flake check` evaluates the repository, the checks shall verify that `iii.service` does not configure an abstract `NotifySocket`.

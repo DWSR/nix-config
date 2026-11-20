@@ -7,7 +7,7 @@ repository at the requirements-locked revision.
 ## Summary
 
 - **Feature**: `iii-engine-on-the-fabro-host`
-- **Discovery scope**: new feature (packaging + one NixOS service + one Serve entry)
+- **Discovery scope**: new feature (packaging + one readiness-gated NixOS service + one Serve entry)
 - **Key findings**:
   - iii 0.26.0 publishes `iii-aarch64-unknown-linux-gnu.tar.gz` and
     `iii-aarch64-apple-darwin.tar.gz`; each archive is one executable named `iii`.
@@ -19,6 +19,13 @@ repository at the requirements-locked revision.
     startup with `[UNSUPPORTED_CONFIG_WORKERS]`.
   - `iii-worker-manager` defaults to `0.0.0.0:49134`, so the loopback bind must be
     explicit in the config.
+  - iii 0.26.0 logs `address 127.0.0.1:49134 is already in use` and keeps
+    running when the port is occupied; the process does not exit non-zero, so a
+    plain `Type=simple` unit cannot turn the bind failure into `failed`.
+  - The deployed unit therefore needs a repo-owned supervisor that speaks
+    systemd's `sd_notify` protocol, reports readiness only after the engine owns
+    the listener, and sends watchdog keep-alives; a TCP connect probe alone is
+    insufficient because a foreign listener accepts the connection.
   - The registry lists 93 entries: 76 binary workers, 73 with both required
     `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin` artifacts; the three
     without both are `harness-e2e`, `voice`, and `ios-simulator`.
@@ -40,6 +47,9 @@ repository at the requirements-locked revision.
 | R7 | `iii-hq/iii` `iii/v0.26.0`: `engine/src/workers/config.rs`, `engine/src/workers/worker/mod.rs`, `engine/src/main.rs` | `EngineConfig` validation, injected workers, default host/port, CLI config loading |
 | R8 | `cdn.iii.cloud` and `iii-hq/workers` release assets | Archive contents and digest verification (all 73 Linux artifacts, four Darwin spot checks) |
 | R9 | Repository files: `overlays/{default,agentmemory}.nix`, `configurations/fabro-vm/*`, `flake.nix`, `tests/agentmemory-opencode/host-matrix.nix` | Existing overlay, guest, Serve, and check patterns |
+| R10 | [`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html), [`sd_watchdog_enabled(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_watchdog_enabled.html), [`systemd.service(5)`](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html) | `Type=notify`, `WatchdogSec`, notification message set, watchdog environment |
+| R11 | [`sd-notify` 0.5.0](https://docs.rs/sd-notify/latest/sd_notify/) and its source | Pure-Rust notify states, `watchdog_enabled()`, notify-socket handling |
+| R12 | [`proc(5)`](https://man7.org/linux/man-pages/man5/proc.5.html) and Linux `/proc/net/tcp` | Per-process socket inodes and `LISTEN` (`0A`) entries for readiness ownership |
 
 ## Engine release facts
 
@@ -119,6 +129,33 @@ repository at the requirements-locked revision.
   deprecated stream worker is the only other configurable listener and is
   omitted (R2, R7).
 - Telemetry is on by default; `III_TELEMETRY_ENABLED=false` disables it (R4).
+
+## Engine bind-failure behavior and supervisor decision
+
+- Task 5.2 reproduced the blocker: iii 0.26.0 logs `address 127.0.0.1:49134 is
+  already in use` and stays alive with the port occupied; no non-zero exit and
+  no readiness flag, so a `Type=simple` unit never fails (R7, task 5.2 evidence).
+- systemd contract: `Type=notify` with `NotifyAccess=main`, finite `WatchdogSec`,
+  and start/stop timeouts; `READY=1` completes start, `WATCHDOG=1` resets the
+  watchdog, and `STOPPING=1` marks orderly shutdown (R10).
+- A TCP connect probe is unsafe because a foreign listener accepts the
+  connection. Readiness must prove the engine owns the socket: match
+  `socket:[inode]` entries from `/proc/<child>/fd` against a `state 0A` entry
+  with the exact address and port in `/proc/net/tcp` or `/proc/net/tcp6` (R12).
+  The exact-address match also rejects a `0.0.0.0` bind.
+- Supervisor shape: preflight-bind with a clear `EADDRINUSE` failure; spawn the
+  engine; gate `READY=1` on the ownership check; send `WATCHDOG=1` at half the
+  advertised interval; forward SIGTERM/SIGINT; kill after a stop timeout; exit
+  with the child's status. A readiness timeout kills the child and exits
+  non-zero, so the start limit ends the unit in `failed`.
+- Rust implementation: `sd-notify` 0.5.0 is pure Rust and covers
+  `Ready`/`Status`/`Stopping`/`Watchdog` plus `watchdog_enabled()`, which honours
+  `WATCHDOG_PID`; `libc` 0.2 supplies `sigaction` and `kill` (R11). The broader
+  pure-Rust `libsystemd` 0.7 crate is unnecessary, and `systemd` 0.11 would add
+  a native libsystemd build input.
+- `sd-notify` uses the filesystem `NOTIFY_SOCKET` systemd sets by default and
+  does not handle an abstract `@...` socket; the unit must not set an abstract
+  `NotifySocket=`. If that changes, use the `libsystemd` crate.
 
 ## Worker registry facts
 
@@ -287,6 +324,9 @@ The `binary` column is the archive-root executable name.
 | Data-driven catalog + generic derivation | One manifest table, one builder, 73 attributes | Small code surface, auditable pins, easy revalidation | Manifest is long; a bad entry fails at build | Selected |
 | 73 bespoke derivations | One hand-written derivation per worker | Per-worker customization | Duplication, drift, review cost | Rejected |
 | Compose-managed engine | `worker-compose.yaml` + `iii compose` | Native worker lifecycle | Downloads/creates state imperatively; violates no-workers requirement | Out of scope |
+| Readiness-gated Rust supervisor | `Type=notify` wrapper around `iii`; readiness by `/proc` socket ownership | Turns the non-exiting bind failure into a failed start; watchdog catches a wedged supervisor; signal/exit propagation | Adds one small Rust crate; readiness depends on `/proc` visibility and the Linux guest | Selected |
+| `Type=simple` + TCP connect probe | Shell `ExecStartPost` or health gate | No new Rust | A foreign listener satisfies the probe; the engine can stay alive without owning the port | Rejected |
+| Patch iii's bind handling | Upstream code change | Direct fix | Out of scope; pins the experiment to a fork | Rejected |
 
 ## Design decisions
 
@@ -305,6 +345,16 @@ The `binary` column is the archive-root executable name.
 - **Pure-eval checks across systems**: instantiate both target nixpkgs sets and
   assert package metadata/URLs without building them; the guest check never
   reads the rendered config derivation (that would need a build).
+- **Supervisor owns readiness, not the engine**: iii 0.26 has no notify flag,
+  so `iii-supervisor` sends `READY=1` only after `/proc` proves the child owns
+  the exact loopback listener. This also enforces the loopback bind at runtime.
+- **`sd-notify` + `libc`, not libsystemd**: the wrapper uses the focused
+  pure-Rust notify crate and `libc` for signal forwarding; the Nix build needs
+  no C library or `pkg-config`.
+- **Watchdog is liveness-only in the first cut**: heartbeats prove the
+  supervisor's main loop is alive while the child runs. A hung engine that
+  keeps its process alive is not detected by this watchdog; an HTTP
+  responsiveness probe is a possible follow-up, not part of this spec.
 
 ## Risks & mitigations
 
@@ -326,6 +376,15 @@ The `binary` column is the archive-root executable name.
   the engine stays loopback-only; the Service is an operator precondition.
 - AgentMemory regression — no task edits its overlay or consumers, and the
   isolation check pins its 0.11.5 metadata and distinct sources.
+- Readiness blocks on `/proc` visibility — the unit keeps `ProtectProc` and
+  `ProcSubset` at defaults; the guest check rejects `ProtectProc=invisible` and
+  `ProcSubset=pid`. A future hardening change must revisit the supervisor.
+- Notify-socket path drift — `sd-notify` uses the filesystem notify socket
+  systemd sets by default; the guest check rejects an abstract `NotifySocket=`.
+  A future abstract-socket requirement switches the wrapper to `libsystemd`.
+- Supervisor overreach — the wrapper runs as the same `DynamicUser`, reads only
+  `/proc`, forwards signals, and has no credential or write path; it does not
+  patch or re-exec the engine.
 
 ## References
 
@@ -335,3 +394,7 @@ The `binary` column is the archive-root executable name.
 - [iii CLI reference](https://iii.dev/docs/cli-reference/index) — flags and telemetry switch.
 - [iii worker registry API](https://api.workers.iii.dev/w?page_size=100) — inventory and per-worker versions.
 - [iii-hq/iii at iii/v0.26.0](https://github.com/iii-hq/iii/tree/iii/v0.26.0/engine/src/workers) — default host/port and config validation.
+- [`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html) — notification keys, `READY=1`, `WATCHDOG=1`, `STOPPING=1`.
+- [`sd_watchdog_enabled(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_watchdog_enabled.html) — `WATCHDOG_USEC`/`WATCHDOG_PID` contract.
+- [`sd-notify` crate](https://docs.rs/sd-notify/latest/sd_notify/) — pure-Rust notify states and `watchdog_enabled()`.
+- [`proc(5)`](https://man7.org/linux/man-pages/man5/proc.5.html) — `/proc/<pid>/fd` and `/proc/net/tcp` semantics for socket ownership.

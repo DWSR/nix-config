@@ -8,12 +8,13 @@ This design delivers a repo-owned iii 0.26.0 engine package, a 73-package catalo
 
 **Users**: the Fabro guest operator rebuilding the VM, and tailnet clients that call the engine through `wss://iii.tuxedo-musical.ts.net`.
 
-**Impact**: adds two overlay files, one guest module, one package entry, one Serve handler, and three evaluated checks. Existing fabro, LiteLLM, OpenCode, Tailscale, and AgentMemory behavior is unchanged.
+**Impact**: adds two overlay files, one guest module, one Rust supervisor crate, one package entry, one Serve handler, and three evaluated checks. Existing fabro, LiteLLM, OpenCode, Tailscale, and AgentMemory behavior is unchanged.
 
 ### Goals
 
 - Pin the engine and every cataloged worker to immutable URLs and SHA-256 digests.
 - Supervise the engine as a loopback-only `DynamicUser` service with durable state outside the Lima share.
+- Fail `iii.service` when the engine never owns its loopback listener, and restart it when the supervisor stops heartbeating.
 - Expose exactly one tailnet path, `svc:iii`, while leaving the existing `svc:fabro`, `svc:litellm`, and `svc:opencode` handlers untouched.
 - Fail `nix flake check` on any package, config, unit, or exposure regression.
 
@@ -24,6 +25,7 @@ This design delivers a repo-owned iii 0.26.0 engine package, a 73-package catalo
 - Creating the `svc:iii` Tailscale Service, ACLs, DNS, or certificates.
 - Adding iii authentication, RBAC, or TLS beyond what Tailscale Serve terminates.
 - Replacing Fabro, porting workflows, or running iii as a Darwin service.
+- Patching or replacing the iii engine binary; the supervisor wraps it.
 - Changing AgentMemory's `iii-engine` pin, derivation, or consumers.
 
 ## Boundary Commitments
@@ -33,10 +35,11 @@ This design delivers a repo-owned iii 0.26.0 engine package, a 73-package catalo
 - `overlays/iii.nix`: the `iii` engine package and the generic worker builder.
 - `overlays/iii-workers.nix`: the pinned 73-worker manifest, including each per-target URL, SHA-256 digest, and archive binary name.
 - `overlays/default.nix`: registration of both attributes in `custom-packages`.
-- `configurations/fabro-vm/iii.nix`: `fabro.iii` options, the rendered engine configuration, and `iii.service`.
+- `configurations/fabro-vm/iii.nix`: `fabro.iii` options, the rendered engine configuration, the local `iii-supervisor` package, and the `Type=notify` `iii.service`.
+- `configurations/fabro-vm/iii-supervisor/`: the Rust supervisor crate (`Cargo.toml`, `Cargo.lock`, source, and tests).
 - `configurations/fabro-vm/default.nix`: the module import and the `iii` entry in `environment.systemPackages`.
 - `configurations/fabro-vm/tailscale.nix`: the `svc:iii` Serve handler and updated comments/description.
-- `flake.nix`: the `iii-packages` and `iii-agentmemory-isolation` checks and the extended `fabro-vm-guest-eval` assertions.
+- `flake.nix`: the `iii-packages` and `iii-agentmemory-isolation` checks and the extended `fabro-vm-guest-eval` assertions, including the notify/watchdog and supervisor fields.
 - The package metadata contracts (`version`, `passthru.sourceRevision`, `passthru.iiiEngineVersion`, `passthru.workerName`, `meta.mainProgram`, `meta.platforms`) that the checks and future worker specs consume.
 
 ### Out of Boundary
@@ -47,6 +50,7 @@ This design delivers a repo-owned iii 0.26.0 engine package, a 73-package catalo
 - Tailscale Service creation, tag grants, ACL policy, DNS, certificates, and device approval.
 - iii authentication, RBAC, authorization, and exposure beyond the tailnet.
 - Replacing Fabro, migrating workflows, or porting the Darwin workstations to launchd.
+- Patching iii's bind-failure behavior upstream; the supervisor supplies the readiness gate instead.
 - AgentMemory's `iii-engine` 0.11.5 pin, its overlay, its consumers, and its host-matrix check.
 - Automatic version bumps and `x86_64` targets.
 
@@ -54,7 +58,9 @@ This design delivers a repo-owned iii 0.26.0 engine package, a 73-package catalo
 
 - The iii 0.26.0 GitHub release assets recorded in `research.md` (engine tarballs).
 - The worker registry metadata and CDN/GitHub release assets recorded in `research.md` (worker tarballs).
-- The repository's locked nixpkgs for `stdenvNoCC`, `fetchurl`, `lib`, and `pkgs.formats.yaml`.
+- The repository's locked nixpkgs for `stdenvNoCC`, `fetchurl`, `lib`, `pkgs.formats.yaml`, and `rustPlatform.buildRustPackage`.
+- The locked `sd-notify` 0.5.0 and `libc` 0.2 crates recorded in the supervisor's `Cargo.lock`; no native `libsystemd` or `pkg-config`.
+- The guest's systemd notify/watchdog protocol and its `/proc` filesystem for listener-ownership readiness.
 - The existing guest `tailscaled`, `tailscaled-autoconnect.service`, and `tailscale-serve` oneshot.
 - The operator-created `svc:iii` Tailscale Service granted to `tag:fabro`; it is not a secret and is not created by any Kiro task.
 - AgentMemory's unchanged `pkgs.iii-engine` attribute, which the new packages neither read nor re-export; only the isolation check reads its metadata.
@@ -64,7 +70,9 @@ This design delivers a repo-owned iii 0.26.0 engine package, a 73-package catalo
 - An iii release bump that changes asset names, allowed config workers, default listeners, CLI flags, or the `UNSUPPORTED_CONFIG_WORKERS` behavior.
 - A registry change that adds or removes binary workers, moves a worker's default URL, drops a required target, or changes an archive's root executable.
 - A change to the `svc:iii` name, the `iii.…ts.net` DNS name, the tailnet, or the Service's tag grant.
-- A nixpkgs/systemd change to `DynamicUser`, `StateDirectory`, `pkgs.formats.yaml`, or `switch-to-configuration` restart behavior.
+- A nixpkgs/systemd change to `DynamicUser`, `StateDirectory`, `pkgs.formats.yaml`, `Type=notify`, `WatchdogSec`, `switch-to-configuration` restart behavior, or `/proc/net/tcp` layout.
+- A supervisor change that sets `ProtectProc`/`ProcSubset` to hide `/proc`, or a custom abstract `NotifySocket=`.
+- A `sd-notify` or `libc` version change in the supervisor's `Cargo.lock`.
 - Any change to AgentMemory's `iii-engine` version, platform set, derivation, consumers, or host-matrix check.
 - A change to the worker manager's default host or port in iii source.
 
@@ -77,6 +85,7 @@ This design delivers a repo-owned iii 0.26.0 engine package, a 73-package catalo
 - `configurations/fabro-vm/tailscale.nix` owns one `tailscale-serve` oneshot that re-applies three `serve --service=… --https=443 http://127.0.0.1:<port>` handlers after `tailscaled-autoconnect.service` completes.
 - `overlays/agentmemory.nix` owns the only existing iii derivation, `pkgs.iii-engine` 0.11.5; it supports only `aarch64-darwin` and `x86_64-darwin` and is consumed lazily by Home Manager and the Darwin AgentMemory matrix check.
 - `fabro-vm-guest-eval` is a pure-evaluation check over the guest configuration; it currently asserts exactly three Serve entries.
+- The deployed `iii.service` is `Type=simple` and assumes a non-zero engine exit on bind failure; task 5.2 observed that iii 0.26.0 instead logs `address 127.0.0.1:49134 is already in use` and stays alive, so the unit never fails.
 - No `pkgs.iii`/`pkgs.iii-workers` attribute, `iii.service`, engine config, or `svc:iii` exists today; AgentMemory's `pkgs.iii-engine` is the only iii runtime.
 
 ### Architecture Pattern & Boundary Map
@@ -91,11 +100,18 @@ flowchart LR
 
   subgraph Guest["fabro-vm (aarch64-linux)"]
     SERVE["tailscale-serve\nsvc:iii --https=443"]
+    SD["systemd\nType=notify + WatchdogSec"]
     UNIT["iii.service\nDynamicUser"]
+    SUP["iii-supervisor\nMainPID"]
+    ENG["iii --config … --no-update-check"]
     CFG["/nix/store/…-iii-config.yaml\nworkers: [iii-worker-manager]"]
     STATE[("/var/lib/iii\nStateDirectory")]
-    SERVE -->|"http://127.0.0.1:49134"| UNIT
-    CFG -.->|"--config (read-only)"| UNIT
+    SERVE -->|"http://127.0.0.1:49134"| ENG
+    SD --> UNIT
+    UNIT --> SUP
+    SUP -->|"spawn + readiness + watchdog"| ENG
+    SUP -->|"READY / WATCHDOG / STOPPING"| SD
+    CFG -.->|"--config (read-only)"| ENG
     UNIT --> STATE
   end
 
@@ -103,11 +119,13 @@ flowchart LR
     ENGINE["overlays/iii.nix\npkgs.iii"]
     MANIFEST["overlays/iii-workers.nix\n73 pinned entries"]
     WORKERS["pkgs.iii-workers.<name>\n73 derivations"]
+    SUPERVISOR["configurations/fabro-vm/iii-supervisor\nRust + sd-notify"]
     MANIFEST --> WORKERS
   end
 
   CLIENT -->|"wss://iii.tuxedo-musical.ts.net"| SERVE
-  ENGINE -->|"environment.systemPackages + ExecStart"| UNIT
+  ENGINE -->|"environment.systemPackages"| UNIT
+  SUPERVISOR -->|"ExecStart (MainPID)"| SUP
 ```
 
 **Architecture Integration**:
@@ -115,8 +133,8 @@ flowchart LR
 - Selected pattern: repo-owned pinned packaging plus a single supervised service; no Compose daemon, installer, or worker process runs.
 - Domain boundaries: package provenance (`overlays/`), guest control plane (`configurations/fabro-vm/iii.nix`), tailnet exposure (`tailscale.nix`), verification (`flake.nix`).
 - Existing patterns preserved: `stdenvNoCC` binary derivations, `pkgs.formats.yaml`, DynamicUser/StateDirectory units, the `tailscale serve` ExecStart list, and pure-evaluation guest checks; Linux prebuilts take the standard `autoPatchelfHook` fixup.
-- New components rationale: the two overlays keep artifact data out of the guest module; the guest module is the only place that starts the engine; the Serve line is the only tailnet entry.
-- Steering compliance: no steering document constrains iii; the design follows the repository's existing pinned-artifact, loopback-listener, DynamicUser, and pure-eval-check conventions.
+- New components rationale: the two overlays keep artifact data out of the guest module; the guest module is the only place that starts the engine; the Rust supervisor is the only process that speaks `sd_notify`, owns readiness and watchdog, and exists because iii 0.26 does not exit on bind failure; the Serve line is the only tailnet entry.
+- Steering compliance: no steering document constrains iii; the design follows the repository's existing pinned-artifact, loopback-listener, DynamicUser, local-Rust-crate (`api-bridge`), and pure-eval-check conventions.
 
 ### Technology Stack
 
@@ -126,7 +144,8 @@ flowchart LR
 | Engine | iii `0.26.0` | Worker manager | `aarch64-linux` and `aarch64-darwin` prebuilt binaries |
 | Worker catalog | Registry snapshot 2026-11-16 | 73 binary workers | Versions, URLs, and digests in `overlays/iii-workers.nix` |
 | Configuration | `pkgs.formats.yaml` | Engine `config.yaml` | Rendered to a read-only store path |
-| Supervisor | systemd unit `iii.service` | Process lifecycle | `DynamicUser`, `StateDirectory=iii`, `Restart=always` |
+| Supervisor | `iii-supervisor` (Rust, `sd-notify` 0.5 + `libc` 0.2) | Readiness, watchdog, signal forwarding | `Type=notify`; `/proc` socket-ownership gate; no libsystemd |
+| Service manager | systemd unit `iii.service` | Process lifecycle | `DynamicUser`, `StateDirectory=iii`, `Restart=always`, `WatchdogSec` |
 | Exposure | Tailscale Serve `svc:iii` | Tailnet HTTPS | Proxies to `http://127.0.0.1:49134` |
 | Verification | Pure-evaluation flake checks | Package, unit, config, exposure | No Linux builder required |
 
@@ -140,7 +159,12 @@ overlays/
 ├── iii-workers.nix          # 73-entry pinned artifact manifest
 └── default.nix              # + iii overlay in custom-packages
 configurations/fabro-vm/
-├── iii.nix                  # fabro.iii options, YAML render, iii.service
+├── iii.nix                  # fabro.iii options, YAML render, supervisor package, iii.service
+├── iii-supervisor/
+│   ├── Cargo.toml
+│   ├── Cargo.lock
+│   ├── src/main.rs
+│   └── tests/supervisor.rs
 ├── default.nix              # + module import and system package
 └── tailscale.nix            # + svc:iii handler
 flake.nix                    # + iii-packages / iii-agentmemory-isolation; extended guest-eval
@@ -155,14 +179,15 @@ flake.nix                    # + iii-packages / iii-agentmemory-isolation; exten
 
 - `overlays/iii.nix` — engine derivation and the generic per-worker derivation; exports `iii` and `iii-workers` from the overlay function.
 - `overlays/iii-workers.nix` — pure data: `engineVersion`, target-triple map, and one entry per cataloged worker with `version`, per-system URL and SRI hash, and archive binary name.
-- `configurations/fabro-vm/iii.nix` — `fabro.iii` options, rendered config file, and `iii.service`.
+- `configurations/fabro-vm/iii.nix` — `fabro.iii` options, rendered config file, the local `iii-supervisor` package, and `iii.service`.
+- `configurations/fabro-vm/iii-supervisor/` — the Rust supervisor crate: `sd-notify`/`libc` dependencies, preflight bind, `/proc` readiness gate, watchdog loop, signal forwarding, exit propagation, and tests.
 
 ### Modified Files
 
 - `overlays/default.nix` — import `overlays/iii.nix` and merge it into `custom-packages`; no change to the AgentMemory import.
 - `configurations/fabro-vm/default.nix` — import `./iii.nix`; add `iii` to `environment.systemPackages`; update the guest header comment.
 - `configurations/fabro-vm/tailscale.nix` — add the fourth `ExecStart` entry, update the unit description and comments from three services to four.
-- `flake.nix` — add the two package checks and extend the guest-eval assertions and report string; leave the existing `agentMemoryHostMatrix` and `agentMemoryChecks` bindings untouched.
+- `flake.nix` — add the two package checks and extend the guest-eval assertions and report string with the supervisor, notify, and watchdog fields; leave the existing `agentMemoryHostMatrix` and `agentMemoryChecks` bindings untouched.
 
 ## System Flows
 
@@ -173,21 +198,30 @@ sequenceDiagram
   participant Op as Operator
   participant Nix as nixos-rebuild
   participant SD as systemd
-  participant Engine as iii.service
+  participant Sup as iii-supervisor
+  participant Engine as iii engine
   participant TS as tailscale-serve
   participant Client as Tailnet client
 
   Op->>Nix: nixos-rebuild switch
-  Nix->>Nix: install pkgs.iii + render config store path
-  Nix->>SD: write iii.service with ExecStart --config <store>
-  SD->>Engine: start as DynamicUser, cwd /var/lib/iii
+  Nix->>Nix: install pkgs.iii + supervisor + render config store path
+  Nix->>SD: write iii.service (Type=notify) with supervisor ExecStart
+  SD->>Sup: start as DynamicUser, cwd /var/lib/iii
+  Sup->>Sup: preflight bind 127.0.0.1:49134
+  Sup->>Engine: spawn with --config <store> --no-update-check
   Engine->>Engine: bind 127.0.0.1:49134
+  Sup->>Sup: verify child owns listener via /proc
+  Sup->>SD: READY=1 + STATUS=listening
+  loop while engine runs
+    Sup->>SD: WATCHDOG=1
+  end
   SD->>TS: run after tailscaled-autoconnect
   TS->>TS: serve --service=svc:iii --https=443 http://127.0.0.1:49134
   Client->>TS: wss://iii.tuxedo-musical.ts.net
   TS->>Engine: proxied WebSocket
 ```
 
+- The supervisor fails the start when the preflight bind fails or the engine does not own the loopback listener within the readiness timeout; systemd records the failure, retries per `Restart=always`, then marks the unit failed at the start limit (requirements 4.14–4.19, 5.9).
 - A changed rendered config produces a new store path, so `ExecStart` changes and `switch-to-configuration` restarts `iii.service` (requirement 4.13).
 - `iii.service` has no dependency on the tailnet; before registration it serves loopback only, and `tailscale-serve` is already gated on `tailscaled-autoconnect.service` (requirement 6.7).
 - The Serve entry is appended last so a `svc:iii` failure cannot undo the three existing handlers (requirements 6.4–6.5).
@@ -201,7 +235,7 @@ flowchart LR
   FLAKE --> GUEST["fabro-vm-guest-eval\npure eval of guest config"]
   PKG --> META["engine + 73 workers\nversion, platforms, URLs, hashes"]
   ISO --> AM["iii-engine 0.11.5\nand distinct sources"]
-  GUEST --> UNIT["iii.service + config value"]
+  GUEST --> UNIT["iii.service + supervisor/notify + config value"]
   GUEST --> EXPOS["tailscale-serve handlers"]
 ```
 
@@ -215,10 +249,10 @@ flowchart LR
 | 1 Fresh pinned iii engine package | 1.1–1.8 | C1 Engine package; engine source table | `pkgs.iii` contract; package check; verification flow |
 | 2 Official binary worker catalog | 2.1–2.10 | C2 Worker catalog; manifest schema; exclusions | `pkgs.iii-workers` contract; manifest model; package check |
 | 3 AgentMemory runtime isolation | 3.1–3.8 | C1/C2 distinct attributes; C5 isolation check | Attribute contracts; data models; isolation check |
-| 4 Declarative guest installation and supervision | 4.1–4.14 | C3 Guest service; system package; state model | `iii.service` contract; boot/switch flow |
-| 5 Empty worker configuration and loopback listener | 5.1–5.9 | C3 config contract; engine error behavior | Rendered config; error table |
+| 4 Declarative guest installation and supervision | 4.1–4.19 | C3 Guest service and supervisor; system package; state model | `iii.service` contract; supervisor contract; boot/switch flow |
+| 5 Empty worker configuration and loopback listener | 5.1–5.9 | C3 config contract; readiness gate; engine error behavior | Rendered config; error table |
 | 6 Tailnet service exposure | 6.1–6.8 | C4 Serve exposure | Handler table; boot/exposure flow |
-| 7 Evaluated verification | 7.1–7.15 | C5 Verification | Check matrix; verification flow |
+| 7 Evaluated verification | 7.1–7.18 | C5 Verification | Check matrix; verification flow |
 
 ## Components and Interfaces
 
@@ -226,9 +260,9 @@ flowchart LR
 |-----------|--------------|--------|--------------|------------------|-----------|
 | C1 Engine package | Packaging | Pin and install the iii 0.26.0 engine | 1.1–1.8, 3.6–3.8 | GitHub release assets, nixpkgs | Package |
 | C2 Worker catalog | Packaging | Pin and build 73 official binary workers | 2.1–2.10, 3.6–3.8 | Registry API/CDN, nixpkgs | Package |
-| C3 Guest service | Runtime | Render config and supervise the engine | 4.1–4.14, 5.1–5.9 | C1, systemd, `pkgs.formats.yaml` | Service, State |
+| C3 Guest service | Runtime | Render config and supervise the engine through the readiness-gated supervisor | 4.1–4.19, 5.1–5.9 | C1, systemd, `pkgs.formats.yaml`, `iii-supervisor` | Service, State |
 | C4 Serve exposure | Network | Publish `svc:iii` on the tailnet | 6.1–6.8 | tailscaled, `tailscale-serve` | API |
-| C5 Verification | Test | Fail evaluation on regressions | 7.1–7.15 | C1–C4 | Batch |
+| C5 Verification | Test | Fail evaluation on regressions | 7.1–7.18 | C1–C4 | Batch |
 
 ### C1: Engine package
 
@@ -371,22 +405,23 @@ pkgs.iii-workers.database = derivation {
 
 | Field | Detail |
 |-------|--------|
-| Intent | Install the engine declaratively and supervise a loopback-only `DynamicUser` service |
-| Requirements | 4.1–4.14, 5.1–5.9 |
+| Intent | Install the engine declaratively and supervise a loopback-only `DynamicUser` service through a readiness-gated Rust supervisor |
+| Requirements | 4.1–4.19, 5.1–5.9 |
 
 **Responsibilities & Constraints**
 
-- Adds `pkgs.iii` to `environment.systemPackages` and starts `iii.service` from the store binary; no manual download or hand-placed binary.
+- Adds `pkgs.iii` to `environment.systemPackages` and starts `iii.service` from the store supervisor; the supervisor spawns the store engine; no manual download or hand-placed binary.
 - Renders one YAML configuration with a single `iii-worker-manager` entry bound to `127.0.0.1:49134`; no project worker, `configuration`, `iii-stream`, `http-functions`, or `sandbox` entry.
 - Runs with `DynamicUser = true`, no static `User`/`Group`, `StateDirectory = [ "iii" ]`, `WorkingDirectory = "/var/lib/iii"`, and `HOME = "/var/lib/iii"`.
 - Reads the configuration from a read-only store path; runtime state lives in `/var/lib/iii`, not on the `/var/lib/fabro` Lima share.
 - Restarts on any unexpected exit and disables the engine's update check; the unit has no secret material and no `EnvironmentFile`.
+- Uses `Type=notify` with `NotifyAccess=main`; the supervisor is the unit's main process, reports readiness only after the engine owns the listener, and sends watchdog keep-alives while the engine runs.
 
 **Dependencies**
 
 - Inbound: `configurations/fabro-vm/default.nix` imports the module and adds the package.
-- Outbound: `pkgs.iii`, `pkgs.formats.yaml`, systemd.
-- External: none at runtime.
+- Outbound: `pkgs.iii`, the local `iii-supervisor` Rust derivation, `pkgs.formats.yaml`, systemd.
+- External: the guest's `/proc` filesystem and systemd notify/watchdog protocol; none on the tailnet.
 
 **Contracts**: Service [x], State [x]
 
@@ -394,11 +429,15 @@ pkgs.iii-workers.database = derivation {
 
 ```nix
 fabro.iii = {
-  package;          # default pkgs.iii; lib.types.package
-  host;             # default "127.0.0.1"; lib.types.str
-  port;             # default 49134; lib.types.port
-  config;           # read-only attrs; default worker list below
-  configFile;       # read-only store path from (pkgs.formats.yaml { }).generate
+  package;              # default pkgs.iii; lib.types.package
+  supervisorPackage;    # read-only; rustPlatform.buildRustPackage from ./iii-supervisor
+  host;                 # default "127.0.0.1"; lib.types.str
+  port;                 # default 49134; lib.types.port
+  watchdogSec;          # default 30; lib.types.ints.positive
+  readinessTimeoutSec;  # default 15; lib.types.ints.positive
+  stopTimeoutSec;       # default 10; lib.types.ints.positive
+  config;               # read-only attrs; default worker list below
+  configFile;           # read-only store path from (pkgs.formats.yaml { }).generate
 };
 ```
 
@@ -425,7 +464,13 @@ workers:
 | `serviceConfig.StateDirectory` | `[ "iii" ]` | `/var/lib/iii`, durable (4.10–4.11) |
 | `serviceConfig.WorkingDirectory` | `/var/lib/iii` | State-dir cwd |
 | `serviceConfig.Environment` | `HOME=/var/lib/iii`, `III_TELEMETRY_ENABLED=false` | No systemd-provided home; no product telemetry |
-| `serviceConfig.ExecStart` | `${lib.getExe package} --config ${configFile} --no-update-check` | Store binary and read-only config (4.9, 4.12) |
+| `serviceConfig.Type` | `notify` | Readiness is explicit (4.15–4.17) |
+| `serviceConfig.NotifyAccess` | `main` | Only the supervisor notifies (4.15) |
+| `serviceConfig.WatchdogSec` | `30` | Finite watchdog interval (4.16, 4.18) |
+| `serviceConfig.TimeoutStartSec` | `30` | Bounds a hung start (4.14) |
+| `serviceConfig.TimeoutStopSec` | `20` | Bounds the supervisor stop timeout (4.19) |
+| `serviceConfig.ExecStart` | `lib.escapeShellArgs [ (lib.getExe supervisorPackage) "--listen" "${host}:${port}" "--ready-timeout" (toString readinessTimeoutSec) "--stop-timeout" (toString stopTimeoutSec) "--" (lib.getExe package) "--config" (toString configFile) "--no-update-check" ]` | Supervisor main process, engine child, store binary, read-only config (4.4, 4.9, 4.12, 4.15–4.19) |
+| `serviceConfig.NotifySocket` | absent | `sd-notify` uses systemd's default filesystem socket (7.18) |
 | `serviceConfig.Restart` | `always` | Restart on unexpected exit (4.6) |
 | `serviceConfig.RestartSec` | `2` | Bounded retry cadence |
 | `serviceConfig.NoNewPrivileges` | `true` | Hardening |
@@ -435,16 +480,33 @@ workers:
 | `serviceConfig.RestrictAddressFamilies` | `AF_UNIX`, `AF_INET`, `AF_INET6` | Guest hardening style |
 | `serviceConfig.ReadWritePaths` | `[ "/var/lib/iii" ]` | Explicit state path |
 
-- Preconditions: `pkgs.iii` evaluates for the guest system; `/var/lib/iii` is creatable by systemd.
-- Postconditions: the unit is active with one listener on `127.0.0.1:49134`; a failed start leaves the unit failed after systemd's start limit and the journal records the engine error.
-- Invariants: no non-loopback bind; no project worker; no state under `/var/lib/fabro`.
+- Preconditions: `pkgs.iii` and the supervisor evaluate for the guest system; `/var/lib/iii` is creatable by systemd.
+- Postconditions: the unit is active only after `READY=1`, with one listener on `127.0.0.1:49134` owned by the engine child; a failed start leaves the unit failed after systemd's start limit and the journal records the supervisor and/or engine error.
+- Invariants: no non-loopback bind; no project worker; no state under `/var/lib/fabro`; the supervisor remains the unit's main process; no abstract `NotifySocket`.
 
 **Implementation Notes**
 
 - Build the config value in the module `let` and expose it read-only so the guest check can assert the exact value without reading the rendered derivation.
-- Use `lib.getExe` with `meta.mainProgram = "iii"`; do not hard-code the store path.
-- Because the config path is part of `ExecStart`, a content change changes the unit and triggers a restart on switch; no `reload` command exists for the engine.
+- Build `supervisorPackage` in the same module with `pkgs.rustPlatform.buildRustPackage`, `src = lib.cleanSource ./iii-supervisor`, and `cargoLock.lockFile = ./iii-supervisor/Cargo.lock`, mirroring `api-bridge.nix`; set `meta.mainProgram = "iii-supervisor"`.
+- Use `lib.getExe` with `meta.mainProgram = "iii"` for the engine and `meta.mainProgram = "iii-supervisor"` for the supervisor; do not hard-code either store path.
+- Use `lib.escapeShellArgs` for `ExecStart` so the supervisor receives the listen address, timeouts, and the engine command as one systemd command line.
+- Because the config path is part of the engine command, a content change changes the unit and triggers a restart on switch; no `reload` command exists for the engine.
 - `Restart=always` plus systemd's default `StartLimitBurst`/`StartLimitIntervalSec` satisfies restart-on-exit while still ending a permanently broken unit in `failed`.
+- Keep `ProtectProc` and `ProcSubset` at their defaults: the readiness gate reads `/proc/<child>/fd` and `/proc/net/tcp{,6}`. The guest check rejects `ProtectProc=invisible` and `ProcSubset=pid`.
+
+**Supervisor contract**
+
+- `iii-supervisor` is a single-threaded Rust supervisor built from `configurations/fabro-vm/iii-supervisor/`; it depends on `sd-notify` 0.5 and `libc` 0.2, with no `libsystemd` or `pkg-config`.
+- CLI: `--listen <ip:port> --ready-timeout <secs> --stop-timeout <secs> -- <engine> <engine args...>`.
+- Preflight: bind and release `<ip:port>` before spawning; `EADDRINUSE` logs `cannot bind <ip:port>: Address already in use` and exits 1 without spawning.
+- Spawn: inherit stdout/stderr so the engine's lines reach the journal; keep the supervisor as the systemd main process and the engine as its direct child.
+- Readiness: collect `socket:[inode]` entries from `/proc/<child>/fd` and match them against a `LISTEN` (`0A`) entry for the exact local address and port in `/proc/net/tcp` or `/proc/net/tcp6`; only then send `READY=1` and `STATUS=listening on <ip:port>`. A foreign listener or a `0.0.0.0` bind never matches.
+- Watchdog: `sd_notify::watchdog_enabled()` gives the systemd interval; send `NotifyState::Watchdog` at half the interval while the child runs. `sd-notify` honours `WATCHDOG_USEC` and `WATCHDOG_PID`.
+- Lifecycle: send `NotifyState::Stopping` and a final `Status` on termination; a SIGTERM/SIGINT handler only sets an atomic, and the main loop forwards SIGTERM, waits `stop-timeout`, sends SIGKILL, reaps the child, and exits with the child's status.
+- Failure: a child exit before readiness is reported with its status; a readiness timeout kills the child and exits 1; `sd_notify::notify` returning an error is logged but does not change the supervision loop.
+- Platform: the crate compiles on Darwin, but the readiness gate is Linux-only and returns an unsupported error off Linux; the unit exists only on the guest.
+- Testability: listener ownership is a predicate injected by tests; `sd_notify::notify` is exercised against a temporary `NOTIFY_SOCKET` path.
+- Notify socket: `sd-notify` connects to the filesystem form of `NOTIFY_SOCKET` (systemd's default `/run/systemd/notify`); the unit must not set an abstract `NotifySocket=@...`. If abstract support is ever required, replace `sd-notify` with the `libsystemd` crate.
 
 ### C4: Tailscale Serve exposure
 
@@ -489,14 +551,14 @@ workers:
 
 | Field | Detail |
 |-------|--------|
-| Intent | Fail `nix flake check` on a package, isolation, unit, config, or exposure regression |
-| Requirements | 7.1–7.15 |
+| Intent | Fail `nix flake check` on a package, isolation, unit, supervisor, config, or exposure regression |
+| Requirements | 7.1–7.18 |
 
 **Responsibilities & Constraints**
 
 - `iii-packages` instantiates nixpkgs for `aarch64-linux` and `aarch64-darwin` with the repository overlay chain and asserts engine and worker metadata, URLs, hashes, counts, exclusions, platforms, and engine-compatibility declarations.
 - `iii-agentmemory-isolation` instantiates a Darwin package set (and checks the existing Darwin host-matrix check exists) and asserts `iii-engine` 0.11.5 metadata, distinct attribute names, and disjoint sources.
-- `fabro-vm-guest-eval` gains assertions over the guest package set, `iii.service`, the `fabro.iii.config` value, and the four Serve handlers.
+- `fabro-vm-guest-eval` gains assertions over the guest package set, `iii.service` (including `Type=notify`, `NotifyAccess=main`, watchdog/timeout fields, the supervisor `ExecStart`, and the absence of `NotifySocket`), the `fabro.iii.config` value, and the four Serve handlers.
 - Every assertion uses `lib.assertMsg` with a message naming the failing element; all checks are pure evaluation and never build a package or the guest image.
 - The package and isolation reports discard store-path context with `builtins.unsafeDiscardStringContext` before interpolation, so the `runCommand` checks depend only on their report strings and do not turn the 146 evaluated derivations into build inputs.
 - The isolation check is registered in the base checks; `agentMemoryChecks`, `agentMemoryHostMatrix`, and `tests/agentmemory-opencode/host-matrix.nix` are not edited.
@@ -507,7 +569,7 @@ workers:
 |-------|--------|------------|--------------|
 | `iii-packages` | every | Engine `version`, `sourceRevision`, `meta.platforms`, `src.urls`, `src.outputHash`; worker attr count 73; excluded names absent; per-worker version, URL, hash, binary, platforms, `iiiEngineVersion` for both targets | 1.1–1.8, 2.1–2.10, 7.1–7.4 |
 | `iii-agentmemory-isolation` | every | `iii-engine` pname/version/platform set; `agentmemory` `iiiVersion`/`iiiRevision`; `iii`/`iii-workers` names and sources disjoint from `iii-engine`; no `iiiVersion`/`iiiRevision` on new packages; Darwin host-matrix check present | 3.1–3.8, 7.5 |
-| `fabro-vm-guest-eval` | every | system package includes `iii`; unit exists, DynamicUser, state dir, cwd, config store path, flags, restart, no static user; config has one allowed worker and loopback bind; Serve has four handlers and no other 49134 target | 4.1–4.14, 5.1–5.9, 6.1–6.8, 7.6–7.15 |
+| `fabro-vm-guest-eval` | every | system package includes `iii`; unit exists, DynamicUser, state dir, cwd, config store path, flags, restart, no static user; `Type=notify`, `NotifyAccess=main`, watchdog/timeout fields, supervisor `ExecStart`, no `NotifySocket`; config has one allowed worker and loopback bind; Serve has four handlers and no other 49134 target | 4.1–4.19, 5.1–5.9, 6.1–6.8, 7.6–7.18 |
 
 ## Data Models
 
@@ -518,6 +580,7 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 - **Catalog entry**: a worker name identifies a version, two target artifacts, and one archive binary.
 - **Engine source entry**: a Nix system identifies one release URL and one SHA-256 digest.
 - **Service configuration**: one `workers` list containing one allowed engine worker and its loopback listener.
+- **Supervisor process**: the unit main PID that owns one engine child, its readiness gate, and its watchdog heartbeats.
 - **Exposure target**: one Service name identifies one HTTPS port and one loopback host/port.
 
 ### Logical Data Model
@@ -528,6 +591,7 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 | Engine source table | Nix system | `url`, `hash` | Only `aarch64-linux` and `aarch64-darwin`; fixed SHA-256 |
 | `fabro.iii.config` | — | `workers[]` | Exactly one entry, `iii-worker-manager`, `host = 127.0.0.1`, `port = 49134` |
 | `iii.service` state | unit name | `StateDirectory`, `WorkingDirectory` | `/var/lib/iii`; never the Lima share |
+| Supervisor | unit name | `supervisorPackage`, `watchdogSec`, `readinessTimeoutSec`, `stopTimeoutSec` | Main PID; `/proc` ownership readiness; no abstract `NotifySocket` |
 | Serve handler | Service name | `--service`, `--https`, target | `svc:iii`, `443`, `http://127.0.0.1:49134` |
 
 ### Physical Data Model
@@ -561,7 +625,11 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 | Manifest entry missing a target | Derivation evaluation | Evaluation fails naming the worker and missing system |
 | Config names a project worker | Engine `validate_declared_workers` | Engine exits with `[UNSUPPORTED_CONFIG_WORKERS]` and the migration-guide link; systemd records it and restarts until the start limit marks the unit failed |
 | Config file missing or unreadable | Engine startup read | Engine exits with a config-path error; the store path is part of the closure, so this indicates a broken deployment |
-| Cannot bind `127.0.0.1:49134` | Engine listener bind | Engine exits non-zero; systemd journals the bind error and retries, then marks the unit failed |
+| Cannot bind `127.0.0.1:49134` | Supervisor preflight bind or child-ownership readiness | Supervisor logs `cannot bind ...: Address already in use` or a readiness-timeout error, kills the child if spawned, exits non-zero; systemd records the failure, retries, then marks the unit failed at the start limit |
+| Engine stays alive without owning the listener | Supervisor `/proc` readiness gate | No `READY=1`; readiness timeout kills the engine and exits non-zero; systemd never treats the unit as active |
+| Engine exits before readiness | Supervisor child wait | Supervisor exits with the child's status after journaling the failure; systemd retries and then marks the unit failed |
+| Supervisor stops heartbeating | systemd `WatchdogSec` | systemd terminates the unit and restarts it per `Restart=always`; the journal records the watchdog timeout |
+| Abstract `NotifySocket` configured | Guest-eval assertion | Evaluation fails naming the unit; the filesystem notify socket is the supported path for `sd-notify` |
 | Unexpected engine exit | systemd `Restart=always` | Restart after `RestartSec=2`; journal keeps the prior failure |
 | State directory unavailable | systemd `StateDirectory` setup | Unit fails before `ExecStart`; journal names the state path |
 | `svc:iii` missing or not granted | `tailscale serve` non-zero | Unit fails and journals the Serve error; earlier handlers remain applied; engine stays loopback-only |
@@ -571,8 +639,8 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 
 ### Monitoring
 
-- `journalctl -u iii` records startup, listener, config, and exit errors; systemd names the failing unit.
-- `systemctl status iii` shows the failed/auto-restart state.
+- `journalctl -u iii` records startup, readiness, listener, config, watchdog, and exit errors; systemd names the failing unit.
+- `systemctl status iii` shows the `Status: listening on 127.0.0.1:49134` line from the supervisor, plus the failed/auto-restart state.
 - `ss -ltnp` on the guest is the runtime check that the only engine listener is `127.0.0.1:49134`.
 - `tailscale serve status` lists the four handlers and the `svc:iii` target.
 - The flake checks are the pre-deployment signal; no metrics or log shipping is added by this spec.
@@ -597,11 +665,21 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 - Assert `self.checks.aarch64-darwin.agentmemory-opencode-matrix` exists, so the unchanged host-matrix check still exercises each AgentMemory consumer's resolution (3.5, 3.7).
 - The check reads metadata only; it does not rebuild AgentMemory or evaluate the Darwin guest (3.7).
 
+### Supervisor crate tests (`iii-supervisor`)
+
+- `cargo test` on the Linux builder runs the full suite; on Darwin the crate compiles and the Linux-only `/proc` cases are skipped.
+- Parser tests cover `/proc/net/tcp` and `/proc/net/tcp6` fixtures for `127.0.0.1:49134`, `0.0.0.0:49134`, and `[::1]:49134`, including the `LISTEN` state and inode fields.
+- Ownership tests bind a listener in the test process and assert the positive `owns(pid)` result; spawn a child that does not hold the listener and assert the negative result even though a TCP connect succeeds.
+- Failure tests assert the preflight `EADDRINUSE` exit, the readiness timeout kill/exit, child-exit status propagation, and SIGTERM forwarding with the stop timeout.
+- Notify tests set a temporary `NOTIFY_SOCKET` path and an injected `|_| true` ownership predicate, then assert the `READY=1`, `STATUS=`, `WATCHDOG=1` (with `WATCHDOG_USEC`/`WATCHDOG_PID`), and `STOPPING=1` datagrams; `watchdog_enabled()` is tested for the half-interval helper.
+- No test links `libsystemd`; the crate's dependency closure is `sd-notify` and `libc` only.
+
 ### Guest assertions (`fabro-vm-guest-eval`)
 
 - Package: `environment.systemPackages` contains a derivation whose `pname` is `iii` (4.1, 7.6).
 - Unit: `systemd.services.iii` exists, is `wantedBy multi-user.target`, has `DynamicUser = true`, no `User`/`Group`, `StateDirectory` containing `iii`, `WorkingDirectory` and `HOME` pointing at `/var/lib/iii`, `Restart = "always"`, and the hardening fields from C3 (4.2–4.10, 7.7).
-- Config path: `ExecStart` contains `toString config.fabro.iii.configFile`, `--config`, and `--no-update-check`; the config path starts with `/nix/store/` (4.9, 4.12, 7.8).
+- Supervisor unit: `Type == "notify"`, `NotifyAccess == "main"`, the watchdog and timeout fields equal the configured options (normalize with `toString`), `NotifySocket` is absent, and `supervisorPackage.pname == "iii-supervisor"` (4.15–4.19, 7.16–7.18).
+- Command line: `ExecStart` equals the escaped supervisor command with `--listen 127.0.0.1:49134`, the readiness and stop timeouts, `--`, the `pkgs.iii` executable, `--config <store>`, and `--no-update-check`; the config path starts with `/nix/store/` (4.4, 4.9, 4.12, 7.8, 7.17).
 - Config value: `builtins.length config.fabro.iii.config.workers == 1`, the entry is `iii-worker-manager`, `host == "127.0.0.1"`, `port == 49134`, and the serialized value contains no project-worker name, `0.0.0.0`, `3112`, or `.ts.net` (5.1–5.7, 7.9–7.11).
 - Serve: the `tailscale-serve` `ExecStart` list has four entries, contains the three existing handlers verbatim and the new `--service=svc:iii --https=443 http://127.0.0.1:49134`, and contains exactly one reference to `49134` (6.1–6.4, 7.12–7.13).
 - Assertions remain pure evaluation; they never read `configFile` with `builtins.readFile` or build `fabro-vm-image` (7.14).
@@ -609,17 +687,20 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 
 ### Manual build and runtime verification
 
-1. On `aarch64-darwin`: `nix build .#iii` and one representative worker, then `./result/bin/iii --version`. On `aarch64-linux` (Linux builder or guest): `nix build .#iii`, `nix build .#iii-workers.database`, and one static worker such as `mesh`, then run `iii --version`, `database --help`, and `mesh --help`; these smoke runs catch a missing ELF patch or library.
-2. On the guest after `nixos-rebuild switch`: `systemctl status iii`, `journalctl -u iii`, and `ss -ltnp` show only `127.0.0.1:49134`.
+1. On `aarch64-darwin`: `nix build .#iii` and one representative worker, then `./result/bin/iii --version`. On `aarch64-linux` (Linux builder or guest): `nix build .#iii`, `nix build .#iii-workers.database`, and one static worker such as `mesh`, then run `iii --version`, `database --help`, and `mesh --help`; these smoke runs catch a missing ELF patch or library. Run `cargo test` for `iii-supervisor` on both hosts.
+2. On the guest after `nixos-rebuild switch`: `systemctl status iii` shows `Status: listening on 127.0.0.1:49134`, the supervisor as MainPID, and the engine as its child; `journalctl -u iii` shows the readiness line; `ss -ltnp` shows only `127.0.0.1:49134`.
 3. `tailscale serve status` shows `svc:iii` and the three existing services; `curl -sS -D- https://iii.tuxedo-musical.ts.net` reaches the engine through TLS.
-4. Temporarily adding a project worker to a local copy of the config and starting the engine produces `[UNSUPPORTED_CONFIG_WORKERS]` in the journal; the deployed config does not do this.
-5. `nix flake check` passes without a Linux builder; the package checks report both target systems.
+4. Stop iii, occupy `127.0.0.1:49134` with a foreign listener, and start iii: the supervisor's preflight fails, the unit retries and reaches `failed`, and the journal records the bind error. Free the port, `systemctl reset-failed iii`, and start it again: the unit returns active only after readiness.
+5. With the service active, send SIGSTOP to the supervisor's main PID (`systemctl kill -s STOP --kill-who=main iii`), wait beyond `WatchdogSec`, and confirm the journal records the watchdog timeout, `NRestarts` increments, and the unit returns active; `systemctl stop iii` then shows `STOPPING=1` and a clean exit.
+6. Temporarily adding a project worker to a local copy of the config and starting the engine produces `[UNSUPPORTED_CONFIG_WORKERS]` in the journal; the deployed config does not do this.
+7. `nix flake check` passes without a Linux builder; the package checks report both target systems.
 
 ## Security Considerations
 
 - **Loopback only**: the worker manager is explicitly bound to `127.0.0.1:49134`; `iii-stream` is absent, no sandbox binding is declared, and no project worker can add a listener.
 - **Single exposure path**: Tailscale Serve is the only tailnet entry; it terminates TLS and proxies to loopback. The tailnet ACL and the `svc:iii` grant are the access boundary, not iii authentication.
 - **Service isolation**: `DynamicUser`, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, and restricted address families; the only writable path is `/var/lib/iii`.
+- **Supervisor boundary**: `iii-supervisor` runs as the same `DynamicUser`, reads `/proc` only, holds no credential, forwards signals, and never patches or re-execs the engine. `NotifyAccess=main` prevents the engine child from sending readiness; the `/proc` ownership gate prevents a foreign listener from being mistaken for the engine.
 - **Binary provenance**: Linux executables are the hash-verified upstream artifacts with only interpreter/RPATH rewritten to nixpkgs glibc/libgcc/libstdc++; no FHS wrapper, `nix-ld`, or host-wide loader configuration is introduced.
 - **No secrets**: the unit has no `EnvironmentFile`, no sops template, and no credential; the engine config contains no secret reference. No operator provisioning is required.
 - **Network hygiene**: `--no-update-check` disables update/advisory checks; `III_TELEMETRY_ENABLED=false` disables product telemetry. Neither changes the listener set.
@@ -636,9 +717,9 @@ flowchart LR
 ```
 
 - Phase 1 adds the overlays and package checks; nothing runs on the guest yet.
-- Phase 2 imports the guest module, installs the package, and adds the Serve handler; the next switch starts the engine and exposes it.
-- Phase 3 is runtime verification; workers remain unevaluated and unstarted.
-- Rollback: remove `iii` from `environment.systemPackages`, remove the `svc:iii` entry and the module import, then switch. The engine stops, the Serve handler disappears, and `/var/lib/iii` remains for inspection; AgentMemory and the three existing services are untouched.
+- Phase 2 imports the guest module, installs the package and supervisor, sets the notify unit, and adds the Serve handler; the next switch starts the supervisor, waits for engine readiness, and exposes the engine.
+- Phase 3 is runtime verification, including the bind-conflict failure and watchdog restart; workers remain unevaluated and unstarted.
+- Rollback: remove `iii` from `environment.systemPackages`, remove the `svc:iii` entry and the module import, then switch. The supervisor and engine stop, the Serve handler disappears, and `/var/lib/iii` remains for inspection; AgentMemory and the three existing services are untouched.
 - No data migration, schema migration, or versioned state transition exists.
 
 ## Supporting References
@@ -646,7 +727,11 @@ flowchart LR
 - `research.md` § Engine release facts — exact asset URLs, digests, and tarball layout.
 - `research.md` § Linux ELF linkage facts — interpreter, needed libraries, static workers, and the verified `autoPatchelfHook` fixup.
 - `research.md` § Engine configuration and CLI facts — allowed workers, defaults, and flags.
+- `research.md` § Engine bind-failure behavior and supervisor decision — the observed non-exiting bind failure, `/proc` ownership readiness, and the `sd-notify` crate choice.
 - `research.md` § Worker registry facts and § Worker catalog snapshot — the 73-worker inventory and pinned versions/hashes.
+- [`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html), [`sd_watchdog_enabled(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_watchdog_enabled.html) — notification and watchdog protocol.
+- [`sd-notify` crate](https://docs.rs/sd-notify/latest/sd_notify/) — pure-Rust notify states and `watchdog_enabled()`.
+- [`proc(5)`](https://man7.org/linux/man-pages/man5/proc.5.html) — `/proc/<pid>/fd` and `/proc/net/tcp` semantics.
 - `brief.md` — problem, approach, scope, and rejected alternatives.
 - `requirements.md` — the acceptance criteria traced above.
 - GitHub issue #629 — the originating request.
