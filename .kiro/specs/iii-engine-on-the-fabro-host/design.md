@@ -473,6 +473,8 @@ workers:
 | `serviceConfig.NotifySocket` | absent | `sd-notify` uses systemd's default filesystem socket (7.18) |
 | `serviceConfig.Restart` | `always` | Restart on unexpected exit (4.6) |
 | `serviceConfig.RestartSec` | `2` | Bounded retry cadence |
+| `unitConfig.StartLimitIntervalSec` | `120` | Bounded window; the default 10 s window sits exactly at the `RestartSec=2` rate and never trips (4.14) |
+| `unitConfig.StartLimitBurst` | `5` | A permanently broken start reaches `failed` (4.14) |
 | `serviceConfig.NoNewPrivileges` | `true` | Hardening |
 | `serviceConfig.PrivateTmp` | `true` | Hardening |
 | `serviceConfig.ProtectSystem` | `strict` | Only the state dir is writable |
@@ -481,7 +483,7 @@ workers:
 | `serviceConfig.ReadWritePaths` | `[ "/var/lib/iii" ]` | Explicit state path |
 
 - Preconditions: `pkgs.iii` and the supervisor evaluate for the guest system; `/var/lib/iii` is creatable by systemd.
-- Postconditions: the unit is active only after `READY=1`, with one listener on `127.0.0.1:49134` owned by the engine child; a failed start leaves the unit failed after systemd's start limit and the journal records the supervisor and/or engine error.
+- Postconditions: the unit is active only after `READY=1`, with one listener on `127.0.0.1:49134` owned by the engine child; a failed start leaves the unit failed after the explicit 120 s / 5-start limit and the journal records the supervisor and/or engine error.
 - Invariants: no non-loopback bind; no project worker; no state under `/var/lib/fabro`; the supervisor remains the unit's main process; no abstract `NotifySocket`.
 
 **Implementation Notes**
@@ -491,7 +493,7 @@ workers:
 - Use `lib.getExe` with `meta.mainProgram = "iii"` for the engine and `meta.mainProgram = "iii-supervisor"` for the supervisor; do not hard-code either store path.
 - Use `lib.escapeShellArgs` for `ExecStart` so the supervisor receives the listen address, timeouts, and the engine command as one systemd command line.
 - Because the config path is part of the engine command, a content change changes the unit and triggers a restart on switch; no `reload` command exists for the engine.
-- `Restart=always` plus systemd's default `StartLimitBurst`/`StartLimitIntervalSec` satisfies restart-on-exit while still ending a permanently broken unit in `failed`.
+- `Restart=always` with `RestartSec=2` keeps retrying transient exits. The default 5-starts-per-10s window sits exactly at that restart rate, so the unit sets `unitConfig.StartLimitIntervalSec=120` and `StartLimitBurst=5`: a permanently broken start reaches `failed` with `Result=start-limit-hit` (about 10 s for the preflight bind path, about 100 s for a 15 s readiness-timeout loop). Manual starts and switch-driven starts count toward this window, so repeated rapid switches of a healthy unit can leave it `failed` until `systemctl reset-failed iii`.
 - Keep `ProtectProc` and `ProcSubset` at their defaults: the readiness gate reads `/proc/<child>/fd` and `/proc/net/tcp{,6}`. The guest check rejects `ProtectProc=invisible` and `ProcSubset=pid`.
 
 **Supervisor contract**
@@ -677,7 +679,7 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 ### Guest assertions (`fabro-vm-guest-eval`)
 
 - Package: `environment.systemPackages` contains a derivation whose `pname` is `iii` (4.1, 7.6).
-- Unit: `systemd.services.iii` exists, is `wantedBy multi-user.target`, has `DynamicUser = true`, no `User`/`Group`, `StateDirectory` containing `iii`, `WorkingDirectory` and `HOME` pointing at `/var/lib/iii`, `Restart = "always"`, and the hardening fields from C3 (4.2–4.10, 7.7).
+- Unit: `systemd.services.iii` exists, is `wantedBy multi-user.target`, has `DynamicUser = true`, no `User`/`Group`, `StateDirectory` containing `iii`, `WorkingDirectory` and `HOME` pointing at `/var/lib/iii`, `Restart = "always"`, the explicit `StartLimitIntervalSec`/`StartLimitBurst` values, and the hardening fields from C3 (4.2–4.14, 7.7).
 - Supervisor unit: `Type == "notify"`, `NotifyAccess == "main"`, the watchdog and timeout fields equal the configured options (normalize with `toString`), `NotifySocket` is absent, and `supervisorPackage.pname == "iii-supervisor"` (4.15–4.19, 7.16–7.18).
 - Command line: `ExecStart` equals the escaped supervisor command with `--listen 127.0.0.1:49134`, the readiness and stop timeouts, `--`, the `pkgs.iii` executable, `--config <store>`, and `--no-update-check`; the config path starts with `/nix/store/` (4.4, 4.9, 4.12, 7.8, 7.17).
 - Config value: `builtins.length config.fabro.iii.config.workers == 1`, the entry is `iii-worker-manager`, `host == "127.0.0.1"`, `port == 49134`, and the serialized value contains no project-worker name, `0.0.0.0`, `3112`, or `.ts.net` (5.1–5.7, 7.9–7.11).
@@ -691,7 +693,7 @@ The feature's data is a pinned artifact catalog plus one rendered service config
 2. On the guest after `nixos-rebuild switch`: `systemctl status iii` shows `Status: listening on 127.0.0.1:49134`, the supervisor as MainPID, and the engine as its child; `journalctl -u iii` shows the readiness line; `ss -ltnp` shows only `127.0.0.1:49134`.
 3. `tailscale serve status` shows `svc:iii` and the three existing services; `curl -sS -D- https://iii.tuxedo-musical.ts.net` reaches the engine through TLS.
 4. Stop iii, occupy `127.0.0.1:49134` with a foreign listener, and start iii: the supervisor's preflight fails, the unit retries and reaches `failed`, and the journal records the bind error. Free the port, `systemctl reset-failed iii`, and start it again: the unit returns active only after readiness.
-5. With the service active, send SIGSTOP to the supervisor's main PID (`systemctl kill -s STOP --kill-who=main iii`), wait beyond `WatchdogSec`, and confirm the journal records the watchdog timeout, `NRestarts` increments, and the unit returns active; `systemctl stop iii` then shows `STOPPING=1` and a clean exit.
+5. With the service active, send SIGSTOP to the supervisor's main PID (`systemctl kill -s STOP --kill-who=main iii`), wait beyond `WatchdogSec`, and confirm the journal records the watchdog timeout, `NRestarts` increments, and the unit returns active. `systemctl stop iii` then stops cleanly: systemd does not journal notify datagrams, so the `STOPPING=1` datagram is asserted by the crate's `notify_watchdog_and_sigterm_sequence` test, while the guest journal shows the supervisor forwarding SIGTERM, the engine logging `Engine shutdown complete` and exiting status 0, and the unit ending `inactive` with no watchdog restart.
 6. Temporarily adding a project worker to a local copy of the config and starting the engine produces `[UNSUPPORTED_CONFIG_WORKERS]` in the journal; the deployed config does not do this.
 7. `nix flake check` passes without a Linux builder; the package checks report both target systems.
 
