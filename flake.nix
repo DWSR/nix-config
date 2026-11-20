@@ -3574,13 +3574,14 @@
                   vm.sops.templates."fabro-env".restartUnits == [ "fabro.service" ]
                   && vm.sops.templates."litellm-env".restartUnits == [ "litellm.service" ]
                 ) "fabro-vm: sops templates must restart their consumers when the rendered values change.";
-                # iii engine (spec `iii-engine-on-the-fabro-host`, task 4.4;
-                # design C3 "Unit field contract" and C5 "Guest assertions";
-                # requirements 4.1–4.14, 7.6–7.8). Each assertion reads the
-                # evaluated guest configuration only: no `builtins.readFile`
-                # of the rendered config and no image build. Every message
-                # starts with `fabro-vm:` and names the missing unit or
-                # field so a regression fails evaluation with the element.
+                # iii engine (spec `iii-engine-on-the-fabro-host`, tasks 4.4,
+                # 6.2, 6.3; design C3 "Unit field contract" and C5 "Guest
+                # assertions"; requirements 4.1–4.19, 7.6–7.8, 7.16–7.18).
+                # Each assertion reads the evaluated guest configuration only:
+                # no `builtins.readFile` of the rendered config and no image
+                # build. Every message starts with `fabro-vm:` and names the
+                # missing unit or field so a regression fails evaluation with
+                # the element.
                 assert pkgs.lib.assertMsg
                   (builtins.any (p: (p.pname or p.name or "") == "iii") vm.environment.systemPackages)
                   "fabro-vm: environment.systemPackages must contain the iii engine package (pname \"iii\", requirement 4.1).";
@@ -3627,6 +3628,45 @@
                     && (vm.systemd.services.iii.serviceConfig.ReadWritePaths or [ ]) == [ "/var/lib/iii" ]
                   )
                   "fabro-vm: iii.service must carry the C3 hardening (NoNewPrivileges, PrivateTmp, ProtectSystem=strict, ProtectHome, RestrictAddressFamilies AF_UNIX/AF_INET/AF_INET6, ReadWritePaths=/var/lib/iii).";
+                # Notify/watchdog supervisor contract (requirements 4.15–4.19,
+                # 7.16–7.18). Each field is a separate assertion so a dropped
+                # field fails with its own name; the timeouts are derived from
+                # the module options (start/stop are twice the readiness/stop
+                # options so the supervisor's own timeouts win).
+                assert pkgs.lib.assertMsg (
+                  (vm.systemd.services.iii.serviceConfig.Type or "") == "notify"
+                ) "fabro-vm: iii.service Type must be \"notify\" (readiness is explicit; requirement 4.16).";
+                assert pkgs.lib.assertMsg ((vm.systemd.services.iii.serviceConfig.NotifyAccess or "") == "main")
+                  "fabro-vm: iii.service NotifyAccess must be \"main\" so only the supervisor notifies (requirements 4.15–4.16).";
+                assert pkgs.lib.assertMsg
+                  ((vm.systemd.services.iii.serviceConfig.WatchdogSec or null) == toString vm.fabro.iii.watchdogSec)
+                  "fabro-vm: iii.service WatchdogSec must equal fabro.iii.watchdogSec (${toString vm.fabro.iii.watchdogSec}s; requirements 4.16, 4.18).";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.iii.serviceConfig.TimeoutStartSec or null)
+                    == toString (vm.fabro.iii.readinessTimeoutSec * 2)
+                  )
+                  "fabro-vm: iii.service TimeoutStartSec must be twice fabro.iii.readinessTimeoutSec (${
+                    toString (vm.fabro.iii.readinessTimeoutSec * 2)
+                  }s) so the supervisor's readiness timeout is the one that fails the start (requirement 4.14).";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.iii.serviceConfig.TimeoutStopSec or null)
+                    == toString (vm.fabro.iii.stopTimeoutSec * 2)
+                  )
+                  "fabro-vm: iii.service TimeoutStopSec must be twice fabro.iii.stopTimeoutSec (${
+                    toString (vm.fabro.iii.stopTimeoutSec * 2)
+                  }s) so the supervisor's SIGTERM→SIGKILL escalation completes (requirement 4.19).";
+                assert pkgs.lib.assertMsg (!(vm.systemd.services.iii.serviceConfig ? NotifySocket))
+                  "fabro-vm: iii.service must not configure a NotifySocket; sd-notify uses systemd's default filesystem notify socket (requirement 7.18).";
+                assert pkgs.lib.assertMsg ((vm.fabro.iii.supervisorPackage.pname or "") == "iii-supervisor")
+                  "fabro-vm: fabro.iii.supervisorPackage must be the local iii-supervisor package (pname \"iii-supervisor\"; requirements 4.15, 7.16).";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.iii.serviceConfig.ProtectProc or "default") != "invisible"
+                    && (vm.systemd.services.iii.serviceConfig.ProcSubset or "all") != "pid"
+                  )
+                  "fabro-vm: iii.service must keep ProtectProc and ProcSubset at their defaults so the readiness gate can read /proc/<child>/fd and /proc/net/tcp{,6} (design C3 implementation notes).";
                 assert pkgs.lib.assertMsg
                   (
                     let
@@ -3875,7 +3915,7 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
                   builtins.readFile ./configurations/fabro-vm/fabro.nix
                 )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 as the fourth handler after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker), supervised by ${vm.fabro.iii.supervisorPackage.pname} (Type=notify/NotifyAccess=main, WatchdogSec ${toString vm.fabro.iii.watchdogSec}s, readiness gate ${toString vm.fabro.iii.readinessTimeoutSec}s on the engine-owned loopback listener, stop timeout ${toString vm.fabro.iii.stopTimeoutSec}s with SIGTERM→SIGKILL escalation); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 as the fourth handler after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
 
             in
             pkgs.runCommand "fabro-vm-guest-eval"
