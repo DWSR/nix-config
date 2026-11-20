@@ -154,7 +154,7 @@
   - _Depends: 2.2, 6.1_
   - _Boundary: configurations/fabro-vm/iii.nix_
 
-- [ ] 6.3 Extend `fabro-vm-guest-eval` with the supervisor and notify assertions
+- [x] 6.3 Extend `fabro-vm-guest-eval` with the supervisor and notify assertions
   - Assert `systemd.services.iii.serviceConfig` has `Type = "notify"`, `NotifyAccess = "main"`, the watchdog/timeout values equal the configured options (normalize with `toString`), no `NotifySocket`, and a `supervisorPackage` whose `pname` is `iii-supervisor`
   - Assert `ExecStart` equals the escaped supervisor command with `--listen 127.0.0.1:49134`, the readiness and stop timeouts, `--`, the `pkgs.iii` executable, `--config <store>`, and `--no-update-check`; keep the `/nix/store/` config-path assertion
   - Extend the `guestReport` string so it names the notify/watchdog supervisor and readiness gate; keep all assertions pure (no `readFile` of `configFile`, no image build)
