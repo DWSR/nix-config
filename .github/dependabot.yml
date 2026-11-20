@@ -3,6 +3,7 @@ updates:
   - package-ecosystem: cargo
     directories:
       - /configurations/fabro-vm/api-bridge
+      - /configurations/fabro-vm/iii-supervisor
       - /scripts/kiro-spec
     schedule:
       interval: weekly
