@@ -2,8 +2,9 @@
 
 > **Phases**: task 1 lands the pinned engine package and the 73-worker catalog
 > in `overlays/`, task 2 the guest module, unit, and package install, task 3 the
-> `svc:iii` Serve handler, task 4 the evaluated checks, and task 5 the build and
-> runtime verification.
+> `svc:iii` Serve handler, task 4 the evaluated checks, task 5 the build and
+> runtime verification, and task 6 the readiness-gated `iii-supervisor` that
+> closes the requirement-5.9 bind-failure blocker.
 >
 > **Operator precondition, not a task**: the `svc:iii` Tailscale Service must
 > already exist in the admin console and be granted to `tag:fabro` (design C4);
@@ -129,4 +130,44 @@
   - Completed when the loopback listener, the `svc:iii` handler, restart and state durability, and both engine error paths are observed, with the deployed configuration still declaring zero project workers
   - _Requirements: 4.5, 4.6, 4.13, 4.14, 5.2, 5.8, 5.9, 6.2, 6.3_
   - _Depends: 2.2, 3, 4.5_
-  - _Blocked: `svc:iii` is advertised and reachable now — the guest had been running a pre-iii generation (three Serve handlers, no `iii.service`), so this branch was redeployed: `tailscale serve status` lists four handlers, prefs `AdvertiseServices` includes `svc:iii`, the control plane assigned the VIP (`Self.AllowedIPs` gains `100.75.217.36`), and the Mac reaches `https://iii.tuxedo-musical.ts.net` through tailscaled (the engine answers HTTP 400 at `/`); `svc:fabro` 200, `svc:litellm` 200, and `svc:opencode` 401 still work. A second switch from the same tree converged, and `/var/lib/iii` survives `systemctl restart iii`. Still open: requirement 5.9 expects an occupied `127.0.0.1:49134` to fail `iii.service`, but iii 0.26.0 logs `address 127.0.0.1:49134 is already in use` and stays alive, so a readiness gate or a requirement amendment is needed; the changed-config restart was not re-run on the live host; and the external ACPI power key (`logind: Power key pressed short`, ~30–90 s after boot) still blocks the reboot-durability check. The deployment also needed a one-line `openssl` PATH fix for the litellm-db unit (separate commit) because prisma-client-py shells out to `openssl version -v`; without it litellm and fabro stay down. The earlier `[UNSUPPORTED_CONFIG_WORKERS]` check still stands: the exact 0.26.0 binary exits 1 for a project worker and the deployed config declares zero project workers._
+  - _Blocked: `svc:iii` is advertised and reachable now — the guest had been running a pre-iii generation (three Serve handlers, no `iii.service`), so this branch was redeployed: `tailscale serve status` lists four handlers, prefs `AdvertiseServices` includes `svc:iii`, the control plane assigned the VIP (`Self.AllowedIPs` gains `100.75.217.36`), and the Mac reaches `https://iii.tuxedo-musical.ts.net` through tailscaled (the engine answers HTTP 400 at `/`); `svc:fabro` 200, `svc:litellm` 200, and `svc:opencode` 401 still work. A second switch from the same tree converged, and `/var/lib/iii` survives `systemctl restart iii`. Still open: requirement 5.9 expects an occupied `127.0.0.1:49134` to fail `iii.service`, but iii 0.26.0 logs `address 127.0.0.1:49134 is already in use` and stays alive; tasks 6.1–6.4 add the `Type=notify` supervisor and record the guest verification, so this task keeps only the changed-config restart (not re-run on the live host) and the external ACPI power key (`logind: Power key pressed short`, ~30–90 s after boot) reboot-durability blocker. The deployment also needed a one-line `openssl` PATH fix for the litellm-db unit (separate commit) because prisma-client-py shells out to `openssl version -v`; without it litellm and fabro stay down. The earlier `[UNSUPPORTED_CONFIG_WORKERS]` check still stands: the exact 0.26.0 binary exits 1 for a project worker and the deployed config declares zero project workers._
+
+- [ ] 6. Readiness-gated supervisor (unblocks requirement 5.9)
+
+- [ ] 6.1 Add the `iii-supervisor` Rust crate and its tests
+  - Add `configurations/fabro-vm/iii-supervisor/` with `Cargo.toml`, `Cargo.lock`, source, and integration tests; depend only on `sd-notify = "0.5"` and `libc = "0.2"`, with no `libsystemd`, `pkg-config`, or C binding
+  - Implement `--listen <ip:port> --ready-timeout <secs> --stop-timeout <secs> -- <engine> <args...>`: preflight-bind and release the address, exit 1 with `cannot bind ...: Address already in use` before spawning on conflict, then spawn the engine with inherited stdout/stderr
+  - Report `READY=1` and `STATUS=listening ...` only after `/proc/<child>/fd` socket inodes match a `LISTEN` (`0A`) entry for the exact address and port in `/proc/net/tcp` or `/proc/net/tcp6`; a foreign listener or a `0.0.0.0` bind must never satisfy readiness
+  - Use `sd_notify::notify` for `Ready`, `Status`, and `Stopping`; use `sd_notify::watchdog_enabled()` for `WATCHDOG=1` at half the advertised interval; install SIGTERM/SIGINT handlers that only set an atomic, then forward SIGTERM, wait `--stop-timeout`, SIGKILL, reap, and exit with the child's status
+  - Factor listener ownership behind a predicate so tests can inject `|_| true`; add unit tests for `/proc` parsing, ownership positive/negative (a foreign listener accepts TCP but is not the child's), preflight conflict, readiness timeout, child-exit propagation, SIGTERM forwarding, and a temporary `NOTIFY_SOCKET` asserting READY/STATUS/WATCHDOG/STOPPING; Linux-only tests stay cfg-gated
+  - Completed when `cargo test` passes on the Linux builder, the crate builds on `aarch64-linux` with no native inputs, and `nix flake check --no-build` still passes
+  - _Requirements: 4.6, 4.14, 4.15, 4.16, 4.17, 4.18, 4.19, 5.9_
+  - _Boundary: configurations/fabro-vm/iii-supervisor/_
+
+- [ ] 6.2 Wire `iii.service` to the supervisor and add the unit options
+  - Build `supervisorPackage` in `configurations/fabro-vm/iii.nix` with `pkgs.rustPlatform.buildRustPackage`, `src = lib.cleanSource ./iii-supervisor`, and `cargoLock.lockFile = ./iii-supervisor/Cargo.lock`; expose read-only `supervisorPackage` plus `watchdogSec` (30), `readinessTimeoutSec` (15), and `stopTimeoutSec` (10) options
+  - Set `Type = "notify"`, `NotifyAccess = "main"`, `WatchdogSec`/`TimeoutStartSec`/`TimeoutStopSec` from those options, and `ExecStart = lib.escapeShellArgs [ (lib.getExe cfg.supervisorPackage) "--listen" "${cfg.host}:${toString cfg.port}" "--ready-timeout" (toString cfg.readinessTimeoutSec) "--stop-timeout" (toString cfg.stopTimeoutSec) "--" (lib.getExe cfg.package) "--config" (toString cfg.configFile) "--no-update-check" ]`
+  - Keep `DynamicUser`, `StateDirectory`, `WorkingDirectory`, `Restart = "always"`, `RestartSec = 2`, the hardening fields, and the engine package install unchanged; add no `NotifySocket`, `EnvironmentFile`, static account, or non-loopback path
+  - Update the module header and description from one engine process to one supervised engine process; the supervisor is the unit main process and the engine is its child
+  - Completed when evaluation shows the notify/watchdog/timeout fields, the escaped wrapper `ExecStart` with the engine command, no `NotifySocket`, and the existing package/state/hardening assertions still pass
+  - _Requirements: 4.2, 4.4, 4.6, 4.9, 4.12, 4.14, 4.15, 4.16, 4.17, 4.18, 4.19, 5.9_
+  - _Depends: 2.2, 6.1_
+  - _Boundary: configurations/fabro-vm/iii.nix_
+
+- [ ] 6.3 Extend `fabro-vm-guest-eval` with the supervisor and notify assertions
+  - Assert `systemd.services.iii.serviceConfig` has `Type = "notify"`, `NotifyAccess = "main"`, the watchdog/timeout values equal the configured options (normalize with `toString`), no `NotifySocket`, and a `supervisorPackage` whose `pname` is `iii-supervisor`
+  - Assert `ExecStart` equals the escaped supervisor command with `--listen 127.0.0.1:49134`, the readiness and stop timeouts, `--`, the `pkgs.iii` executable, `--config <store>`, and `--no-update-check`; keep the `/nix/store/` config-path assertion
+  - Extend the `guestReport` string so it names the notify/watchdog supervisor and readiness gate; keep all assertions pure (no `readFile` of `configFile`, no image build)
+  - Completed when removing a notify field, the supervisor, a wrapper flag, or the `NotifySocket` guard fails `nix flake check` with a `fabro-vm:` message naming the element
+  - _Requirements: 7.7, 7.8, 7.14, 7.15, 7.16, 7.17, 7.18_
+  - _Depends: 4.4, 6.2_
+  - _Boundary: flake.nix_
+
+- [ ] 6.4 Verify bind-conflict failure and watchdog restart on the guest
+  - Build the guest on the Linux builder or guest and `nixos-rebuild switch --flake .#fabro-vm`; confirm `systemctl status iii` shows `Status: listening on 127.0.0.1:49134` with the supervisor as MainPID and `iii` as its child, `ss -ltnp` shows only `127.0.0.1:49134`, and `svc:iii` still reaches the engine
+  - Stop iii, occupy `127.0.0.1:49134` with a foreign listener, and start iii; confirm the start fails, the unit reaches `failed` at the start limit, and the journal records the supervisor's bind error; free the port, `systemctl reset-failed iii`, and confirm it returns active
+  - With the service active, stop only the supervisor's main PID (`systemctl kill -s STOP --kill-who=main iii`), wait beyond `WatchdogSec`, and confirm the journal shows the watchdog timeout, `NRestarts` increments, and the unit returns active; then `systemctl stop iii` and confirm `STOPPING=1` and a clean exit with no watchdog restart
+  - Update the 5.2 `_Blocked:_` note to record the requirement-5.9 bind-conflict path as verified by this task; leave the changed-config restart and the ACPI power-key/reboot durability items recorded there
+  - Completed when the normal start, bind-conflict failure, watchdog restart, and graceful stop are observed on the guest and the `journalctl`/`systemctl` output matches the contracts above
+  - _Requirements: 4.6, 4.14, 4.15, 4.16, 4.17, 4.18, 4.19, 5.9_
+  - _Depends: 6.2, 6.3_
