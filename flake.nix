@@ -3631,11 +3631,24 @@
                   (
                     let
                       configFile = builtins.unsafeDiscardStringContext (toString vm.fabro.iii.configFile);
-                      expectedExecStart = "${pkgs.lib.getExe vm.fabro.iii.package} --config ${configFile} --no-update-check";
+                      expectedExecStart = pkgs.lib.escapeShellArgs [
+                        (pkgs.lib.getExe vm.fabro.iii.supervisorPackage)
+                        "--listen"
+                        "${vm.fabro.iii.host}:${toString vm.fabro.iii.port}"
+                        "--ready-timeout"
+                        (toString vm.fabro.iii.readinessTimeoutSec)
+                        "--stop-timeout"
+                        (toString vm.fabro.iii.stopTimeoutSec)
+                        "--"
+                        (pkgs.lib.getExe vm.fabro.iii.package)
+                        "--config"
+                        configFile
+                        "--no-update-check"
+                      ];
                     in
                     vm.systemd.services.iii.serviceConfig.ExecStart == expectedExecStart
                   )
-                  "fabro-vm: iii.service ExecStart must be lib.getExe config.fabro.iii.package with `--config <fabro.iii.configFile>` and `--no-update-check` (requirements 4.4, 4.9, 4.12).";
+                  "fabro-vm: iii.service ExecStart must run the supervisor with `--listen <host>:<port>`, the readiness and stop timeouts, then the `iii` engine with `--config <fabro.iii.configFile>` and `--no-update-check` (requirements 4.4, 4.9, 4.12, 4.15, 4.17).";
                 assert pkgs.lib.assertMsg
                   (pkgs.lib.hasPrefix "/nix/store/" (
                     builtins.unsafeDiscardStringContext (toString vm.fabro.iii.configFile)
