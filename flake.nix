@@ -2617,6 +2617,177 @@
                 printf '%s\n' "$iiiPackageReport" > "$out"
               '';
 
+          # Pure-evaluation isolation check keeping AgentMemory's pinned iii
+          # 0.11.5 runtime untouched (spec iii-engine-on-the-fabro-host, task
+          # 4.3; requirements 3.1–3.8, 7.5; design "C5: Verification" and
+          # "Testing Strategy → AgentMemory isolation check"). It instantiates
+          # the repository overlay chain for the two Darwin systems
+          # AgentMemory's overlay supports and asserts iii-engine's pname,
+          # version, and platform set are unchanged. On aarch64-darwin it also
+          # asserts agentmemory still carries its iiiVersion/iiiRevision
+          # passthru metadata, that pkgs.iii and pkgs.iii-workers are
+          # attributes and derivations distinct from pkgs.iii-engine, that no
+          # engine or worker source URL or output hash is shared with
+          # iii-engine, that neither new package leaks the AgentMemory
+          # iiiVersion/iiiRevision passthru keys, and that the
+          # agentmemory-opencode-matrix check is still declared. The
+          # x86_64-darwin package set is inspected for iii-engine metadata
+          # only: pkgs.iii and pkgs.iii-workers intentionally throw there. The
+          # report embeds plain metadata only, with store-path context
+          # discarded, so the runCommand depends on no derivation and nothing
+          # is built or fetched during evaluation.
+          iii-agentmemory-isolation =
+            let
+              inherit (pkgs) lib;
+              # Systems AgentMemory's overlays/agentmemory.nix supports (3.3).
+              engineSystems = [
+                "aarch64-darwin"
+                "x86_64-darwin"
+              ];
+              # The only system where the new iii packages evaluate; the
+              # overlay guard throws everywhere else (3.6).
+              newPackageSystem = "aarch64-darwin";
+              # Expected AgentMemory engine metadata (3.1–3.3). Keep this
+              # table next to the assertions: a bump must update it here.
+              expectedEngine = {
+                pname = "iii-engine";
+                version = "0.11.5";
+                platforms = [
+                  "aarch64-darwin"
+                  "x86_64-darwin"
+                ];
+              };
+              # Expected AgentMemory passthru metadata (3.8).
+              expectedPassthru = {
+                iiiVersion = "0.11.5";
+                iiiRevision = "iii/v0.11.5";
+              };
+              # Mirror the checks package set: the overlay chain host configs
+              # use, plus unfree packages.
+              mkSystemPkgs =
+                system:
+                import nixpkgs {
+                  inherit system;
+                  config.allowUnfree = true;
+                  overlays = [
+                    outputs.overlays.unstable-packages
+                    outputs.overlays.custom-packages
+                  ];
+                };
+              # Assert one cataloged worker is its own derivation with a
+              # source and output hash disjoint from iii-engine's and with no
+              # AgentMemory metadata. Every message names the worker and the
+              # system.
+              checkWorker =
+                system: packages: engineUrls: engineHash: engineOutPath: name:
+                let
+                  workers = packages.iii-workers;
+                  worker = workers.${name};
+                  workerOutPath = builtins.unsafeDiscardStringContext "${worker}";
+                  workerUrls = map builtins.unsafeDiscardStringContext (worker.src.urls or [ ]);
+                  workerHash = builtins.unsafeDiscardStringContext (worker.src.outputHash or "");
+                  workerPassthru = worker.passthru or { };
+                  sharedUrls = builtins.filter (url: builtins.elem url engineUrls) workerUrls;
+                in
+                assert lib.assertMsg (workerOutPath != engineOutPath)
+                  "iii-agentmemory-isolation: ${system} iii-workers.${name} must resolve to its own derivation, not iii-engine's (${engineOutPath}).";
+                assert lib.assertMsg (sharedUrls == [ ])
+                  "iii-agentmemory-isolation: ${system} iii-workers.${name}.src.urls must not share a source with iii-engine; shared: [ ${lib.concatStringsSep " " sharedUrls} ].";
+                assert lib.assertMsg (workerHash != engineHash)
+                  "iii-agentmemory-isolation: ${system} iii-workers.${name}.src.outputHash must differ from iii-engine's \"${engineHash}\".";
+                assert lib.assertMsg (!(builtins.hasAttr "iiiVersion" workerPassthru))
+                  "iii-agentmemory-isolation: ${system} iii-workers.${name}.passthru must not carry AgentMemory's iiiVersion metadata.";
+                assert lib.assertMsg (!(builtins.hasAttr "iiiRevision" workerPassthru))
+                  "iii-agentmemory-isolation: ${system} iii-workers.${name}.passthru must not carry AgentMemory's iiiRevision metadata.";
+                "${system} iii-workers.${name}: version=${worker.version or ""}; src=${lib.concatStringsSep " " workerUrls}; hash=${workerHash}; outPath=${workerOutPath}; passthru=[ ${lib.concatStringsSep " " (builtins.attrNames workerPassthru)} ]";
+              # Assert the AgentMemory passthru keys, the new packages'
+              # distinctness and source/hash disjointness, and the unchanged
+              # host-matrix check on aarch64-darwin (3.4–3.8).
+              checkNewPackages =
+                system: packages: engineUrls: engineHash: engineOutPath:
+                let
+                  agentMemoryPackage = packages.agentmemory;
+                  agentMemoryPassthru = agentMemoryPackage.passthru or { };
+                  agentMemoryIiiVersion = agentMemoryPassthru.iiiVersion or "";
+                  agentMemoryIiiRevision = agentMemoryPassthru.iiiRevision or "";
+                  inherit (packages) iii;
+                  iiiPname = iii.pname or "";
+                  iiiVersion = iii.version or "";
+                  iiiOutPath = builtins.unsafeDiscardStringContext "${iii}";
+                  iiiUrls = map builtins.unsafeDiscardStringContext (iii.src.urls or [ ]);
+                  iiiHash = builtins.unsafeDiscardStringContext (iii.src.outputHash or "");
+                  iiiPassthru = iii.passthru or { };
+                  workerNames = builtins.attrNames packages.iii-workers;
+                  sharedUrls = builtins.filter (url: builtins.elem url engineUrls) iiiUrls;
+                  hostMatrixChecks = self.checks.aarch64-darwin;
+                in
+                assert lib.assertMsg (builtins.hasAttr "iii" packages)
+                  "iii-agentmemory-isolation: ${system} pkgs.iii must be provided by the repository overlay chain as an attribute distinct from pkgs.iii-engine.";
+                assert lib.assertMsg (builtins.hasAttr "iii-workers" packages)
+                  "iii-agentmemory-isolation: ${system} pkgs.iii-workers must be provided by the repository overlay chain as an attribute distinct from pkgs.iii-engine.";
+                assert lib.assertMsg (agentMemoryIiiVersion == expectedPassthru.iiiVersion)
+                  "iii-agentmemory-isolation: ${system} agentmemory.passthru.iiiVersion must be \"${expectedPassthru.iiiVersion}\", got \"${agentMemoryIiiVersion}\".";
+                assert lib.assertMsg (agentMemoryIiiRevision == expectedPassthru.iiiRevision)
+                  "iii-agentmemory-isolation: ${system} agentmemory.passthru.iiiRevision must be \"${expectedPassthru.iiiRevision}\", got \"${agentMemoryIiiRevision}\".";
+                assert lib.assertMsg (iiiPname == "iii")
+                  "iii-agentmemory-isolation: ${system} pkgs.iii.pname must be \"iii\" (distinct from iii-engine), got \"${iiiPname}\".";
+                assert lib.assertMsg (iiiOutPath != engineOutPath)
+                  "iii-agentmemory-isolation: ${system} pkgs.iii must resolve to its own derivation, not iii-engine's (${engineOutPath}).";
+                assert lib.assertMsg (sharedUrls == [ ])
+                  "iii-agentmemory-isolation: ${system} iii.src.urls must not share a source with iii-engine; shared: [ ${lib.concatStringsSep " " sharedUrls} ].";
+                assert lib.assertMsg (iiiHash != engineHash)
+                  "iii-agentmemory-isolation: ${system} iii.src.outputHash must differ from iii-engine's \"${engineHash}\".";
+                assert lib.assertMsg (!(builtins.hasAttr "iiiVersion" iiiPassthru))
+                  "iii-agentmemory-isolation: ${system} iii.passthru must not carry AgentMemory's iiiVersion metadata.";
+                assert lib.assertMsg (!(builtins.hasAttr "iiiRevision" iiiPassthru))
+                  "iii-agentmemory-isolation: ${system} iii.passthru must not carry AgentMemory's iiiRevision metadata.";
+                assert lib.assertMsg (builtins.hasAttr "agentmemory-opencode-matrix" hostMatrixChecks)
+                  "iii-agentmemory-isolation: aarch64-darwin self.checks must still declare agentmemory-opencode-matrix; the unchanged AgentMemory host-matrix check is the consumer-resolution proof.";
+                [
+                  "${system} agentmemory: iiiVersion=${agentMemoryIiiVersion}; iiiRevision=${agentMemoryIiiRevision}"
+                  "${system} iii: pname=${iiiPname}; version=${iiiVersion}; src=${lib.concatStringsSep " " iiiUrls}; hash=${iiiHash}; outPath=${iiiOutPath}; passthru=[ ${lib.concatStringsSep " " (builtins.attrNames iiiPassthru)} ]; workers=${toString (builtins.length workerNames)}"
+                ]
+                ++ map (checkWorker system packages engineUrls engineHash engineOutPath) workerNames;
+              # Assert iii-engine's unchanged metadata on its two supported
+              # systems; force the new packages only where they exist.
+              checkSystem =
+                system:
+                let
+                  packages = mkSystemPkgs system;
+                  engine = packages.iii-engine;
+                  enginePname = engine.pname or "";
+                  engineVersion = engine.version or "";
+                  enginePlatforms = lib.sort (a: b: a < b) (engine.meta.platforms or [ ]);
+                  engineUrls = map builtins.unsafeDiscardStringContext (engine.src.urls or [ ]);
+                  engineHash = builtins.unsafeDiscardStringContext (engine.src.outputHash or "");
+                  engineOutPath = builtins.unsafeDiscardStringContext "${engine}";
+                  newPackageReport =
+                    if system == newPackageSystem then
+                      checkNewPackages system packages engineUrls engineHash engineOutPath
+                    else
+                      [ ];
+                in
+                assert lib.assertMsg (builtins.hasAttr "iii-engine" packages)
+                  "iii-agentmemory-isolation: ${system} pkgs.iii-engine must be provided by the AgentMemory overlay.";
+                assert lib.assertMsg (enginePname == expectedEngine.pname)
+                  "iii-agentmemory-isolation: ${system} iii-engine.pname must be \"${expectedEngine.pname}\", got \"${enginePname}\".";
+                assert lib.assertMsg (engineVersion == expectedEngine.version)
+                  "iii-agentmemory-isolation: ${system} iii-engine.version must be \"${expectedEngine.version}\", got \"${engineVersion}\".";
+                assert lib.assertMsg (enginePlatforms == expectedEngine.platforms)
+                  "iii-agentmemory-isolation: ${system} iii-engine.meta.platforms must be exactly [ ${lib.concatStringsSep " " expectedEngine.platforms} ], got [ ${lib.concatStringsSep " " enginePlatforms} ].";
+                [
+                  "${system}: iii-engine pname=${enginePname}; version=${engineVersion}; platforms=[ ${lib.concatStringsSep " " enginePlatforms} ]; src=${lib.concatStringsSep " " engineUrls}; hash=${engineHash}; outPath=${engineOutPath}"
+                ]
+                ++ newPackageReport;
+            in
+            pkgs.runCommand "iii-agentmemory-isolation"
+              {
+                iiiAgentMemoryIsolationReport = lib.concatStringsSep "\n" (lib.concatMap checkSystem engineSystems);
+              }
+              ''
+                printf '%s\n' "$iiiAgentMemoryIsolationReport" > "$out"
+              '';
+
           # Eval assertions for the fabro NixOS guest (pure eval over
           # nixosConfigurations.fabro-vm + trivial runCommand; no Linux
           # builder needed — building packages.aarch64-linux.fabro-vm-image
