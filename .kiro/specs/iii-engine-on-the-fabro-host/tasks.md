@@ -70,7 +70,7 @@
 
 - [ ] 4. Evaluated verification
 
-- [ ] 4.1 Add the `iii-packages` check and its engine assertions
+- [x] 4.1 Add the `iii-packages` check and its engine assertions
   - Add a check in `flake.nix`'s `checks` that instantiates `import nixpkgs { system = ...; overlays = [ outputs.overlays.custom-packages ]; }` for `aarch64-linux` and `aarch64-darwin` and asserts `iii.version == "0.26.0"`, `passthru.sourceRevision == "iii/v0.26.0"`, and the exact two-element `meta.platforms`
   - Assert each system's `iii.src.urls` and `src.outputHash` equal the release URL and SRI pinned in task 1.1, so a repointed or floating fetch fails evaluation
   - Build the report from plain metadata, discarding store-path context with `builtins.unsafeDiscardStringContext`, and give every `lib.assertMsg` a message naming the system and field
