@@ -2515,10 +2515,11 @@
                 "--service=svc:fabro --https=443 http://127.0.0.1:32276"
                 "--service=svc:litellm --https=443 http://127.0.0.1:4000"
                 "--service=svc:opencode --https=443 http://127.0.0.1:4096"
+                "--service=svc:iii --https=443 http://127.0.0.1:49134"
               ];
               pgServe = vm.systemd.services.tailscale-serve.serviceConfig.ExecStart or [ ];
               pgServeUnchanged =
-                builtins.length pgServe == 3
+                builtins.length pgServe == 4
                 && builtins.all (
                   line: builtins.any (expected: pkgs.lib.hasSuffix expected line) pgServeExpected
                 ) pgServe
@@ -2884,7 +2885,7 @@
                 assert pkgs.lib.assertMsg (!pgFirewallOpensPort)
                   "fabro-vm: networking.firewall must leave the PostgreSQL port ${toString pgPort} closed (no allowedTCPPorts entry and no allowedTCPPortRanges range opens it).";
                 assert pkgs.lib.assertMsg pgServeUnchanged
-                  "fabro-vm: systemd.services.tailscale-serve must keep exactly the svc:fabro, svc:litellm, and svc:opencode tcp:443 advertisements and publish nothing for PostgreSQL; got [ ${pkgs.lib.concatStringsSep " | " pgServe} ].";
+                  "fabro-vm: systemd.services.tailscale-serve must keep exactly the svc:fabro, svc:litellm, svc:opencode, and svc:iii tcp:443 advertisements and publish nothing for PostgreSQL; got [ ${pkgs.lib.concatStringsSep " | " pgServe} ].";
                 assert pkgs.lib.assertMsg (pgMissingExtensions == [ ])
                   "fabro-vm: services.postgresql.finalPackage.installedExtensions must contain the pg_textsearch, pgvector (vector), and pg_uuidv7 extension packages; missing '${builtins.head pgMissingExtensions}'.";
                 assert pkgs.lib.assertMsg (pgvector != null && pkgs.lib.versionAtLeast pgvector.version "0.8.6")
@@ -3229,7 +3230,7 @@
                 assert pkgs.lib.assertMsg
                   (
                     builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
-                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 3
+                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 4
                     && pkgs.lib.hasInfix "--service=svc:fabro --https=443 http://127.0.0.1:32276" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
@@ -3239,8 +3240,11 @@
                     && pkgs.lib.hasInfix "--service=svc:opencode --https=443 http://127.0.0.1:4096" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
+                    && pkgs.lib.hasInfix "--service=svc:iii --https=443 http://127.0.0.1:49134" (
+                      builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
+                    )
                   )
-                  "fabro-vm: tailscale-serve must advertise svc:fabro, svc:litellm, and svc:opencode per the console resource defs (tcp:443 each).";
+                  "fabro-vm: tailscale-serve must advertise svc:fabro, svc:litellm, svc:opencode, and svc:iii per the console resource defs (tcp:443 each).";
                 # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services ? opencode

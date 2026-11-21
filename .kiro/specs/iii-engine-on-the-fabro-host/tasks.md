@@ -59,7 +59,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 4.13, 4.14_
   - _Depends: 2.1_
 
-- [ ] 3. (P) Add the `svc:iii` Tailscale Serve advertisement
+- [x] 3. (P) Add the `svc:iii` Tailscale Serve advertisement
   - Append `serve --service=svc:iii --https=443 http://127.0.0.1:49134` as the fourth `ExecStart` entry in `configurations/fabro-vm/tailscale.nix`, after `svc:fabro`, `svc:litellm`, and `svc:opencode`, so tailnet clients reach the engine at `wss://iii.tuxedo-musical.ts.net` with TLS terminated by tailscaled
   - Keep the three existing entries byte-for-byte and keep `after`/`requires` on `tailscaled.service` and `tailscaled-autoconnect.service`; do not require `iii.service`, so the engine stays loopback-only until registration and the handler is applied once it completes
   - Leave the oneshot enabled at boot so a repeat run converges to the same handler; a failing fourth line must leave the earlier three applied, journal the error, and add no other exposure path while the Service is absent
