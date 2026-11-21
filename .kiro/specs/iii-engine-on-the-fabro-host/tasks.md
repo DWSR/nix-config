@@ -41,7 +41,7 @@
 
 - [ ] 2. Guest service
 
-- [ ] 2.1 Render the empty-worker configuration and expose the `fabro.iii` options
+- [x] 2.1 Render the empty-worker configuration and expose the `fabro.iii` options
   - Add `configurations/fabro-vm/iii.nix` with `fabro.iii` options: `package` (default `pkgs.iii`), `host` (default `"127.0.0.1"`), `port` (default `49134`), and read-only `config`/`configFile` values rendered by `(pkgs.formats.yaml { }).generate "iii-config.yaml" config.fabro.iii.config`
   - Default `config` to exactly one `workers` entry, `{ name = "iii-worker-manager"; config = { host = "127.0.0.1"; port = 49134; }; }`, deriving host and port from those two options so the rendered file has one source
   - Declare no project worker and no `configuration`, `iii-stream`, `http-functions`, or `sandbox` entry; add no unit, package install, or secret in this task
