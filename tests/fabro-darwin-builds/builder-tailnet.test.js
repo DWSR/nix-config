@@ -115,13 +115,20 @@ test('mac-builder tailnet module declares the open-source service and root-only 
   assert.equal(config.secret.name, 'builder-tailscale-oauth-secret');
 });
 
-test('mac-builder auth daemon invokes the wrapper with the exact credential and node identity', () => {
+test('mac-builder auth daemon waits for /nix and invokes the wrapper with the exact credential and node identity', () => {
   const config = evaluateBuilder();
   const daemon = config.authDaemon;
   const args = daemon.serviceConfig.ProgramArguments;
 
-  assert.equal(args[0].split('/').at(-1), 'mac-builder-tailscale-auth');
-  assert.deepEqual(args.slice(1), [
+  assert.deepEqual(args.slice(0, 4), [
+    '/bin/sh',
+    '-c',
+    '/bin/wait4path /nix/store && exec "$@"',
+    'mac-builder-tailscale-auth',
+  ]);
+  const wrapperArgs = args.slice(4);
+  assert.equal(wrapperArgs[0].split('/').at(-1), 'mac-builder-tailscale-auth');
+  assert.deepEqual(wrapperArgs.slice(1), [
     '--auth-key-file', '/run/secrets/builder-tailscale-oauth-secret',
     '--hostname', 'mac-builder',
     '--tag', 'tag:nix-remote-builder',

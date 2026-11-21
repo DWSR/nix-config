@@ -7,6 +7,17 @@
 let
   tailscaleAuth = pkgs.callPackage ../../scripts/mac-builder-tailscale-auth.nix { };
   credentialPath = config.sops.secrets."builder-tailscale-oauth-secret".path;
+  authArgs = [
+    "${tailscaleAuth}/bin/mac-builder-tailscale-auth"
+    "--auth-key-file"
+    credentialPath
+    "--hostname"
+    "mac-builder"
+    "--tag"
+    "tag:nix-remote-builder"
+    "--tailscale"
+    (lib.getExe config.services.tailscale.package)
+  ];
 in
 {
   services.tailscale.enable = true;
@@ -25,16 +36,12 @@ in
     serviceConfig = {
       Label = "mac-builder-tailscale-auth";
       ProgramArguments = [
-        "${tailscaleAuth}/bin/mac-builder-tailscale-auth"
-        "--auth-key-file"
-        credentialPath
-        "--hostname"
-        "mac-builder"
-        "--tag"
-        "tag:nix-remote-builder"
-        "--tailscale"
-        (lib.getExe config.services.tailscale.package)
-      ];
+        "/bin/sh"
+        "-c"
+        "/bin/wait4path /nix/store && exec \"$@\""
+        "mac-builder-tailscale-auth"
+      ]
+      ++ authArgs;
       RunAtLoad = true;
       KeepAlive = true;
       ThrottleInterval = 30;
