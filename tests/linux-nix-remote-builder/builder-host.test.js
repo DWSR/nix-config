@@ -28,6 +28,11 @@ function evalBuilder(extraModule = null) {
       buildUsersGroup = cfg.nix.settings.build-users-group;
       trustedUsers = cfg.nix.settings.trusted-users;
       wheelNeedsPassword = cfg.security.sudo.wheelNeedsPassword;
+      lima = {
+        enabled = cfg.services.lima.enable;
+        initServiceExists = cfg.systemd.services ? lima-init;
+        guestAgentWantedBy = cfg.systemd.services.lima-guestagent.wantedBy;
+      };
       builderUser = {
         isNormalUser = cfg.users.users.builder.isNormalUser;
         isSystemUser = cfg.users.users.builder.isSystemUser;
@@ -153,6 +158,14 @@ test('linux-builder is a native, standalone NixOS remote builder', () => {
   assert.deepEqual(cfg.builderUser.extraGroups ?? [], []);
 });
 
+test('linux-builder keeps Lima initialization and guest-agent services enabled', () => {
+  const cfg = evalBuilder();
+
+  assert.equal(cfg.lima.enabled, true);
+  assert.equal(cfg.lima.initServiceExists, true);
+  assert.ok(cfg.lima.guestAgentWantedBy.includes('multi-user.target'));
+});
+
 test('a wrong builder platform is rejected', () => {
   const cfg = evalBuilder(`{ lib, ... }: {
     nixpkgs.hostPlatform = lib.mkForce "x86_64-linux";
@@ -265,7 +278,7 @@ test('SOPS activation fails clearly when the encrypted store or age key is missi
   }
 });
 
-test('Tailscale and Nix maintenance are configured without Lima dependencies', () => {
+test('Tailscale and Nix maintenance stay independent of host-side Lima lifecycle', () => {
   const cfg = evalBuilder();
 
   assert.equal(cfg.tailscale.enable, true);
@@ -327,13 +340,12 @@ test('Tailscale and Nix maintenance are configured without Lima dependencies', (
   assert.equal(cfg.optimisation.automatic, true);
   assert.deepEqual(cfg.optimisation.dates, ['daily']);
 
-  // Lima provisioning and lifecycle belong to the personal host, never to the
-  // portable builder host: neither Lima module's options exist here.
+  // VM creation and lifecycle belong to the personal host. The guest only
+  // enables nixos-lima's initialization and guest-agent services.
   assert.equal(cfg.hasLimaVM, false);
   assert.equal(cfg.hasLimaMacGuest, false);
 
   const source = fs.readFileSync(path.join(repoRoot, 'configurations/linux-builder/default.nix'), 'utf8');
-  assert.doesNotMatch(source, /lima/i);
   assert.doesNotMatch(source, /limactl/);
   assert.doesNotMatch(source, /builtins\.readFile/);
   assert.doesNotMatch(source, /authorizedKeys\.keys/);

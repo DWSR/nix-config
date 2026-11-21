@@ -4500,6 +4500,9 @@
       nixosConfigurations.linux-builder = inputs.nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         modules = [
+          # Preserve Lima's guest initialization and guest-agent services when
+          # this system replaces the base nixos-lima image configuration.
+          inputs.nixos-lima.nixosModules.lima
           inputs.sops-nix.nixosModules.default
           ./configurations/linux-builder
         ];
