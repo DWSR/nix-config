@@ -78,13 +78,14 @@
   - Completed when the check passes without a Linux builder and a changed version, URL, hash, or platform set fails with a message naming the `iii` field and system
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 7.1, 7.14, 7.15_
 
-- [ ] 4.2 Extend `iii-packages` with the 73-worker catalog assertions
+- [x] 4.2 Extend `iii-packages` with the 73-worker catalog assertions
   - Assert `builtins.length (builtins.attrNames pkgs.iii-workers) == 73` on both systems, that the attribute names equal the manifest keys, and that `harness-e2e`, `voice`, `ios-simulator`, the eight official bundles, the four third-party bundles, `registry-cli`, and the four engine-kind names are absent
   - For every worker and both systems assert `version`, `src.urls`, `src.outputHash`, `meta.mainProgram` equal to the manifest `binary`, the two-element `meta.platforms`, and `passthru.iiiEngineVersion == "0.26.0"`
   - Assert each worker source URL appears in the manifest, so no derivation can fall back to an unpinned download, and name the worker and target in every message
   - Completed when all 73 workers pass for both systems, and dropping an entry, adding an excluded name, or changing one URL, hash, or binary fails with a message naming that worker and system
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 7.2, 7.3, 7.4, 7.14, 7.15_
   - _Depends: 4.1_
+  - _Boundary: flake.nix_
 
 - [ ] 4.3 Add the `iii-agentmemory-isolation` check
   - Instantiate `aarch64-darwin` (and `x86_64-darwin`) package sets with the repository overlays and assert `iii-engine.pname == "iii-engine"`, `version == "0.11.5"`, and its unchanged two-platform set; do not force `iii` or `iii-workers` on `x86_64-darwin`, where the guard intentionally throws
