@@ -12,6 +12,10 @@ in
   nixpkgs.hostPlatform = "aarch64-linux";
   networking.hostName = "linux-builder";
 
+  # Keep Lima's cidata initialization and guest-agent service after switching
+  # from the nixos-lima base image to this host configuration.
+  services.lima.enable = true;
+
   boot.loader.grub = {
     enable = true;
     device = "nodev";
