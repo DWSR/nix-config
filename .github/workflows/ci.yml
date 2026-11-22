@@ -31,6 +31,8 @@ jobs:
       auto-merge: ${{ steps.plan.outputs.auto-merge }}
       prek: ${{ steps.plan.outputs.prek }}
       gitleaks: ${{ steps.plan.outputs.gitleaks }}
+      flake-check: ${{ steps.plan.outputs.flake-check }}
+      lima-config: ${{ steps.plan.outputs.lima-config }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
@@ -45,6 +47,8 @@ jobs:
           ACTION: ${{ github.event.action }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          STACK_POSITION: ${{ github.event.pull_request.stack.position }}
+          STACK_SIZE: ${{ github.event.pull_request.stack.size }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
@@ -58,6 +62,8 @@ jobs:
           auto_merge=false
           prek=false
           gitleaks=false
+          flake_check=false
+          lima_config=false
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             case "$ACTION" in
@@ -85,11 +91,22 @@ jobs:
             fi
           fi
 
+          stack_ok=true
+          if [[ -n "${STACK_POSITION:-}" && -n "${STACK_SIZE:-}" ]]; then
+            if (( STACK_POSITION > 2 && STACK_POSITION != STACK_SIZE )); then
+              stack_ok=false
+            fi
+          fi
+
           if [[ "$pr_default" == "true" || "$EVENT_NAME" == "push" ]]; then
             prek=true
             if [[ "$kiro_only" != "true" ]]; then
               codeql=true
               gitleaks=true
+              if [[ "$stack_ok" == "true" ]]; then
+                flake_check=true
+                lima_config=true
+              fi
             fi
           fi
           if [[ "$EVENT_NAME" == "schedule" ]]; then
@@ -106,6 +123,8 @@ jobs:
             echo "auto-merge=$auto_merge"
             echo "prek=$prek"
             echo "gitleaks=$gitleaks"
+            echo "flake-check=$flake_check"
+            echo "lima-config=$lima_config"
           } >> "$GITHUB_OUTPUT"
 
   commit-count:
@@ -270,3 +289,120 @@ jobs:
       - uses: gitleaks/gitleaks-action@v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  flake-check:
+    name: nix flake check
+    needs: dispatch
+    if: needs.dispatch.outputs.flake-check == 'true'
+    runs-on: macos-latest
+    # `actions: write` is required by the cache action's purge feature.
+    permissions:
+      contents: read
+      actions: write
+    # The filtered build below still takes most of an hour cold; keep
+    # headroom so a slow runner does not cancel a green run.
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.11.5
+        with:
+          extra_nix_config: |
+            extra-substituters = https://nix-community.cachix.org
+            extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+
+      # Restore and save the Nix store through the GitHub Actions cache.
+      # Only main pushes save and purge; pull requests restore the latest
+      # main cache by key prefix.
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ github.sha }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: ${{ github.event_name == 'push' }}
+          purge: ${{ github.event_name == 'push' }}
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-last-accessed: P7D
+          purge-primary-key: never
+
+      # Preserve Nix's evaluation/tarball cache between runs. The
+      # `github.sha` in the key lets each run save a fresh cache;
+      # `restore-keys` reuses the latest cache for the same lockfile.
+      - name: Cache Nix evaluation data
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/nix
+          key: nix-eval-${{ runner.os }}-${{ hashFiles('flake.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nix-eval-${{ runner.os }}-${{ hashFiles('flake.lock') }}-
+            nix-eval-${{ runner.os }}-
+
+      - name: Run builds as the runner user
+        run: |
+          # Several checks evaluate the flake again from inside their build
+          # (for example tests/ast-grep-mcp). The daemon drops store-copy
+          # requests from the untrusted nixbld users, so run builds as root
+          # on this disposable runner. The installer appends its own
+          # build-users-group line, hence the override after installation.
+          echo 'build-users-group =' | sudo tee -a /etc/nix/nix.conf
+          sudo launchctl kickstart -k system/org.nixos.nix-daemon
+
+      - name: Run flake checks
+        run: |
+          # Building opencode cold takes over two hours; limactl refuses
+          # root and fabro's validate check races build-dir cleanup. Gate
+          # the remaining checks' builds while still evaluating every check.
+          # The `prek` workflow already runs the formatting and pre-commit
+          # hooks, so the flake-check job must not duplicate them.
+          # shellcheck disable=SC2016
+          attrs=$(nix eval --raw .#checks.aarch64-darwin --apply 'attrs:
+            let
+              names = builtins.filter
+                (name: !(builtins.match "^(opencode|agentmemory-opencode|lima-vm-config-validate|fabro-workflows-validate|formatting|pre-commit-check).*" name != null))
+                (builtins.attrNames attrs);
+            in
+            builtins.concatStringsSep " " (map (name: ".#checks.aarch64-darwin.${name}") names)')
+          # shellcheck disable=SC2086
+          nix build --no-link --keep-going $attrs
+
+      # Pull requests only need the filtered build above; the full flake
+      # output evaluation and IFD materialization are a main-only gate.
+      - name: Check full flake evaluation
+        if: github.event_name == 'push'
+        run: |
+          # `nix flake check --no-build` cannot realise import-from-derivation
+          # paths. Force every check's derivation, including the filtered
+          # ones, so their IFD inputs (generated config files and package
+          # files read during evaluation) exist without building the checks.
+          # shellcheck disable=SC2016
+          nix eval --raw .#checks.aarch64-darwin --apply 'attrs:
+            builtins.concatStringsSep " " (builtins.map
+              (name: (builtins.getAttr name attrs).drvPath)
+              (builtins.attrNames attrs))' > /dev/null
+          nix flake check --no-build --show-trace --keep-going
+
+  # Limactl refuses to run as root, and the flake-check job reconfigures the
+  # daemon to run builds as root, so Lima validation runs in its own job.
+  lima-config:
+    name: Validate Lima config
+    needs: dispatch
+    if: needs.dispatch.outputs.lima-config == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.11.5
+        with:
+          extra_nix_config: |
+            extra-substituters = https://nix-community.cachix.org
+            extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+
+      - name: Validate Lima config
+        run: nix build --no-link '.#checks.aarch64-darwin.lima-vm-config-validate'
