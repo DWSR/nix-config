@@ -30,6 +30,7 @@ jobs:
       codeql: ${{ steps.plan.outputs.codeql }}
       auto-merge: ${{ steps.plan.outputs.auto-merge }}
       prek: ${{ steps.plan.outputs.prek }}
+      gitleaks: ${{ steps.plan.outputs.gitleaks }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
@@ -56,6 +57,7 @@ jobs:
           codeql=false
           auto_merge=false
           prek=false
+          gitleaks=false
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             case "$ACTION" in
@@ -87,6 +89,7 @@ jobs:
             prek=true
             if [[ "$kiro_only" != "true" ]]; then
               codeql=true
+              gitleaks=true
             fi
           fi
           if [[ "$EVENT_NAME" == "schedule" ]]; then
@@ -102,6 +105,7 @@ jobs:
             echo "codeql=$codeql"
             echo "auto-merge=$auto_merge"
             echo "prek=$prek"
+            echo "gitleaks=$gitleaks"
           } >> "$GITHUB_OUTPUT"
 
   commit-count:
@@ -248,3 +252,21 @@ jobs:
       - name: Show hook changes
         if: failure()
         run: git --no-pager diff
+
+  gitleaks:
+    name: gitleaks
+    needs: dispatch
+    if: needs.dispatch.outputs.gitleaks == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
