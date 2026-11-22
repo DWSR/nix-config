@@ -29,6 +29,7 @@ jobs:
       size: ${{ steps.plan.outputs.size }}
       codeql: ${{ steps.plan.outputs.codeql }}
       auto-merge: ${{ steps.plan.outputs.auto-merge }}
+      prek: ${{ steps.plan.outputs.prek }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
@@ -54,6 +55,7 @@ jobs:
           kiro_only=false
           codeql=false
           auto_merge=false
+          prek=false
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             case "$ACTION" in
@@ -82,6 +84,7 @@ jobs:
           fi
 
           if [[ "$pr_default" == "true" || "$EVENT_NAME" == "push" ]]; then
+            prek=true
             if [[ "$kiro_only" != "true" ]]; then
               codeql=true
             fi
@@ -98,6 +101,7 @@ jobs:
             echo "size=$size"
             echo "codeql=$codeql"
             echo "auto-merge=$auto_merge"
+            echo "prek=$prek"
           } >> "$GITHUB_OUTPUT"
 
   commit-count:
@@ -218,3 +222,29 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge --auto --rebase "$PR_URL"
+
+  prek:
+    name: prek run --all-files
+    needs: dispatch
+    if: needs.dispatch.outputs.prek == 'true'
+    # The flake exposes an aarch64-linux devShell as well as the darwin ones,
+    # but this workflow still runs on the macOS runner.
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.11.5
+
+      - name: Run prek hooks
+        # Run in the devShell rather than building the sandboxed
+        # `checks.<system>.pre-commit-check`: the Nix sandbox has no network
+        # access, and the flake-checker hook (flake age) needs it.
+        run: nix develop --command prek run --all-files
+
+      - name: Show hook changes
+        if: failure()
+        run: git --no-pager diff
