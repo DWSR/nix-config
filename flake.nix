@@ -2862,10 +2862,11 @@
                 "--service=svc:litellm --https=443 http://127.0.0.1:4000"
                 "--service=svc:opencode --https=443 http://127.0.0.1:4096"
                 "--service=svc:iii --https=443 http://127.0.0.1:49134"
+                "--service=svc:iii-console --https=443 http://127.0.0.1:3113"
               ];
               pgServe = vm.systemd.services.tailscale-serve.serviceConfig.ExecStart or [ ];
               pgServeUnchanged =
-                builtins.length pgServe == 4
+                builtins.length pgServe == 5
                 && builtins.all (
                   line: builtins.any (expected: pkgs.lib.hasSuffix expected line) pgServeExpected
                 ) pgServe
@@ -3000,6 +3001,23 @@
               serveText = builtins.concatStringsSep " " serveExecStart;
               serveEnginePortCount =
                 builtins.length (builtins.filter builtins.isString (builtins.split "49134" serveText)) - 1;
+              serveConsolePortCount =
+                builtins.length (builtins.filter builtins.isString (builtins.split "3113" serveText)) - 1;
+              consoleExecStart = vm.systemd.services.iii-console.serviceConfig.ExecStart or "";
+              consoleCompose = vm.fabro.iiiConsole.composeConfig or { };
+              consoleContainer = consoleCompose.containers.ade or { };
+              consoleRun = consoleContainer.scripts.run or "";
+              expectedConsoleExecStart = pkgs.lib.escapeShellArgs [
+                (pkgs.lib.getExe vm.fabro.iii.package)
+                "compose"
+                "--engine"
+                vm.fabro.iiiConsole.engineUrl
+                "--namespace"
+                "console"
+                "--up"
+                "-f"
+                "/var/lib/iii-console/console/worker-compose.yaml"
+              ];
               guestReport =
                 assert pkgs.lib.assertMsg vm.services.lima.enable
                   "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
@@ -3247,7 +3265,7 @@
                 assert pkgs.lib.assertMsg (!pgFirewallOpensPort)
                   "fabro-vm: networking.firewall must leave the PostgreSQL port ${toString pgPort} closed (no allowedTCPPorts entry and no allowedTCPPortRanges range opens it).";
                 assert pkgs.lib.assertMsg pgServeUnchanged
-                  "fabro-vm: systemd.services.tailscale-serve must keep exactly the svc:fabro, svc:litellm, svc:opencode, and svc:iii tcp:443 advertisements and publish nothing for PostgreSQL; got [ ${pkgs.lib.concatStringsSep " | " pgServe} ].";
+                  "fabro-vm: systemd.services.tailscale-serve must keep exactly the svc:fabro, svc:litellm, svc:opencode, svc:iii, and svc:iii-console tcp:443 advertisements and publish nothing for PostgreSQL; got [ ${pkgs.lib.concatStringsSep " | " pgServe} ].";
                 assert pkgs.lib.assertMsg (pgMissingExtensions == [ ])
                   "fabro-vm: services.postgresql.finalPackage.installedExtensions must contain the pg_textsearch, pgvector (vector), and pg_uuidv7 extension packages; missing '${builtins.head pgMissingExtensions}'.";
                 assert pkgs.lib.assertMsg (pgvector != null && pkgs.lib.versionAtLeast pgvector.version "0.8.6")
@@ -3753,9 +3771,9 @@
                     (vm.systemd.services.tailscale-serve.serviceConfig.Type or "") == "oneshot"
                     && builtins.elem "multi-user.target" vm.systemd.services.tailscale-serve.wantedBy
                   )
-                  "fabro-vm: tailscale-serve must stay a boot-enabled oneshot so the four handlers re-apply and converge on every boot (requirement 6.3).";
-                assert pkgs.lib.assertMsg (builtins.length serveExecStart == 4)
-                  "fabro-vm: tailscale-serve ExecStart must carry four serve entries (svc:fabro, svc:litellm, svc:opencode, then svc:iii), got ${toString (builtins.length serveExecStart)} (requirements 6.1, 6.4, 7.13).";
+                  "fabro-vm: tailscale-serve must stay a boot-enabled oneshot so the five handlers re-apply and converge on every boot (requirement 6.3).";
+                assert pkgs.lib.assertMsg (builtins.length serveExecStart == 5)
+                  "fabro-vm: tailscale-serve ExecStart must carry five serve entries (svc:fabro, svc:litellm, svc:opencode, svc:iii, then svc:iii-console), got ${toString (builtins.length serveExecStart)} (requirements 6.1, 6.4, 7.13).";
                 assert pkgs.lib.assertMsg
                   (pkgs.lib.hasInfix "--service=svc:fabro --https=443 http://127.0.0.1:32276" serveText)
                   "fabro-vm: tailscale-serve must keep the svc:fabro handler verbatim (--service=svc:fabro --https=443 http://127.0.0.1:32276; requirement 6.4).";
@@ -3768,10 +3786,76 @@
                 assert pkgs.lib.assertMsg
                   (pkgs.lib.hasInfix "--service=svc:iii --https=443 http://127.0.0.1:49134" serveText)
                   "fabro-vm: tailscale-serve must advertise the svc:iii handler at --https=443 http://127.0.0.1:49134 (requirements 6.1, 6.2, 6.8, 7.12).";
-                assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "--service=svc:iii" (pkgs.lib.last serveExecStart))
-                  "fabro-vm: the svc:iii serve entry must be the last tailscale-serve ExecStart entry, after svc:fabro, svc:litellm, and svc:opencode (design C4 implementation note; requirements 6.1, 6.4).";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasInfix "--service=svc:iii-console --https=443 http://127.0.0.1:3113" serveText)
+                  "fabro-vm: tailscale-serve must advertise the svc:iii-console handler at --https=443 http://127.0.0.1:3113.";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasInfix "--service=svc:iii-console" (pkgs.lib.last serveExecStart))
+                  "fabro-vm: the svc:iii-console serve entry must be the last tailscale-serve ExecStart entry, after svc:fabro, svc:litellm, svc:opencode, and svc:iii.";
                 assert pkgs.lib.assertMsg (serveEnginePortCount == 1)
                   "fabro-vm: tailscale-serve ExecStart must reference port 49134 exactly once (the svc:iii handler), got ${toString serveEnginePortCount} (requirements 6.1, 6.8, 7.12).";
+                assert pkgs.lib.assertMsg (serveConsolePortCount == 1)
+                  "fabro-vm: tailscale-serve ExecStart must reference port 3113 exactly once (the svc:iii-console handler), got ${toString serveConsolePortCount}.";
+                # The console project unit (configurations/fabro-vm/
+                # iii-console.nix): one Compose project named `console` with the
+                # pinned ade worker, connected to the existing loopback engine
+                # and bound to loopback with state under /var/lib/iii-console.
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services ? iii-console
+                ) "fabro-vm: systemd.services.iii-console must be defined (the ADE console project).";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "iii.service" (vm.systemd.services.iii-console.requires or [ ])
+                    && builtins.elem "iii.service" (vm.systemd.services.iii-console.after or [ ])
+                    && builtins.elem "iii.service" (vm.systemd.services.iii-console.partOf or [ ])
+                  )
+                  "fabro-vm: iii-console.service must require, start after, and restart with iii.service (the engine it connects to).";
+                assert pkgs.lib.assertMsg (vm.systemd.services.iii-console.serviceConfig.DynamicUser or false
+                ) "fabro-vm: the iii-console service must run as a DynamicUser.";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services.iii-console.serviceConfig.StateDirectory or [ ] == [ "iii-console" ]
+                ) "fabro-vm: the iii-console service must own /var/lib/iii-console via StateDirectory.";
+                assert pkgs.lib.assertMsg (consoleExecStart == expectedConsoleExecStart)
+                  "fabro-vm: iii-console ExecStart must run `iii compose --engine <loopback> --namespace console --up -f /var/lib/iii-console/console/worker-compose.yaml` against the existing engine, got '${consoleExecStart}'.";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasInfix
+                    (builtins.unsafeDiscardStringContext "${vm.fabro.iiiConsole.projectDirectory}/console")
+                    (builtins.unsafeDiscardStringContext (vm.systemd.services.iii-console.preStart or ""))
+                  )
+                  "fabro-vm: iii-console must copy the generated project out of the read-only store before Compose writes its lock file.";
+                assert pkgs.lib.assertMsg ((vm.fabro.iiiConsole.host or "") == "127.0.0.1")
+                  "fabro-vm: fabro.iiiConsole.host must be the loopback address 127.0.0.1, got '${
+                    toString (vm.fabro.iiiConsole.host or null)
+                  }'.";
+                assert pkgs.lib.assertMsg ((vm.fabro.iiiConsole.port or null) == 3113)
+                  "fabro-vm: fabro.iiiConsole.port must be 3113, got '${
+                    toString (vm.fabro.iiiConsole.port or null)
+                  }'.";
+                assert pkgs.lib.assertMsg ((consoleCompose.namespace or "") == "console")
+                  "fabro-vm: the iii console Compose project must be named/namespace `console`, got '${
+                    toString (consoleCompose.namespace or null)
+                  }'.";
+                assert pkgs.lib.assertMsg (
+                  (consoleContainer.worker or "") == "path://."
+                  && (consoleContainer.required or false)
+                  && (consoleContainer.restart or "") == "always"
+                ) "fabro-vm: the console project must declare the ade path worker as required with restart=always.";
+                assert pkgs.lib.assertMsg
+                  (
+                    pkgs.lib.hasInfix "--http-host 127.0.0.1" consoleRun
+                    && pkgs.lib.hasInfix "--http-port 3113" consoleRun
+                    && pkgs.lib.hasInfix "--url ${vm.fabro.iiiConsole.engineUrl}" consoleRun
+                  )
+                  "fabro-vm: the ade worker must bind loopback 127.0.0.1:3113 and connect to ${vm.fabro.iiiConsole.engineUrl}, got '${consoleRun}'.";
+                assert pkgs.lib.assertMsg
+                  (
+                    toString vm.fabro.iiiConsole.package
+                    == toString self.nixosConfigurations.fabro-vm.pkgs.iii-workers.ade
+                  )
+                  "fabro-vm: fabro.iiiConsole.package must be the pinned pkgs.iii-workers.ade package, got '${toString vm.fabro.iiiConsole.package}'.";
+                assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "III_COMPOSE_STATE_DIR=/var/lib/iii-console" (
+                  pkgs.lib.concatStringsSep " " (vm.systemd.services.iii-console.serviceConfig.Environment or [ ])
+                )) "fabro-vm: iii-console must keep Compose state under /var/lib/iii-console.";
                 # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services ? opencode
@@ -3921,7 +4005,7 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
                   builtins.readFile ./configurations/fabro-vm/fabro.nix
                 )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker), supervised by ${vm.fabro.iii.supervisorPackage.pname} (Type=notify/NotifyAccess=main, WatchdogSec ${toString vm.fabro.iii.watchdogSec}s, readiness gate ${toString vm.fabro.iii.readinessTimeoutSec}s on the engine-owned loopback listener, stop timeout ${toString vm.fabro.iii.stopTimeoutSec}s with SIGTERM→SIGKILL escalation); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 as the fourth handler after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker), supervised by ${vm.fabro.iii.supervisorPackage.pname} (Type=notify/NotifyAccess=main, WatchdogSec ${toString vm.fabro.iii.watchdogSec}s, readiness gate ${toString vm.fabro.iii.readinessTimeoutSec}s on the engine-owned loopback listener, stop timeout ${toString vm.fabro.iii.stopTimeoutSec}s with SIGTERM→SIGKILL escalation); iii console: ${vm.fabro.iiiConsole.package.pname} ${vm.fabro.iiiConsole.package.version} installed as iii-console.service (DynamicUser, state in /var/lib/iii-console, generated console Compose project running the ade path worker on loopback 127.0.0.1:3113 and connected to ws://127.0.0.1:49134); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 and svc:iii-console tcp:443→127.0.0.1:3113 after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
 
             in
             pkgs.runCommand "fabro-vm-guest-eval"

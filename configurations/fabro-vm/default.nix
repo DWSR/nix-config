@@ -14,9 +14,10 @@
 # into the running instance (`nixos-rebuild --target`). The guest runs
 # Podman with a Docker-compatible API socket (fabro's docker sandbox
 # provider) plus the fabro, LiteLLM, and OpenCode services (with their
-# secrets from sops-nix, `sops` block below) and a loopback-only iii engine
-# (./iii.nix), and joins the tailnet as a Tailscale Services host advertising
-# all three applications (./tailscale.nix).
+# secrets from sops-nix, `sops` block below), a loopback-only iii engine
+# (./iii.nix) with its ADE console project (./iii-console.nix), and joins the
+# tailnet as a Tailscale Services host advertising the applications
+# (./tailscale.nix).
 {
   rsync34,
   config,
@@ -70,9 +71,13 @@ in
     # rendered to a store path plus `iii.service` (DynamicUser, state in
     # /var/lib/iii) that executes the `iii` package installed below.
     ./iii.nix
+    # The iii console: `iii-console.service` runs the pinned `ade` worker
+    # inside a generated `console` Compose project against the loopback
+    # engine, with its state in /var/lib/iii-console.
+    ./iii-console.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
-    # of the fabro, litellm, and opencode services (svc:fabro /
-    # svc:litellm / svc:opencode).
+    # of the fabro, litellm, opencode, iii, and iii-console services
+    # (svc:fabro / svc:litellm / svc:opencode / svc:iii / svc:iii-console).
     ./tailscale.nix
   ];
 

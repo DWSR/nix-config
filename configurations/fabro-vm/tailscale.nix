@@ -1,7 +1,7 @@
 # Tailscale on the fabro host: the guest joins the tailnet as an ephemeral,
-# tagged node and advertises the four application services as Tailscale
-# Services (`svc:fabro`, `svc:litellm`, `svc:opencode`, and `svc:iii`,
-# defined in the admin console).
+# tagged node and advertises the five application services as Tailscale
+# Services (`svc:fabro`, `svc:litellm`, `svc:opencode`, `svc:iii`, and
+# `svc:iii-console`, defined in the admin console).
 #
 # Node registration uses the OAuth client credentials from the 1Password
 # item `Fabro Host Tailscale Credentials`
@@ -21,7 +21,7 @@
 # 1Password secret affects future registrations, not the live bond of an
 # already-registered node.
 #
-# The four services are advertised by the tailscale-serve oneshot, which
+# The five services are advertised by the tailscale-serve oneshot, which
 # runs once tailscaled-autoconnect completes (Type=notify means that unit
 # returns only when the backend reaches Running). Each `tailscale serve
 # --service` invocation sets the web handler (TLS terminated by tailscaled
@@ -29,10 +29,11 @@
 # host for the console-defined service. Every invocation is idempotent
 # (same handler → same config; advertise-prefs is a no-op if already
 # listed), so re-applying on every boot is the convergence mechanism. The
-# engine handler is appended last, so a failing `svc:iii` invocation still
-# leaves the three existing handlers applied, and the unit deliberately
-# does not require iii.service: registration is the gate, so the engine
-# stays loopback-only until the tailnet is up.
+# engine handler is appended after the three original handlers, then the
+# console handler, so a failing `svc:iii` or `svc:iii-console` invocation
+# still leaves the earlier handlers applied, and the unit deliberately
+# does not require iii.service: registration is the gate, so the engine and
+# console stay loopback-only until the tailnet is up.
 {
   config,
   lib,
@@ -69,7 +70,7 @@ in
   };
 
   systemd.services.tailscale-serve = {
-    description = "Advertise the fabro, litellm, opencode, and iii Tailscale Services";
+    description = "Advertise the fabro, litellm, opencode, iii, and iii-console Tailscale Services";
     after = [
       "tailscaled.service"
       "tailscaled-autoconnect.service"
@@ -80,26 +81,30 @@ in
       Type = "oneshot";
       Restart = "on-failure";
       RestartSec = 5;
-      # Tailnet-facing ports: all four admin-console resource definitions
+      # Tailnet-facing ports: all five admin-console resource definitions
       # use tcp:443, so the services are reachable at
       # https://fabro.tuxedo-musical.ts.net/,
       # https://litellm.tuxedo-musical.ts.net/,
-      # https://opencode.tuxedo-musical.ts.net/, and
-      # https://iii.tuxedo-musical.ts.net/ (no port suffix; TLS is
+      # https://opencode.tuxedo-musical.ts.net/,
+      # https://iii.tuxedo-musical.ts.net/, and
+      # https://iii-console.tuxedo-musical.ts.net/ (no port suffix; TLS is
       # terminated by tailscaled under each service name). Tailnet clients
-      # reach the engine over WebSocket at wss://iii.tuxedo-musical.ts.net/.
+      # reach the engine over WebSocket at wss://iii.tuxedo-musical.ts.net/
+      # and the console at https://iii-console.tuxedo-musical.ts.net/.
       # The loopback targets are the listeners from fabro.nix
       # (127.0.0.1:32276, API + web UI), litellm.nix (127.0.0.1:4000),
-      # opencode.nix (127.0.0.1:4096), and iii.nix (the loopback-only
-      # engine). The `svc:iii` entry is last and adds no other exposure
-      # path: while the Service is absent or not granted to tag:fabro the
-      # invocation fails, journals its error, and the engine stays
+      # opencode.nix (127.0.0.1:4096), iii.nix (the loopback-only engine),
+      # and iii-console.nix (the loopback-only ADE console). The `svc:iii`
+      # entry follows the three original handlers and `svc:iii-console` is
+      # last; while either Service is absent or not granted to tag:fabro the
+      # invocation fails, journals its error, and the console stays
       # loopback-only.
       ExecStart = [
         "${lib.getExe cfg.package} serve --service=svc:fabro --https=443 http://127.0.0.1:32276"
         "${lib.getExe cfg.package} serve --service=svc:litellm --https=443 http://127.0.0.1:4000"
         "${lib.getExe cfg.package} serve --service=svc:opencode --https=443 http://127.0.0.1:4096"
         "${lib.getExe cfg.package} serve --service=svc:iii --https=443 http://127.0.0.1:49134"
+        "${lib.getExe cfg.package} serve --service=svc:iii-console --https=443 http://127.0.0.1:3113"
       ];
     };
   };
