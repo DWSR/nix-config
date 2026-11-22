@@ -1,0 +1,99 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    name: dispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit-count: ${{ steps.plan.outputs.commit-count }}
+      size: ${{ steps.plan.outputs.size }}
+    steps:
+      - name: Plan jobs
+        id: plan
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+
+          commit_count=false
+          size=false
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            case "$ACTION" in
+              opened|synchronize|reopened|labeled|unlabeled)
+                commit_count=true
+                ;;
+            esac
+            if [[ "$commit_count" == "true" && ",${LABELS}," != *",Override: PR Size Check,"* ]]; then
+              size=true
+            fi
+          fi
+
+          {
+            echo "commit-count=$commit_count"
+            echo "size=$size"
+          } >> "$GITHUB_OUTPUT"
+
+  commit-count:
+    name: Fail if PR contains more than one commit
+    needs: dispatch
+    if: needs.dispatch.outputs.commit-count == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail if the PR contains more than one commit
+        run: |
+          set -euo pipefail
+          commits=$(git rev-list --count ${{ github.event.pull_request.head.sha }} ^${{ github.event.pull_request.base.sha }})
+          echo "PR contains ${commits} commit(s) (github.event.pull_request.commits=${{ github.event.pull_request.commits }})."
+          if [ "${commits}" -gt 1 ] || [ "${{ github.event.pull_request.commits }}" -gt 1 ]; then
+            echo "::error::A pull request must contain at most one commit (found ${commits})."
+            exit 1
+          fi
+
+  size:
+    name: Fail if PR changes more than 1000 lines
+    needs: dispatch
+    if: needs.dispatch.outputs.size == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail if the PR changes more than 1000 lines
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MAX_LINES: "1000"
+        run: |
+          set -euo pipefail
+          changed=$(git diff --numstat "${BASE_SHA}...${HEAD_SHA}" |
+            awk '{ added += $1; deleted += $2 } END { print added + deleted }')
+          echo "PR changes ${changed} line(s) (limit: ${MAX_LINES})."
+          if [ "${changed}" -gt "${MAX_LINES}" ]; then
+            echo "::error::A pull request must change at most ${MAX_LINES} lines (found ${changed}). Add the 'Override: PR Size Check' label to override."
+            exit 1
+          fi
