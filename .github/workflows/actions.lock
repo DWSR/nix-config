@@ -8,6 +8,7 @@ workflows:
         - 'cachix/install-nix-action@v31.11.5'
         - 'dependabot/fetch-metadata@v3.1.0'
         - 'github/codeql-action@v4.39.3'
+        - 'gitleaks/gitleaks-action@v3.0.0'
     '.github/workflows/codeql.yml':
         - 'actions/checkout@v7.0.1'
         - 'github/codeql-action@v4.39.3'
