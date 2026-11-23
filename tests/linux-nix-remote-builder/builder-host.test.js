@@ -85,6 +85,12 @@ function evalBuilder(extraModule = null) {
         allowGroups = cfg.services.openssh.settings.AllowGroups or [ ];
         allowUsers = cfg.services.openssh.settings.AllowUsers or [ ];
       };
+      sshFirewall = {
+        globalAllowedTCPPorts = cfg.networking.firewall.allowedTCPPorts;
+        limaAllowedTCPPorts = cfg.networking.firewall.interfaces.eth0.allowedTCPPorts;
+        tailscaleInterface = cfg.services.tailscale.interfaceName;
+        tailscaleAllowedTCPPorts = cfg.networking.firewall.interfaces."\${cfg.services.tailscale.interfaceName}".allowedTCPPorts;
+      };
       materializer = {
         after = cfg.systemd.services.builder-authorized-keys.after;
         before = cfg.systemd.services.builder-authorized-keys.before;
@@ -194,6 +200,10 @@ test('SSH authorization and host identity are delivered outside the Nix store', 
 
   assert.equal(cfg.ssh.enable, true);
   assert.equal(cfg.ssh.openFirewall, false);
+  assert.ok(!cfg.sshFirewall.globalAllowedTCPPorts.includes(22), 'SSH must not be opened globally');
+  assert.ok(cfg.sshFirewall.limaAllowedTCPPorts.includes(22), 'Lima host-agent SSH must be allowed on eth0');
+  assert.equal(cfg.sshFirewall.tailscaleInterface, 'tailscale0');
+  assert.ok(cfg.sshFirewall.tailscaleAllowedTCPPorts.includes(22), 'remote-builder SSH must be allowed on Tailscale');
   assert.deepEqual(cfg.ssh.hostKeys, [
     { path: '/run/secrets/builder-ssh-host-key', type: 'ed25519' },
   ]);

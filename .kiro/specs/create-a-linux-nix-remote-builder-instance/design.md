@@ -200,7 +200,7 @@ Map each numeric requirement area to its implementing component and contract. Ac
 - Enable Nix and OpenSSH, declare a dedicated non-root `builder` account, and authorize only the public keys delivered through the builder's SOPS store. Materialize the SOPS authorized-key value at runtime into the builder user's `~/.ssh/authorized_keys` with a root-owned oneshot ordered after sops-nix secret materialization and before `sshd`; do not use `builtins.readFile` or NixOS `authorizedKeys.keys` for secret-backed input.
 - Configure Nix daemon trust for the remote SSH account and set `nix.settings.extra-platforms = [ ]` so the builder does not advertise or enable additional execution platforms beyond its native `aarch64-linux` system; the machine record similarly lists only `aarch64-linux`.
 - Configure automatic Nix store garbage collection and optimization as NixOS services; resource sizing and VM restart belong to the personal host.
-- Enable Tailscale using the mac builder's SOPS-delivered OAuth secret (reused) and register the guest under the stable `linux-builder` identity and the shared `tag:nix-remote-builder`; grant TCP/22 only to the two client groups through the existing tailnet ACL policy.
+- Enable Tailscale using the mac builder's SOPS-delivered OAuth secret (reused) and register the guest under the stable `linux-builder` identity and the shared `tag:nix-remote-builder`; allow SSH on the Lima `eth0` and Tailscale interfaces, with tailnet ACLs granting TCP/22 only to the two client groups.
 
 **Dependencies**
 
@@ -209,7 +209,7 @@ Map each numeric requirement area to its implementing component and contract. Ac
 
 **Contracts: Service [x] / State [x]**
 
-- Remote endpoint: `ssh-ng://builder@linux-builder.tuxedo-musical.ts.net`; tailnet ACL permits TCP/22 only from the Fabro guest and personal Mac identities to the `tag:nix-remote-builder` tag.
+- Remote endpoint: `ssh-ng://builder@linux-builder.tuxedo-musical.ts.net`; tailnet ACL permits TCP/22 only from the Fabro guest and personal Mac identities to the `tag:nix-remote-builder` tag. Lima's host agent connects through the host-only `eth0` interface.
 - Supported machine system: `aarch64-linux` only.
 - Nix machine record shape follows the repository's existing renderer in `scripts/fabro-darwin-machines.nix`: `ssh-ng://<user>@<host> <system> <private-key-path> <max-jobs> <speed-factor> - - <base64-host-public-key>`. The Linux guest Nix daemon loads the Nix remote-build support (`nix-command` / `flakes` and the NixOS daemon's build-user configuration) and accepts incoming builder sessions only from the authorized dedicated SSH account.
 - The Linux guest supports at least four concurrent remote jobs, matching its 4-CPU allocation; clients use `max-jobs = 4` and `speed-factor = 1` for this entry.
@@ -379,5 +379,5 @@ All provisioning below is operator-owned. Implementation adds declarations, sync
 
 - Keep SSH client keys, the builder's private host key, and the Tailscale OAuth secret in their respective SOPS stores and root-only runtime paths. They must not be read into Nix derivations, logged, or committed in plaintext.
 - Use a unique builder age recipient and distinct client keypairs; do not reuse the existing Darwin builder private key or broaden its authorized-key set.
-- Keep Nix's trusted SSH identity limited to the dedicated non-root builder account and expose SSH only through the authenticated tailnet endpoint.
+- Keep Nix's trusted SSH identity limited to the dedicated non-root builder account. Permit SSH only on Lima's host-only `eth0` and the Tailscale interface; tailnet access remains restricted by the authenticated tailnet ACL.
 - Pin the builder SSH host public key on both clients. A host key mismatch is a hard failure requiring operator review and deliberate pin update.

@@ -78,6 +78,13 @@ in
     };
   };
 
+  # Keep SSH closed globally while permitting Lima's host-agent on eth0 and
+  # remote build clients on the Tailscale interface.
+  networking.firewall.interfaces = {
+    eth0.allowedTCPPorts = [ 22 ];
+    "${config.services.tailscale.interfaceName}".allowedTCPPorts = [ 22 ];
+  };
+
   sops.useSystemdActivation = true;
   sops.age = {
     keyFile = "/var/lib/sops-nix/key.txt";

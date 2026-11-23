@@ -2131,6 +2131,13 @@
                       settings
                       ;
                   };
+                  sshFirewall = {
+                    globalAllowedTCPPorts = cfg.networking.firewall.allowedTCPPorts;
+                    limaAllowedTCPPorts = cfg.networking.firewall.interfaces.eth0.allowedTCPPorts;
+                    tailscaleInterface = cfg.services.tailscale.interfaceName;
+                    tailscaleAllowedTCPPorts =
+                      cfg.networking.firewall.interfaces.${cfg.services.tailscale.interfaceName}.allowedTCPPorts;
+                  };
                   authorizedKeys = {
                     inherit (authorized) path owner mode;
                   };
