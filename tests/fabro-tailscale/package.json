@@ -1,0 +1,7 @@
+{
+  "name": "fabro-tailscale-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "reconcile.test.js",
+  "description": "Test suite for the fabro guest Tailscale registration reconciler."
+}
