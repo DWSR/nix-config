@@ -17,9 +17,18 @@
 #     this OAuth client.
 # The tailscaled-autoconnect unit (created by nixpkgs' module whenever
 # authKeyFile is set) drives registration: it re-runs `tailscale up` with
-# the stored key only while the backend is logged out, so rotating the
+# the stored key only while the backend is logged out. It is a boot-time
+# oneshot and treats any Running backend as healthy, so rotating the
 # 1Password secret affects future registrations, not the live bond of an
 # already-registered node.
+#
+# A long host sleep can outlast the ephemeral node's lifetime: on resume
+# tailscaled may stay Running with a control-plane node that no longer
+# exists (`404: node not found`) or wait for an interactive AuthURL, while
+# the local serve handlers stay configured. The tailscale-reconcile timer
+# checks the live status every two minutes and re-runs `tailscale up` with
+# the OAuth key whenever the node is not online, an AuthURL is pending, or
+# the backend needs login. It is a no-op while the node is healthy.
 #
 # The five services are advertised by the tailscale-serve oneshot, which
 # runs once tailscaled-autoconnect completes (Type=notify means that unit
@@ -37,10 +46,12 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
   cfg = config.services.tailscale;
+  reconcile = pkgs.callPackage ../../scripts/fabro-tailscale-reconcile.nix { };
 in
 {
   services.tailscale = {
@@ -106,6 +117,35 @@ in
         "${lib.getExe cfg.package} serve --service=svc:iii --https=443 http://127.0.0.1:49134"
         "${lib.getExe cfg.package} serve --service=svc:iii-console --https=443 http://127.0.0.1:3113"
       ];
+    };
+  };
+
+  systemd.services.tailscale-reconcile = {
+    description = "Reconcile the fabro guest's ephemeral Tailscale registration";
+    after = [ "tailscaled.service" ];
+    wants = [ "tailscaled.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = lib.escapeShellArgs [
+        (lib.getExe reconcile)
+        "--auth-key-file"
+        config.sops.secrets."tailscale-oauth-secret".path
+        "--tag"
+        "tag:fabro"
+        "--tailscale"
+        (lib.getExe cfg.package)
+      ];
+    };
+  };
+
+  systemd.timers.tailscale-reconcile = {
+    description = "Periodically reconcile the fabro guest's Tailscale registration";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitInactiveSec = "2min";
+      AccuracySec = "30s";
+      Unit = "tailscale-reconcile.service";
     };
   };
 }
