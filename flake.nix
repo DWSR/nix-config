@@ -5166,6 +5166,9 @@
       nixosConfigurations.linux-builder = inputs.nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         modules = [
+          # This builder does not import the common overlay chain; apply the
+          # Tailscale pin directly (overlays/tailscale.nix).
+          { nixpkgs.overlays = [ outputs.overlays.tailscale ]; }
           # Preserve Lima's guest initialization and guest-agent services when
           # this system replaces the base nixos-lima image configuration.
           inputs.nixos-lima.nixosModules.lima
@@ -5275,6 +5278,9 @@
           };
 
           modules = [
+            # mac-builder does not import configurations/common-darwin, so
+            # apply the Tailscale pin directly (overlays/tailscale.nix).
+            { nixpkgs.overlays = [ outputs.overlays.tailscale ]; }
             ./configurations/mac-builder
           ];
         };

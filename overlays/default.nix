@@ -9,6 +9,7 @@ let
   omlx = import ./omlx { inherit inputs; };
   fabro = import ./fabro.nix;
   litellmDb = import ./litellm-db.nix;
+  tailscale = import ./tailscale.nix;
   agentmemoryFlake = final: _prev: {
     agentmemory =
       inputs.agentmemory.packages.${final.stdenv.hostPlatform.system}.agentmemory.overrideAttrs
@@ -169,7 +170,8 @@ in
     // (omlx final prev)
     // (fabro final prev)
     // (litellmDb final prev)
+    // (tailscale final prev)
     // (agentmemoryFlake final prev);
 
-  inherit omlx fabro;
+  inherit omlx fabro tailscale;
 }
