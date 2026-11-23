@@ -41,7 +41,11 @@ function assertBuilderCapability(builder) {
   assert.deepEqual(builder.trustedUsers, ['builder'], 'only the dedicated builder account may be trusted (Requirements 1.1, 5.1)');
   assert.equal(builder.hostName, 'linux-builder', 'the Linux builder must keep its stable host identity (Requirement 1.3)');
   assert.equal(builder.ssh.enable, true, 'the Linux builder must enable OpenSSH (Requirement 1.1)');
-  assert.equal(builder.ssh.openFirewall, false, 'the builder must not expose SSH outside the tailnet (Requirement 1.3)');
+  assert.equal(builder.ssh.openFirewall, false, 'global SSH firewall opening must remain disabled');
+  assert.ok(!builder.sshFirewall.globalAllowedTCPPorts.includes(22), 'SSH must not be opened globally');
+  assert.ok(builder.sshFirewall.limaAllowedTCPPorts.includes(22), 'Lima host-agent SSH must be allowed on eth0');
+  assert.equal(builder.sshFirewall.tailscaleInterface, 'tailscale0');
+  assert.ok(builder.sshFirewall.tailscaleAllowedTCPPorts.includes(22), 'remote-builder SSH must be allowed on Tailscale');
   assert.deepEqual(
     builder.ssh.hostKeys,
     [{ path: '/run/secrets/builder-ssh-host-key', type: 'ed25519' }],
