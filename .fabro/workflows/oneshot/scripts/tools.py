@@ -72,7 +72,7 @@ def diagnose_environment_blocker(issue_text):
     if not blocker:
         blocker = github_rate_limit_blocker()
     if not blocker and re.search(r"\bworkflow\b|\.fabro(?:/|\b)|\bfabro\b", issue_text, re.I):
-        blocker = run_probe("Fabro preflight", ["fabro", "preflight", ".fabro/workflows/oneshot/workflow.fabro"], 35)
+        blocker = run_probe("Fabro workflow validation", ["fabro", "validate", ".fabro/workflows/oneshot/workflow.fabro"], 35)
     return blocker
 
 

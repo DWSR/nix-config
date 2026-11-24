@@ -37,17 +37,17 @@ class ProbeTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "token", "ONESHOT_API_BASE": "http://127.0.0.1:1"}):
             self.assertIn("GitHub rate-limit probe failed", tools["github_rate_limit_blocker"]())
 
-    def test_diagnose_checks_workflow_preflight_only_when_issue_scope_suggests_it(self):
+    def test_diagnose_validates_workflow_only_when_issue_scope_suggests_it(self):
         tools = load_tools()
         calls = []
         tools["github_reachability_blocker"] = lambda: ""
         tools["github_rate_limit_blocker"] = lambda: ""
         tools["run_probe"] = lambda label, _cmd, _timeout: calls.append((label, _cmd)) or ""
         self.assertEqual(tools["diagnose_environment_blocker"]("Add a new Nix service"), "")
-        self.assertFalse(any(label == "Fabro preflight" for label, _command in calls))
+        self.assertFalse(any(label == "Fabro workflow validation" for label, _command in calls))
         self.assertEqual(tools["diagnose_environment_blocker"]("Update the oneshot workflow"), "")
-        fabro_command = [command for label, command in calls if label == "Fabro preflight"]
-        self.assertEqual(fabro_command, [["fabro", "preflight", ".fabro/workflows/oneshot/workflow.fabro"]])
+        fabro_command = [command for label, command in calls if label == "Fabro workflow validation"]
+        self.assertEqual(fabro_command, [["fabro", "validate", ".fabro/workflows/oneshot/workflow.fabro"]])
 
     def test_diagnose_blocks_and_persists_failure_without_starting_implementation(self):
         tools = load_tools()
@@ -100,7 +100,8 @@ class ProbeTests(unittest.TestCase):
         self.assertIn('prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]', graph)
         blocked_edge = 'prepare -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED", weight=10]'
         self.assertIn(blocked_edge, graph)
-        self.assertIn('diagnose -> implement [condition="outcome=succeeded && context.preflight_status=READY"]', graph)
+        self.assertIn('diagnose -> baseline [condition="outcome=succeeded && context.preflight_status=READY"]', graph)
+        self.assertIn('baseline -> implement [condition="outcome=succeeded"]', graph)
         self.assertIn('diagnose -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED"]', graph)
         self.assertNotIn('prepare -> implement [condition="outcome=succeeded"]', graph)
 
