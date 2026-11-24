@@ -145,10 +145,15 @@ in
       unitConfig.StartLimitIntervalSec = 120;
       unitConfig.StartLimitBurst = 5;
       # Compose keeps the project lock beside the compose file, so copy the
-      # read-only generated project into the state directory first.
+      # generated project into the state directory first. `cp -r` keeps the
+      # store's 0555/0444 modes, so restore the write bit on every start:
+      # Compose cannot create worker-compose.lock in a read-only directory,
+      # and a later start's `rm -rf` cannot unlink the file inside it.
       preStart = ''
+        ${lib.getExe' pkgs.coreutils "chmod"} -R u+w ${runtimeProject} 2>/dev/null || true
         ${lib.getExe' pkgs.coreutils "rm"} -rf ${runtimeProject}
         ${lib.getExe' pkgs.coreutils "cp"} -r ${cfg.projectDirectory}/console ${runtimeProject}
+        ${lib.getExe' pkgs.coreutils "chmod"} -R u+w ${runtimeProject}
       '';
       serviceConfig = {
         # Compose does not send sd_notify readiness; it starts its workers and
