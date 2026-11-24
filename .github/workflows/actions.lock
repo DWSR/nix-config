@@ -11,25 +11,6 @@ workflows:
         - 'github/codeql-action@v4.39.3'
         - 'gitleaks/gitleaks-action@v3.0.0'
         - 'nix-community/cache-nix-action@v7.0.2'
-    '.github/workflows/codeql.yml':
-        - 'actions/checkout@v7.0.1'
-        - 'github/codeql-action@v4.39.3'
-    '.github/workflows/dependabot-auto-merge.yml':
-        - 'actions/checkout@v7.0.1'
-        - 'dependabot/fetch-metadata@v3.1.0'
-    '.github/workflows/nix-flake-check.yml':
-        - 'actions/cache@v6.1.0'
-        - 'actions/checkout@v7.0.1'
-        - 'cachix/install-nix-action@v31.11.5'
-        - 'nix-community/cache-nix-action@v7.0.2'
-    '.github/workflows/pr-commit-count.yml':
-        - 'actions/checkout@v7.0.1'
-    '.github/workflows/prek.yml':
-        - 'actions/checkout@v7.0.1'
-        - 'cachix/install-nix-action@v31.11.5'
-    '.github/workflows/secret-scan.yml':
-        - 'actions/checkout@v7.0.1'
-        - 'gitleaks/gitleaks-action@v3.0.0'
 dependencies:
     'actions/cache@v6.1.0':
         ref: 'v6.1.0'
