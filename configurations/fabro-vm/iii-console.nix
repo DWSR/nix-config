@@ -140,6 +140,11 @@ in
       # Restart the console when the engine is restarted (a plain Requires
       # stops the console with the engine but does not bring it back).
       partOf = [ "iii.service" ];
+      # Compose runs each container's `scripts.run` through `sh -c`; the
+      # default unit PATH has no shell, so the ade worker dies at spawn with
+      # ENOENT before the pinned binary is executed. bashInteractive supplies
+      # the bin/sh those scripts need.
+      path = [ pkgs.bashInteractive ];
       # A bounded start limit ends a permanently broken project in `failed`
       # instead of retrying forever at RestartSec=2.
       unitConfig.StartLimitIntervalSec = 120;
