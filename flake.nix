@@ -3907,6 +3907,10 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "III_COMPOSE_STATE_DIR=/var/lib/iii-console" (
                   pkgs.lib.concatStringsSep " " (vm.systemd.services.iii-console.serviceConfig.Environment or [ ])
                 )) "fabro-vm: iii-console must keep Compose state under /var/lib/iii-console.";
+                assert pkgs.lib.assertMsg (builtins.any
+                  (package: pkgs.lib.hasPrefix "bash" (package.pname or package.name or ""))
+                  (vm.systemd.services.iii-console.path or [ ])
+                ) "fabro-vm: iii-console must put bash on PATH so Compose can run scripts.run through sh -c.";
                 # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services ? opencode
