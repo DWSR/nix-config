@@ -275,11 +275,9 @@ def pull_request_closes_issue(body, issue_number):
     number = int(issue_number)
     keyword = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
     reference = re.compile(
-        r"(?i)\b%s\b[ \t]*:?[ \t]+(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#%d\b" % (keyword, number))
-    if reference.search(text):
-        return True
-    url = re.compile(r"(?i)https://github\.com/[^\s/]+/[^\s/]+/issues/%d\b" % number)
-    return url.search(text) is not None
+        r"(?i)\b%s\b[ \t]*:?[ \t]+(?:https://github\.com/[^\s/]+/[^\s/]+/issues/%d\b"
+        r"|(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#%d\b)" % (keyword, number, number))
+    return reference.search(text) is not None
 
 
 def find_open_pull_request(owner, repo, issue_number):

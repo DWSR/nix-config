@@ -221,7 +221,9 @@ class PrepareSkipTests(unittest.TestCase):
         tools = load_tools()
         self.assertTrue(tools["pull_request_closes_issue"]("Fixes owner/project#382", 382))
         self.assertTrue(tools["pull_request_closes_issue"](
-            "https://github.com/owner/project/issues/382", 382))
+            "Closes https://github.com/owner/project/issues/382", 382))
+        self.assertFalse(tools["pull_request_closes_issue"](
+            "See https://github.com/owner/project/issues/382 for details", 382))
         self.assertFalse(tools["pull_request_closes_issue"]("This mentions #382", 382))
         self.assertFalse(tools["pull_request_closes_issue"]("Fixes #3821", 382))
 
