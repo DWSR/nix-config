@@ -136,12 +136,13 @@ digraph Oneshot {
         label="Fail run",
         shape=parallelogram,
         stdin_source="stage_failure",
-        script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a oneshot stage failed; inspect the failing stage output in the run events and .git/oneshot-state.json\"\nfi\nprintf 'oneshot: %s\\n' \"$MSG\" >&2\nexit 1"
+        script="set -eu\nMSG=$(cat || true)\nif [ -f .git/oneshot-scripts/tools.py ]; then\n  python3 .git/oneshot-scripts/tools.py fail \"{{ inputs.issue }}\" || true\nfi\nif [ -z \"$MSG\" ]; then\n  MSG=\"a oneshot stage failed; inspect the failing stage output in the run events and .git/oneshot-state.json\"\nfi\nprintf 'oneshot: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
     start -> setup_helpers -> prepare
 
-    prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]
+    prepare -> exit [condition="outcome=succeeded && context.skipped=true", weight=10]
+    prepare -> diagnose [condition="outcome=succeeded && context.skipped!=true && context.preflight_status!=BLOCKED"]
     prepare -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED", weight=10]
     prepare -> fail
     diagnose -> baseline [condition="outcome=succeeded && context.preflight_status=READY"]

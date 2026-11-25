@@ -12,7 +12,8 @@
 #     the calling run (container names `petri-<run-id>-<lease>` are the
 #     fallback);
 #   * the run's workflow slug must be in `allowedWorkflowSlugs` and the run
-#     must be `running`;
+#     must be `running`; allowed workflows may dispatch children or inspect
+#     live runs through the four routes below;
 #   * only four routes are forwarded — a dispatching run may create and
 #     start children, list runs, and archive its own earlier successful
 #     runs (`POST /api/v1/runs`, `POST /api/v1/runs/{id}/start`,
