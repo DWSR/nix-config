@@ -2,7 +2,10 @@ import datetime, hashlib, json, os, re, shlex, shutil, subprocess, sys, tempfile
 
 READY_LABEL = "fabro-ready"
 RUNNING_LABEL = "fabro-running"
+FAILED_LABEL = "fabro-failed"
 TYPE_LABEL = "type/oneshot"
+FABRO_API_DEFAULT = "http://host.docker.internal:32276/api/v1"
+ACTIVE_RUN_STATUSES = ("pending", "runnable", "initializing", "running", "blocked")
 DIFF_LIMIT = 1000
 MAX_SIMPLIFY_ROUNDS = 2
 BASELINE_BUDGET = 480
@@ -252,6 +255,108 @@ def record_fingerprint(issue_number, fingerprint, meta_sha):
     print("oneshot prepare: recorded issue fingerprint %s at %s (%s)" % (fingerprint[:12], ref, tip[:12]), file=sys.stderr)
 
 
+def label_request(method, path, body=None):
+    try:
+        gh(method, path, body, expect=(200, 201, 204, 404))
+        return True
+    except SystemExit as e:
+        print("oneshot: label update %s %s failed: %s" % (method, path, e), file=sys.stderr)
+        return False
+
+
+def remove_labels(owner, repo, issue_number, labels):
+    for label in labels:
+        label_request("DELETE", "/repos/%s/%s/issues/%d/labels/%s" % (
+            owner, repo, issue_number, urllib.parse.quote(label, safe="")))
+
+
+def pull_request_closes_issue(body, issue_number):
+    text = body or ""
+    number = int(issue_number)
+    keyword = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+    reference = re.compile(
+        r"(?i)\b%s\b[ \t]*:?[ \t]+(?:https://github\.com/[^\s/]+/[^\s/]+/issues/%d\b"
+        r"|(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#%d\b)" % (keyword, number, number))
+    return reference.search(text) is not None
+
+
+def find_open_pull_request(owner, repo, issue_number):
+    slug = "%s/%s" % (owner, repo)
+    branch = "oneshot/issue-%d" % issue_number
+    page = 1
+    while page <= 5:
+        query = urllib.parse.urlencode({"state": "open", "per_page": 100, "page": page})
+        _, pulls = gh("GET", "/repos/%s/pulls?%s" % (slug, query))
+        pulls = pulls or []
+        for pr in pulls:
+            head = pr.get("head") or {}
+            head_repo = ((head.get("repo") or {}).get("full_name") or "").lower()
+            if (head.get("ref") or "") == branch and (not head_repo or head_repo == slug.lower()):
+                return pr, "branch"
+            if pull_request_closes_issue(pr.get("body"), issue_number):
+                return pr, "closes"
+        if len(pulls) < 100:
+            break
+        page += 1
+    return None, ""
+
+
+def live_oneshot_runs(owner, repo, issue_number):
+    base = (os.environ.get("ONESHOT_FABRO_API_BASE") or os.environ.get("FABRO_API_BASE")
+            or FABRO_API_DEFAULT).rstrip("/")
+    query = urllib.parse.urlencode(
+        [("page[limit]", "100")] + [("status", status) for status in ACTIVE_RUN_STATUSES])
+    request = urllib.request.Request(base + "/runs?" + query, headers={
+        "Accept": "application/json",
+        "User-Agent": "fabro-oneshot-workflow",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read() or b"{}") or {}
+    except (OSError, ValueError) as e:
+        print("oneshot prepare: could not check the Fabro API for duplicate runs (%s); continuing" % e,
+              file=sys.stderr)
+        return None
+    slug = ("%s/%s" % (owner, repo)).lower()
+    pattern = re.compile(r"issue\s*#?%d\b" % issue_number, re.I)
+    matches = []
+    for run in payload.get("data") or []:
+        if ((run.get("workflow") or {}).get("slug") or "") != "oneshot":
+            continue
+        if (((run.get("repository") or {}).get("name") or "").lower()) != slug:
+            continue
+        labels = run.get("labels") or {}
+        labeled = str(labels.get("issue") or labels.get("issue_number") or "").strip() if isinstance(labels, dict) else ""
+        if labeled == str(issue_number) or pattern.search(run.get("goal") or ""):
+            matches.append(run)
+    return matches
+
+
+def skip_prepare(issue_number, reason, detail=""):
+    message = "oneshot prepare: skipping issue #%d (%s)" % (issue_number, reason)
+    if detail:
+        message += ": " + detail
+    print(message, file=sys.stderr)
+    print(json.dumps({"outcome": "succeeded", "context_updates": {
+        "issue_number": str(issue_number),
+        "skipped": "true",
+        "skip_reason": reason,
+    }}))
+
+
+def mark_failed(issue_number, owner, repo):
+    remove_labels(owner, repo, issue_number, [RUNNING_LABEL, READY_LABEL])
+    label_request("POST", "/repos/%s/%s/issues/%d/labels" % (owner, repo, issue_number),
+                  {"labels": [FAILED_LABEL]})
+
+
+def fail(argv):
+    issue_number = parse_issue_number(argv[0] if argv else "")
+    owner, repo = origin_repo()
+    mark_failed(issue_number, owner, repo)
+    print("oneshot fail: issue #%d labelled %s for triage" % (issue_number, FAILED_LABEL), file=sys.stderr)
+
+
 def prepare(argv):
     issue_number = parse_issue_number(argv[0] if argv else "")
     blocker = github_reachability_blocker()
@@ -270,12 +375,23 @@ def prepare(argv):
     issue = gh("GET", "/repos/%s/%s/issues/%d" % (owner, repo, issue_number))[1]
     if issue.get("pull_request"):
         sys.exit("#%d is a pull request, not an issue" % issue_number)
+    labels = set(l.get("name", "") for l in (issue.get("labels") or []))
     if issue.get("state") != "open":
-        sys.exit("issue #%d is %s; refusing to implement a non-open issue" % (issue_number, issue.get("state")))
+        remove_labels(owner, repo, issue_number, [READY_LABEL, RUNNING_LABEL])
+        skip_prepare(issue_number, "closed", "state is %s" % issue.get("state"))
+        return
     title = (issue.get("title") or "").strip()
     if not title:
         sys.exit("issue #%d has an empty title" % issue_number)
-    labels = set(l.get("name", "") for l in (issue.get("labels") or []))
+
+    pull, pull_reason = find_open_pull_request(owner, repo, issue_number)
+    if pull is not None:
+        remove_labels(owner, repo, issue_number, [READY_LABEL, RUNNING_LABEL])
+        detail = "open PR #%s %s" % (
+            pull.get("number"),
+            "tracks the oneshot branch" if pull_reason == "branch" else "closes the issue")
+        skip_prepare(issue_number, "pull_request", detail)
+        return
 
     state = None
     if os.path.exists(STATE_PATH):
@@ -288,6 +404,12 @@ def prepare(argv):
         sys.exit("state file %s describes issue %s, not #%d; start a fresh run" % (STATE_PATH, state.get("issue"), issue_number))
     if state is not None and state.get("preflight_only") is True:
         state = None
+
+    if state is None:
+        live = live_oneshot_runs(owner, repo, issue_number)
+        if live is not None and len(live) > 1:
+            skip_prepare(issue_number, "superseded", "%d live oneshot runs" % len(live))
+            return
 
     fingerprint = issue_fingerprint(title, issue.get("body"))
     meta, meta_sha = load_meta(issue_number)
@@ -326,9 +448,13 @@ def prepare(argv):
             "simplify_round": 0,
             "created_at": now_iso(),
         }
+        label_request("DELETE", "/repos/%s/%s/issues/%d/labels/%s" % (
+            owner, repo, issue_number, urllib.parse.quote(FAILED_LABEL, safe="")))
         gh("POST", "/repos/%s/%s/issues/%d/labels" % (owner, repo, issue_number), {"labels": [RUNNING_LABEL]})
         gh("DELETE", "/repos/%s/%s/issues/%d/labels/%s" % (owner, repo, issue_number, urllib.parse.quote(READY_LABEL, safe="")))
     else:
+        label_request("DELETE", "/repos/%s/%s/issues/%d/labels/%s" % (
+            owner, repo, issue_number, urllib.parse.quote(FAILED_LABEL, safe="")))
         gh("POST", "/repos/%s/%s/issues/%d/labels" % (owner, repo, issue_number), {"labels": [RUNNING_LABEL]})
 
     state.pop("preflight_only", None)
@@ -692,7 +818,7 @@ def publish(argv):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <prepare|diagnose|check|publish> [args]")
+        sys.exit("usage: tools.py <prepare|diagnose|baseline|check|fail|publish> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd == "prepare":
         prepare(rest)
@@ -702,6 +828,8 @@ def main():
         baseline(rest)
     elif cmd == "check":
         check(rest)
+    elif cmd == "fail":
+        fail(rest)
     elif cmd == "publish":
         publish(rest)
     else:
