@@ -16,6 +16,16 @@ BASELINE_NIX_SYSTEMS = ("x86_64-linux", "aarch64-linux")
 STATE_PATH = ".git/oneshot-state.json"
 ISSUE_PATH = ".git/oneshot-issue.md"
 PUBLISH_PATH = ".git/oneshot-publish.json"
+FAILURE_PATH = ".git/oneshot-failure.md"
+FAILURE_REASON_PATH = ".git/oneshot-failure-reason"
+STAGE_FAILURE_PATH = ".git/oneshot-stage-failure.json"
+REVIEW_PATH = ".git/oneshot-review.json"
+REPORT_LIMIT = 60000
+DETAIL_LIMIT = 1500
+FAILURE_STAGES = (
+    "prepare", "diagnose", "baseline", "implement", "check",
+    "simplify", "review", "rework", "publish",
+)
 
 
 def run(cmd, check=True, env=None):
@@ -107,7 +117,7 @@ def diagnose(argv):
         print("oneshot diagnose: blocked: %s" % blocker, file=sys.stderr)
         updates = {
             "environment_blocker": blocker,
-            "stage_failure": "environment preflight: " + blocker,
+            "stage_failure": "diagnose: environment preflight: " + blocker,
         }
     else:
         print("oneshot diagnose: network, Nix inputs, and provider preflight are healthy", file=sys.stderr)
@@ -350,11 +360,220 @@ def mark_failed(issue_number, owner, repo):
                   {"labels": [FAILED_LABEL]})
 
 
+def load_json_file(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def read_stdin_text():
+    stream = sys.stdin
+    if stream is None:
+        return ""
+    try:
+        if stream.isatty():
+            return ""
+        return stream.read().strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def record_stage_failure(stage, detail):
+    # Every scripted stage leaves its concrete error behind so the terminal
+    # `fail` stage can report it even when the stage exits without printing a
+    # routing JSON document.
+    detail = str(detail or "").strip() or "the stage exited with a failure status"
+    try:
+        with open(STAGE_FAILURE_PATH, "w") as f:
+            json.dump({"stage": stage, "detail": detail, "recorded_at": now_iso()},
+                      f, indent=1, sort_keys=True)
+            f.write("\n")
+    except OSError as error:
+        print("oneshot: could not record the failing stage: %s" % error, file=sys.stderr)
+
+
+def load_state_for_issue(issue_number):
+    if not os.path.exists(STATE_PATH):
+        return {}
+    try:
+        with open(STATE_PATH) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(state, dict) or state.get("issue") != issue_number:
+        return {}
+    return state
+
+
+def failure_stage(message, marker, review):
+    for value in (marker.get("stage"), review.get("stage")):
+        if value in FAILURE_STAGES:
+            return value
+    match = re.match(r"\s*([A-Za-z_]+)\s*:", message or "")
+    if match and match.group(1).lower() in FAILURE_STAGES:
+        return match.group(1).lower()
+    return "unknown"
+
+
+def baseline_report(state):
+    results = state.get("baseline_results")
+    if not isinstance(results, list) or not results:
+        return "No baseline checks were recorded for this run."
+    counts = {status: sum(1 for item in results if isinstance(item, dict) and item.get("status") == status)
+              for status in ("passed", "failed", "unknown")}
+    lines = ["%d passed, %d failed, %d unknown." % (
+        counts["passed"], counts["failed"], counts["unknown"])]
+    for item in results:
+        if not isinstance(item, dict) or item.get("status") == "passed":
+            continue
+        reason = str(item.get("reason") or "").strip()
+        if len(reason) > DETAIL_LIMIT:
+            reason = reason[:DETAIL_LIMIT] + "..."
+        lines.append("- `%s` — %s%s" % (
+            str(item.get("command") or "unknown check"),
+            item.get("status") or "unknown",
+            (": " + reason) if reason else "",
+        ))
+    return "\n".join(lines)
+
+
+def environment_report(state):
+    blocker = str(state.get("environment_blocker") or "").strip()
+    if blocker:
+        return "Blocked: " + blocker
+    if state.get("baseline_sha"):
+        return "Healthy: network, Nix inputs, and provider preflight passed."
+    return "Unknown: the preflight did not complete."
+
+
+def pull_request_report(pr):
+    if not pr or not pr.get("number"):
+        return "No open pull request."
+    return "#%s (%s)" % (pr.get("number"), "draft" if pr.get("draft") else "ready for review")
+
+
+def build_failure_report(issue_number, state, stage_failure, marker, review, pr):
+    # A scripted stage records the concrete error itself; its marker is current,
+    # while `stage_failure` can still hold an older agent-stage value.
+    marker_detail = str(marker.get("detail") or "").strip()
+    detail = marker_detail or (stage_failure or "").strip()
+    if not detail:
+        detail = ("The failing stage did not report a reason; the run events and "
+                  ".git/oneshot-state.json hold the remaining evidence.")
+    stage = failure_stage(detail, marker, review)
+    findings = str(review.get("review_findings") or "").strip()
+    remediation = str(review.get("review_remediation") or "").strip()
+    if findings or remediation:
+        review_text = "\n\n".join(part for part in (
+            ("Findings:\n" + findings) if findings else "",
+            ("Remediation:\n" + remediation) if remediation else "",
+        ) if part)
+    elif stage == "review":
+        review_text = ("The reviewer did not write a structured record; the concrete "
+                       "failure above contains its findings.")
+    else:
+        review_text = "No review findings were recorded for this run."
+    lines = [
+        "# Oneshot failure: issue #%d" % issue_number,
+        "",
+        "- **Stage:** %s" % stage,
+        "- **Issue:** %s" % (state.get("issue_url") or "#%d" % issue_number),
+        "- **Baseline commit:** %s" % ((state.get("baseline_sha") or "")[:12] or "unknown"),
+        "- **Pull request:** %s" % pull_request_report(pr),
+        "",
+        "## Concrete failure",
+        "",
+        detail,
+        "",
+        "## Review findings and remediation",
+        "",
+        review_text,
+        "",
+        "## Baseline status",
+        "",
+        baseline_report(state),
+        "",
+        "## Environment status",
+        "",
+        environment_report(state),
+        "",
+    ]
+    report = "\n".join(lines)
+    if len(report) > REPORT_LIMIT:
+        report = report[:REPORT_LIMIT] + "\n\n... (truncated; see the run events)\n"
+    return report, stage, detail
+
+
+def write_failure_report(report, detail):
+    try:
+        with open(FAILURE_PATH, "w") as f:
+            f.write(report)
+        with open(FAILURE_REASON_PATH, "w") as f:
+            f.write(detail.strip() + "\n")
+    except OSError as error:
+        print("oneshot failure summary: could not write %s: %s" % (FAILURE_PATH, error),
+              file=sys.stderr)
+
+
+def post_failure_report(owner, repo, issue_number, report, pr):
+    targets = [("issue", issue_number)]
+    if pr and pr.get("number"):
+        targets.append(("pull request", pr["number"]))
+    for label, number in targets:
+        try:
+            gh("POST", "/repos/%s/%s/issues/%d/comments" % (owner, repo, number), {"body": report})
+            print("oneshot failure summary: posted the comment on %s #%s" % (label, number),
+                  file=sys.stderr)
+        except (SystemExit, OSError) as error:
+            print("oneshot failure summary: could not comment on %s #%s: %s" % (
+                label, number, error), file=sys.stderr)
+
+
+def report_failure(issue_number, state, stage_failure, pr, owner, repo, use_marker=True):
+    marker = load_json_file(STAGE_FAILURE_PATH) if use_marker else {}
+    review = load_json_file(REVIEW_PATH)
+    report, stage, detail = build_failure_report(
+        issue_number, state, stage_failure, marker, review, pr)
+    write_failure_report(report, detail)
+    print("oneshot failure summary: wrote %s (stage: %s)" % (FAILURE_PATH, stage),
+          file=sys.stderr)
+    if owner and repo:
+        post_failure_report(owner, repo, issue_number, report, pr)
+    return detail
+
+
 def fail(argv):
     issue_number = parse_issue_number(argv[0] if argv else "")
-    owner, repo = origin_repo()
-    mark_failed(issue_number, owner, repo)
-    print("oneshot fail: issue #%d labelled %s for triage" % (issue_number, FAILED_LABEL), file=sys.stderr)
+    stage_failure = read_stdin_text()
+    state = load_state_for_issue(issue_number)
+    owner = repo = ""
+    pr = None
+    try:
+        owner, repo = origin_repo()
+    except (SystemExit, OSError) as error:
+        print("oneshot fail: could not resolve the repository: %s" % error, file=sys.stderr)
+    if owner and repo:
+        try:
+            pr, _ = find_open_pull_request(owner, repo, issue_number)
+        except (SystemExit, OSError) as error:
+            print("oneshot fail: could not check for an open pull request: %s" % error,
+                  file=sys.stderr)
+    detail = report_failure(issue_number, state, stage_failure, pr, owner, repo)
+    try:
+        os.remove(STAGE_FAILURE_PATH)
+    except OSError:
+        pass
+    if owner and repo:
+        try:
+            mark_failed(issue_number, owner, repo)
+            print("oneshot fail: issue #%d labelled %s for triage" % (
+                issue_number, FAILED_LABEL), file=sys.stderr)
+        except (SystemExit, OSError) as error:
+            print("oneshot fail: could not update the issue labels: %s" % error, file=sys.stderr)
+    print(detail)
 
 
 def prepare(argv):
@@ -367,7 +586,7 @@ def prepare(argv):
         print(json.dumps({"outcome": "succeeded", "context_updates": {
             "preflight_status": "BLOCKED",
             "environment_blocker": blocker,
-            "stage_failure": "environment preflight: " + blocker,
+            "stage_failure": "prepare: environment preflight: " + blocker,
         }}))
         return
     owner, repo = origin_repo()
@@ -668,7 +887,7 @@ def check(argv):
     }
     if not can_simplify:
         updates["stage_failure"] = (
-            "issue #%s still needs %d changed lines across %d files after %d simplification rounds "
+            "check: issue #%s still needs %d changed lines across %d files after %d simplification rounds "
             "(limit %d; a modified line counts as one addition plus one deletion): the issue is too large "
             "for a oneshot, split it and re-add the %s label" % (
                 state.get("issue"), lines, files, MAX_SIMPLIFY_ROUNDS, DIFF_LIMIT, READY_LABEL))
@@ -810,6 +1029,9 @@ def publish(argv):
         })
         pr = set_draft(updated or pr)
 
+    if draft:
+        report_failure(issue_number, state, failure_reason, pr, owner, repo, use_marker=False)
+
     print(json.dumps({"context_updates": {
         "pr_number": str(pr.get("number")),
         "pr_url": pr.get("html_url", ""),
@@ -820,20 +1042,39 @@ def main():
     if len(sys.argv) < 2:
         sys.exit("usage: tools.py <prepare|diagnose|baseline|check|fail|publish> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
-    if cmd == "prepare":
-        prepare(rest)
-    elif cmd == "diagnose":
-        diagnose(rest)
-    elif cmd == "baseline":
-        baseline(rest)
-    elif cmd == "check":
-        check(rest)
-    elif cmd == "fail":
-        fail(rest)
-    elif cmd == "publish":
-        publish(rest)
-    else:
+    handlers = {
+        "prepare": prepare,
+        "diagnose": diagnose,
+        "baseline": baseline,
+        "check": check,
+        "fail": fail,
+        "publish": publish,
+    }
+    handler = handlers.get(cmd)
+    if handler is None:
         sys.exit("unknown command %r" % cmd)
+    try:
+        handler(rest)
+    except SystemExit as error:
+        code = error.code
+        if cmd != "fail":
+            if isinstance(code, str) and code.strip():
+                record_stage_failure(cmd, code)
+            elif isinstance(code, int) and code != 0:
+                record_stage_failure(cmd, "exit status %d" % code)
+        raise
+    except Exception as error:
+        if cmd != "fail":
+            record_stage_failure(cmd, "%s: %s" % (type(error).__name__, error))
+        raise
+    else:
+        # A successful stage must not leave an older failure behind for a later
+        # terminal failure to quote.
+        if cmd != "fail" and os.path.exists(STAGE_FAILURE_PATH):
+            try:
+                os.remove(STAGE_FAILURE_PATH)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

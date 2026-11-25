@@ -136,7 +136,7 @@ digraph Oneshot {
         label="Fail run",
         shape=parallelogram,
         stdin_source="stage_failure",
-        script="set -eu\nMSG=$(cat || true)\nif [ -f .git/oneshot-scripts/tools.py ]; then\n  python3 .git/oneshot-scripts/tools.py fail \"{{ inputs.issue }}\" || true\nfi\nif [ -z \"$MSG\" ]; then\n  MSG=\"a oneshot stage failed; inspect the failing stage output in the run events and .git/oneshot-state.json\"\nfi\nprintf 'oneshot: %s\\n' \"$MSG\" >&2\nexit 1"
+        script="set -eu\nMSG=$(cat || true)\nRESOLVED=\"\"\nif [ -f .git/oneshot-scripts/tools.py ]; then\n  RESOLVED=$(printf '%s' \"$MSG\" | python3 .git/oneshot-scripts/tools.py fail \"{{ inputs.issue }}\" || true)\nfi\nif [ -z \"$MSG\" ]; then\n  MSG=\"$RESOLVED\"\nfi\nif [ -z \"$MSG\" ] && [ -f .git/oneshot-failure-reason ]; then\n  MSG=$(cat .git/oneshot-failure-reason)\nfi\nif [ -z \"$MSG\" ]; then\n  MSG=\"a oneshot stage failed before it could report a reason; inspect .git/oneshot-failure.md, the issue comments, and the run events\"\nfi\nprintf 'oneshot: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
     start -> setup_helpers -> prepare

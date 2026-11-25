@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -290,7 +291,8 @@ class PrepareSkipTests(unittest.TestCase):
             return 200, None
 
         tools["gh"] = fake_gh
-        with contextlib.redirect_stderr(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
             tools["fail"](["382"])
 
         self.assertIn(
@@ -299,6 +301,160 @@ class PrepareSkipTests(unittest.TestCase):
             ("DELETE", "/repos/example/project/issues/382/labels/fabro-ready", None), calls)
         self.assertIn(
             ("POST", "/repos/example/project/issues/382/labels", {"labels": ["fabro-failed"]}), calls)
+
+
+class FailureSummaryTests(unittest.TestCase):
+    def run_fail(self, state, stdin_text, review=None, marker=None):
+        tools = load_tools()
+        calls = []
+
+        def fake_gh(method, path, body=None, expect=(200, 201, 204)):
+            calls.append((method, path, body))
+            if method == "GET" and "/pulls" in path:
+                return 200, [{
+                    "number": 17,
+                    "draft": True,
+                    "head": {"ref": "oneshot/issue-382",
+                             "repo": {"full_name": "example/project"}},
+                }]
+            return 201, {}
+
+        tools["origin_repo"] = lambda: ("example", "project")
+        tools["gh"] = fake_gh
+        with tempfile.TemporaryDirectory() as tmp:
+            git_dir = pathlib.Path(tmp, ".git")
+            git_dir.mkdir()
+            if state is not None:
+                (git_dir / "oneshot-state.json").write_text(json.dumps(state))
+            if review is not None:
+                (git_dir / "oneshot-review.json").write_text(json.dumps(review))
+            if marker is not None:
+                (git_dir / "oneshot-stage-failure.json").write_text(json.dumps(marker))
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                output = io.StringIO()
+                with mock.patch.object(sys, "stdin", io.StringIO(stdin_text)), \
+                        contextlib.redirect_stdout(output), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    tools["fail"](["382"])
+                report = pathlib.Path(".git/oneshot-failure.md").read_text()
+            finally:
+                os.chdir(previous)
+        return report, output.getvalue().strip(), calls
+
+    def state(self):
+        return {
+            "issue": 382,
+            "issue_url": "https://github.com/example/project/issues/382",
+            "baseline_sha": "0123456789abcdef",
+            "baseline_results": [
+                {"command": "python3 tests/dependency-cooldown/cooldown.test.py",
+                 "status": "passed", "reason": "exit 0"},
+                {"command": "nix flake check --no-build",
+                 "status": "unknown", "reason": "nix is not installed"},
+            ],
+        }
+
+    def test_rejection_writes_and_comments_findings_on_issue_and_draft_pr(self):
+        review = {
+            "stage": "review",
+            "verdict": "REJECTED",
+            "stage_failure": "review: tools.py:198 hides the review verdict",
+            "review_findings": "1. tools.py:198 posts a generic sentence instead of the reason",
+            "review_remediation": "1. include the concrete stage_failure in the comment",
+        }
+
+        report, detail, calls = self.run_fail(
+            self.state(), "review: tools.py:198 hides the review verdict", review=review)
+
+        self.assertEqual(detail, "review: tools.py:198 hides the review verdict")
+        self.assertIn("**Stage:** review", report)
+        self.assertIn("**Pull request:** #17 (draft)", report)
+        self.assertIn("tools.py:198 posts a generic sentence", report)
+        self.assertIn("include the concrete stage_failure", report)
+        self.assertIn("1 passed, 0 failed, 1 unknown", report)
+        self.assertIn("nix is not installed", report)
+        self.assertIn("Healthy: network, Nix inputs", report)
+
+        endpoints = {(method, path) for method, path, _body in calls}
+        self.assertIn(("POST", "/repos/example/project/issues/382/comments"), endpoints)
+        self.assertIn(("POST", "/repos/example/project/issues/17/comments"), endpoints)
+        bodies = [body["body"] for method, path, body in calls if path.endswith("/comments")]
+        self.assertEqual(len(bodies), 2)
+        for body in bodies:
+            self.assertIn("**Stage:** review", body)
+            self.assertIn("tools.py:198 hides the review verdict", body)
+            self.assertIn("tools.py:198 posts a generic sentence", body)
+
+    def test_scripted_failure_reports_the_recorded_stage_instead_of_a_generic_sentence(self):
+        marker = {
+            "stage": "baseline",
+            "detail": "nix flake check --no-build failed: error: infinite recursion encountered",
+        }
+
+        report, detail, calls = self.run_fail(self.state(), "", marker=marker)
+
+        self.assertEqual(detail, marker["detail"])
+        self.assertIn("**Stage:** baseline", report)
+        self.assertIn("infinite recursion encountered", report)
+        self.assertIn("No review findings were recorded", report)
+        self.assertIn(
+            ("POST", "/repos/example/project/issues/382/comments"),
+            {(method, path) for method, path, _body in calls})
+        self.assertNotIn("inspect the failing stage output in the run events",
+                         [body["body"] for _method, path, body in calls
+                          if path.endswith("/comments")][0])
+
+    def test_scripted_marker_wins_over_a_stale_agent_stage_failure(self):
+        marker = {"stage": "publish", "detail": "publish: git push failed: lease mismatch"}
+
+        report, detail, _calls = self.run_fail(
+            self.state(), "review: stale findings from an earlier round", marker=marker)
+
+        self.assertEqual(detail, marker["detail"])
+        self.assertIn("**Stage:** publish", report)
+        self.assertNotIn("stale findings from an earlier round", report)
+
+    def test_cli_records_scripted_failure_and_clears_it_after_success(self):
+        tools = load_tools()
+        with tempfile.TemporaryDirectory() as tmp:
+            git_dir = pathlib.Path(tmp, ".git")
+            git_dir.mkdir()
+            marker_path = git_dir / "oneshot-stage-failure.json"
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                def boom(_rest):
+                    raise SystemExit("check failed: no changes produced")
+
+                tools["check"] = boom
+                with mock.patch.object(sys, "argv", ["tools.py", "check"]):
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        with self.assertRaises(SystemExit):
+                            tools["main"]()
+                marker = json.loads(marker_path.read_text())
+                self.assertEqual(marker["stage"], "check")
+                self.assertEqual(marker["detail"], "check failed: no changes produced")
+
+                tools["prepare"] = lambda _rest: None
+                with mock.patch.object(sys, "argv", ["tools.py", "prepare"]):
+                    tools["main"]()
+                self.assertFalse(marker_path.exists())
+            finally:
+                os.chdir(previous)
+
+    def test_fail_stage_pipes_the_failure_and_every_prompt_records_one(self):
+        graph = GRAPH.read_text()
+        self.assertIn(
+            'printf \'%s\' \\"$MSG\\" | python3 .git/oneshot-scripts/tools.py fail', graph)
+        self.assertIn('stdin_source="stage_failure"', graph)
+        prompts = ROOT / ".fabro/workflows/oneshot/prompts"
+        self.assertIn(".git/oneshot-review.json", (prompts / "review.md").read_text())
+        self.assertIn(
+            '"stage_failure": "simplify:', (prompts / "simplify.md").read_text())
+        self.assertIn(
+            '"stage_failure": "implement:', (prompts / "implement.md").read_text())
 
 
 if __name__ == "__main__":
