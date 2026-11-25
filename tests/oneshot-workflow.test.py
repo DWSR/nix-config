@@ -97,13 +97,208 @@ class ProbeTests(unittest.TestCase):
 
     def test_workflow_gates_implement_and_fails_blocked_preflight(self):
         graph = GRAPH.read_text()
-        self.assertIn('prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]', graph)
+        self.assertIn('prepare -> exit [condition="outcome=succeeded && context.skipped=true", weight=10]', graph)
+        self.assertIn('prepare -> diagnose [condition="outcome=succeeded && context.skipped!=true && context.preflight_status!=BLOCKED"]', graph)
         blocked_edge = 'prepare -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED", weight=10]'
         self.assertIn(blocked_edge, graph)
         self.assertIn('diagnose -> baseline [condition="outcome=succeeded && context.preflight_status=READY"]', graph)
         self.assertIn('baseline -> implement [condition="outcome=succeeded"]', graph)
         self.assertIn('diagnose -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED"]', graph)
+        self.assertIn('tools.py fail \\"{{ inputs.issue }}\\"', graph)
         self.assertNotIn('prepare -> implement [condition="outcome=succeeded"]', graph)
+
+
+class PrepareSkipTests(unittest.TestCase):
+    def issue(self, state="open", labels=("fabro-ready", "type/oneshot")):
+        return {
+            "number": 382,
+            "state": state,
+            "title": "fix(oneshot): skip cleanly",
+            "body": "Skip closed or already-published issues.",
+            "html_url": "https://github.com/example/project/issues/382",
+            "labels": [{"name": name} for name in labels],
+        }
+
+    def prepare_tools(self, issue, open_prs=None, live_runs=()):
+        tools = load_tools()
+        calls = []
+        tools["github_reachability_blocker"] = lambda: ""
+        tools["origin_repo"] = lambda: ("example", "project")
+        tools["run"] = lambda *_args, **_kwargs: ""
+        tools["live_oneshot_runs"] = lambda *_args: list(live_runs)
+
+        def fake_gh(method, path, body=None, expect=(200, 201, 204)):
+            calls.append((method, path, body))
+            if method == "GET" and path.endswith("/issues/%s" % issue["number"]):
+                return 200, issue
+            if method == "GET" and "/pulls?" in path:
+                return 200, list(open_prs or [])
+            return 200, None
+
+        tools["gh"] = fake_gh
+        return tools, calls
+
+    def run_prepare(self, tools):
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".git"))
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    tools["prepare"](["382"])
+            finally:
+                os.chdir(previous)
+        return json.loads(output.getvalue().strip().splitlines()[-1])
+
+    def test_closed_issue_skips_and_clears_queue_labels(self):
+        tools, calls = self.prepare_tools(
+            self.issue(state="closed", labels=("fabro-ready", "fabro-running")))
+        report = self.run_prepare(tools)
+
+        self.assertEqual(report["context_updates"]["skipped"], "true")
+        self.assertEqual(report["context_updates"]["skip_reason"], "closed")
+        self.assertIn(
+            ("DELETE", "/repos/example/project/issues/382/labels/fabro-running", None), calls)
+        self.assertIn(
+            ("DELETE", "/repos/example/project/issues/382/labels/fabro-ready", None), calls)
+
+    def test_open_pull_request_that_closes_the_issue_skips(self):
+        tools, calls = self.prepare_tools(self.issue(), open_prs=[{
+            "number": 17,
+            "body": "This fixes #382.",
+            "head": {"ref": "feature", "repo": {"full_name": "example/project"}},
+        }])
+        report = self.run_prepare(tools)
+
+        self.assertEqual(report["context_updates"]["skip_reason"], "pull_request")
+        self.assertIn(
+            ("DELETE", "/repos/example/project/issues/382/labels/fabro-running", None), calls)
+
+    def test_oneshot_branch_with_an_open_pull_request_skips(self):
+        tools, _calls = self.prepare_tools(self.issue(), open_prs=[{
+            "number": 18,
+            "body": "",
+            "head": {"ref": "oneshot/issue-382", "repo": {"full_name": "example/project"}},
+        }])
+        report = self.run_prepare(tools)
+
+        self.assertEqual(report["context_updates"]["skip_reason"], "pull_request")
+
+    def test_another_live_run_is_superseded_without_touching_labels(self):
+        tools, calls = self.prepare_tools(
+            self.issue(), live_runs=[{"id": "first"}, {"id": "second"}])
+        report = self.run_prepare(tools)
+
+        self.assertEqual(report["context_updates"]["skip_reason"], "superseded")
+        self.assertFalse(any(method == "DELETE" for method, _path, _body in calls))
+
+    def test_resumed_run_is_not_superseded_by_a_duplicate(self):
+        issue = self.issue()
+        tools, _calls = self.prepare_tools(
+            issue, live_runs=[{"id": "first"}, {"id": "second"}])
+        tools["load_meta"] = lambda _number: ({
+            "fingerprint": tools["issue_fingerprint"](issue["title"], issue["body"]),
+            "recorded_at": "2026-01-01T00:00:00Z",
+        }, "sha")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".git"))
+            pathlib.Path(tmp, ".git", "oneshot-state.json").write_text(
+                json.dumps({"issue": 382, "trunk": "main", "baseline_sha": "abc"}))
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    tools["prepare"](["382"])
+            finally:
+                os.chdir(previous)
+
+        report = json.loads(output.getvalue().strip().splitlines()[-1])
+        self.assertNotIn("skipped", report["context_updates"])
+
+    def test_closing_references_detect_supported_forms(self):
+        tools = load_tools()
+        self.assertTrue(tools["pull_request_closes_issue"]("Fixes owner/project#382", 382))
+        self.assertTrue(tools["pull_request_closes_issue"](
+            "Closes https://github.com/owner/project/issues/382", 382))
+        self.assertFalse(tools["pull_request_closes_issue"](
+            "See https://github.com/owner/project/issues/382 for details", 382))
+        self.assertFalse(tools["pull_request_closes_issue"]("This mentions #382", 382))
+        self.assertFalse(tools["pull_request_closes_issue"]("Fixes #3821", 382))
+
+    def test_live_run_listing_keeps_only_this_oneshot_issue(self):
+        tools = load_tools()
+        payload = {"data": [
+            {"id": "label", "workflow": {"slug": "oneshot"},
+             "repository": {"name": "example/project"}, "labels": {"issue": "382"}},
+            {"id": "goal", "workflow": {"slug": "oneshot"},
+             "repository": {"name": "example/project"},
+             "goal": "Implement GitHub issue #382 as a oneshot change"},
+            {"id": "other-issue", "workflow": {"slug": "oneshot"},
+             "repository": {"name": "example/project"}, "labels": {"issue": "383"}},
+            {"id": "other-repo", "workflow": {"slug": "oneshot"},
+             "repository": {"name": "example/other"}, "labels": {"issue": "382"}},
+            {"id": "other-workflow", "workflow": {"slug": "dispatch"},
+             "repository": {"name": "example/project"}, "labels": {"issue": "382"}},
+        ]}
+
+        class Response:
+            def read(self):
+                return json.dumps(payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with mock.patch.object(tools["urllib"].request, "urlopen", return_value=Response()):
+            runs = tools["live_oneshot_runs"]("example", "project", 382)
+        self.assertEqual([run["id"] for run in runs], ["label", "goal"])
+
+        with mock.patch.object(tools["urllib"].request, "urlopen", side_effect=OSError("offline")):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertIsNone(tools["live_oneshot_runs"]("example", "project", 382))
+
+    def test_changed_issue_still_trips_the_fingerprint_guard(self):
+        tools, _calls = self.prepare_tools(self.issue(), live_runs=[{"id": "only"}])
+        tools["load_meta"] = lambda _number: (
+            {"fingerprint": "000000000000", "recorded_at": "2026-01-01T00:00:00Z"}, "sha")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".git"))
+            pathlib.Path(tmp, ".git", "oneshot-state.json").write_text(
+                json.dumps({"issue": 382}))
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as caught:
+                        tools["prepare"](["382"])
+            finally:
+                os.chdir(previous)
+
+        self.assertIn("changed after this oneshot run started", str(caught.exception))
+
+    def test_fail_marks_issue_failed_and_clears_run_labels(self):
+        tools = load_tools()
+        calls = []
+        tools["origin_repo"] = lambda: ("example", "project")
+
+        def fake_gh(method, path, body=None, expect=(200, 201, 204)):
+            calls.append((method, path, body))
+            return 200, None
+
+        tools["gh"] = fake_gh
+        with contextlib.redirect_stderr(io.StringIO()):
+            tools["fail"](["382"])
+
+        self.assertIn(
+            ("DELETE", "/repos/example/project/issues/382/labels/fabro-running", None), calls)
+        self.assertIn(
+            ("DELETE", "/repos/example/project/issues/382/labels/fabro-ready", None), calls)
+        self.assertIn(
+            ("POST", "/repos/example/project/issues/382/labels", {"labels": ["fabro-failed"]}), calls)
 
 
 if __name__ == "__main__":

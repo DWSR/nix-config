@@ -4444,7 +4444,8 @@
 
           # Agent workflows inherit the runner's deepseek-v4.1-flash default;
           # ensure a saturated OpenCode Go cell fails over to the
-          # ChatGPT-backed gpt-6-luna target instead of ending the run.
+          # ChatGPT-backed gpt-6-luna target instead of ending the run. The
+          # same offline check also runs the oneshot workflow unit tests.
           fabro-workflows-model-fallbacks =
             pkgs.runCommand "fabro-workflows-model-fallbacks"
               {
@@ -4460,6 +4461,7 @@
                 cd source
                 python3 tests/fabro-workflows/model-fallbacks.test.py
                 python3 tests/fabro-workflows/oneshot-salvage.test.py
+                python3 tests/oneshot-workflow.test.py
                 touch $out
               '';
 

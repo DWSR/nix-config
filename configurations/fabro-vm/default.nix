@@ -364,14 +364,17 @@ in
 
     # Serve the Fabro API to sandbox containers on the podman bridge, with
     # per-container identity checks (see api-bridge.nix). The allowed
-    # slugs are the workflows whose runs may dispatch child runs; the
-    # allowed version variables are the pinned child workflow-version ids
-    # the bridge accepts in a create request.
+    # slugs are the workflows whose running instances may use the API:
+    # dispatch and kiro-impl create children, and oneshot lists live runs
+    # to avoid duplicate work for the same issue. The allowed version
+    # variables are the pinned child workflow-version ids the bridge
+    # accepts in a create request.
     services.fabro-api-bridge = {
       enable = true;
       allowedWorkflowSlugs = [
         "dispatch"
         "kiro-impl"
+        "oneshot"
       ];
       allowedVersionVariables = [
         "kiro_spec_workflow_version"
