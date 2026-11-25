@@ -38,11 +38,10 @@ let
     # disabled enableZshIntegration to use the cached init. Prepending the
     # export to the cached file restores the attach-existing behavior
     # without resurrecting the live `eval $(zellij setup …)` subprocess.
-    # Whether the snippet runs at all is decided by the Rex guard at its
-    # source site (initContent, mkOrder 600).
     zellij = mkInitCache "zellij" ''
       echo 'export ZELLIJ_AUTO_ATTACH=true' > $out
       ${config.programs.zellij.package}/bin/zellij setup --generate-auto-start zsh >> $out
+      sed -i 's/if \[\[ -z "\$ZELLIJ" \]\]; then/if [[ -z "$ZELLIJ" \&\& -z "$REX_SESSION" ]]; then/' $out
     '';
     zoxide = mkInitCache "zoxide" "${config.programs.zoxide.package}/bin/zoxide init zsh > $out";
     fzf = mkInitCache "fzf" "${config.programs.fzf.package}/bin/fzf --zsh > $out";
@@ -121,12 +120,7 @@ in
         # equivalent to the corresponding `eval "$(<tool> init zsh)"` but
         # avoids a per-invocation subprocess fork. Cumulative measured
         # savings vs. uncached: ~235ms warm.
-        # Rex already multiplexes terminal panes, so auto-launching zellij
-        # inside one nests two multiplexers. REX_BLOCK is set in every Rex
-        # pane (REX_SESSION is only a rex CLI input for selecting a session,
-        # never exported); TERM_PROGRAM=rex also covers panes where the
-        # shell integration has not run.
-        if [[ -z "''${REX_BLOCK:-}" && "''${TERM_PROGRAM:-}" != "rex" ]]; then
+        if [[ -z "$REX_SESSION" ]]; then
           source ${cachedInits.zellij}
         fi
         source ${cachedInits.zoxide}

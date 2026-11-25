@@ -120,6 +120,14 @@ Read the code and compare it against the issue.
 - Running the project's tests, linters, and read-only git commands is expected and allowed.
 - Do not accept the implementer's report as evidence; run the checks yourself.
 
+## Failure summary record
+
+Before your final response, write `.git/oneshot-review.json` (run metadata, never a source
+file) with one JSON object containing `stage` (`review`), `verdict`, `stage_failure`,
+`review_findings`, and `review_remediation`, copying the values you report below. The
+terminal failure summary quotes this file, so keep the findings and remediation complete
+and concrete.
+
 ## Final response
 
 Write a short narrative that includes the mechanical results, then end your response with
