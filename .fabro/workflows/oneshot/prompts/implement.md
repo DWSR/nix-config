@@ -81,4 +81,7 @@ On success:
 
 When blocked:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>", "stage_failure": "<the same concrete blocker>"}}
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>", "stage_failure": "implement: <the same concrete blocker>"}}
+
+Use the same `stage_failure` shape for any other failure that stops the implementation
+before the change is ready, not only a blocked change.

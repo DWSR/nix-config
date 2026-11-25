@@ -145,7 +145,7 @@ class ModelFallbackTests(unittest.TestCase):
         implement = (WORKFLOW_DIR / "oneshot" / "prompts" / "implement.md").read_text()
 
         self.assertIn("Include the complete review findings", review)
-        self.assertIn('"stage_failure": "<the same concrete blocker>"', implement)
+        self.assertIn('"stage_failure": "implement: <the same concrete blocker>"', implement)
         self.assertIn("failure_class` to `network`", review)
         self.assertIn("context_updates.stage_failure", review)
 

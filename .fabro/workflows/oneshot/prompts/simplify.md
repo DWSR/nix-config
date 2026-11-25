@@ -52,4 +52,4 @@ On success:
 
 When the change cannot be made smaller without breaking the issue's behavior:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<why it cannot be reduced and what a human should do>"}}
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<why it cannot be reduced and what a human should do>", "stage_failure": "simplify: <why it cannot be reduced and what a human should do>"}}

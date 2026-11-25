@@ -69,6 +69,7 @@ class FakeGitHub:
     def __init__(self, open_prs=None):
         self.open_prs = list(open_prs or [])
         self.requests = []
+        self.comments = []
 
     def __call__(self, request, data=None, timeout=None):
         method = request.get_method()
@@ -77,6 +78,9 @@ class FakeGitHub:
         self.requests.append((method, path, body))
         if path.startswith("/repos/example/project/pulls?"):
             return FakeResponse(self.open_prs)
+        if path.endswith("/comments") and method == "POST":
+            self.comments.append((path, body["body"]))
+            return FakeResponse({}, status=201)
         if path == "/repos/example/project/pulls" and method == "POST":
             created = {"number": 17, "node_id": "PR_node", "html_url": "https://github.com/example/project/pull/17",
                        "draft": body["draft"]}
@@ -126,6 +130,22 @@ class OneshotSalvageTests(unittest.TestCase):
             self.assertIn("Review blocked: network unavailable.", create["body"])
             self.assertIn("Closes #372", create["body"])
             self.assertIn("refs/heads/oneshot/issue-372", git(origin, "for-each-ref", "--format=%(refname)", "refs/heads"))
+
+    def test_salvage_posts_the_failure_summary_on_the_issue_and_draft_pr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            (work / "fixture.txt").write_text("salvaged implementation\n")
+            github = FakeGitHub()
+
+            run_publish(work, github, "review: review found one blocking defect", draft=True)
+
+            paths = [path for path, _body in github.comments]
+            self.assertIn("/repos/example/project/issues/372/comments", paths)
+            self.assertIn("/repos/example/project/issues/17/comments", paths)
+            for _path, body in github.comments:
+                self.assertIn("**Stage:** review", body)
+                self.assertIn("review found one blocking defect", body)
+            self.assertTrue((work / ".git/oneshot-failure.md").exists())
 
     def test_updates_existing_open_pr_and_converts_it_to_draft(self):
         with tempfile.TemporaryDirectory() as tmp:
