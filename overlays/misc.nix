@@ -15,6 +15,12 @@ final: prev: {
     vendorHash = "sha256-uFXHoseFOxGIGPiWxWfDl339vUv855VHYgSs9rnDyuI=";
   });
 
+  # nixpkgs-26.05-darwin ships nix-direnv 3.1.2; re-export unstable's 3.2.0
+  # until the stable pin catches up. A version/src overrideAttrs cannot bump
+  # it: resholve's wrapper derivation takes the inner build as its `src`, so
+  # overriding that src skips resholve and installs the raw tree.
+  inherit (prev.unstable) nix-direnv;
+
   shadowenv-vim = final.vimUtils.buildVimPlugin {
     pname = "shadowenv-vim";
     version = "unstable-2024-07-23";
