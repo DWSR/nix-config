@@ -409,12 +409,16 @@ def load_state_for_issue(issue_number):
 
 
 def failure_stage(message, marker, review):
-    for value in (marker.get("stage"), review.get("stage")):
-        if value in FAILURE_STAGES:
-            return value
+    # Prefer the freshest concrete signal: a scripted stage marker, then the
+    # message prefix, and only then the review record, which can be stale from
+    # an earlier round when a later stage fails.
+    if marker.get("stage") in FAILURE_STAGES:
+        return marker.get("stage")
     match = re.match(r"\s*([A-Za-z_]+)\s*:", message or "")
     if match and match.group(1).lower() in FAILURE_STAGES:
         return match.group(1).lower()
+    if review.get("stage") in FAILURE_STAGES:
+        return review.get("stage")
     return "unknown"
 
 
@@ -466,16 +470,16 @@ def build_failure_report(issue_number, state, stage_failure, marker, review, pr)
     stage = failure_stage(detail, marker, review)
     findings = str(review.get("review_findings") or "").strip()
     remediation = str(review.get("review_remediation") or "").strip()
-    if findings or remediation:
+    if stage != "review":
+        review_text = "No review findings were recorded for this run."
+    elif findings or remediation:
         review_text = "\n\n".join(part for part in (
             ("Findings:\n" + findings) if findings else "",
             ("Remediation:\n" + remediation) if remediation else "",
         ) if part)
-    elif stage == "review":
+    else:
         review_text = ("The reviewer did not write a structured record; the concrete "
                        "failure above contains its findings.")
-    else:
-        review_text = "No review findings were recorded for this run."
     lines = [
         "# Oneshot failure: issue #%d" % issue_number,
         "",

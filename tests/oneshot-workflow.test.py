@@ -416,6 +416,23 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertIn("**Stage:** publish", report)
         self.assertNotIn("stale findings from an earlier round", report)
 
+    def test_later_stage_failure_ignores_a_stale_review_record(self):
+        review = {
+            "stage": "review",
+            "verdict": "REJECTED",
+            "review_findings": "1. stale finding from the previous round",
+            "review_remediation": "1. stale remediation from the previous round",
+        }
+
+        report, detail, _calls = self.run_fail(
+            self.state(), "check: issue #382 still needs 1200 changed lines", review=review)
+
+        self.assertEqual(detail, "check: issue #382 still needs 1200 changed lines")
+        self.assertIn("**Stage:** check", report)
+        self.assertNotIn("stale finding from the previous round", report)
+        self.assertNotIn("stale remediation from the previous round", report)
+        self.assertIn("No review findings were recorded", report)
+
     def test_cli_records_scripted_failure_and_clears_it_after_success(self):
         tools = load_tools()
         with tempfile.TemporaryDirectory() as tmp:
