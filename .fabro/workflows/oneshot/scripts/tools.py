@@ -15,6 +15,8 @@ BASELINE_NIX_TIMEOUT = 180
 BASELINE_NIX_SYSTEMS = ("x86_64-linux", "aarch64-linux")
 STATE_PATH = ".git/oneshot-state.json"
 ISSUE_PATH = ".git/oneshot-issue.md"
+META_STATE_NAME = "oneshot-state.json"
+META_ISSUE_NAME = "oneshot-issue.md"
 PUBLISH_PATH = ".git/oneshot-publish.json"
 FAILURE_PATH = ".git/oneshot-failure.md"
 FAILURE_REASON_PATH = ".git/oneshot-failure-reason"
@@ -246,33 +248,142 @@ def load_meta(issue_number):
     return meta, sha
 
 
-def record_fingerprint(issue_number, fingerprint, meta_sha):
-    ref = "refs/heads/%s" % meta_branch(issue_number)
-    path = os.path.join(".git", "oneshot-fingerprint.json")
-    with open(path, "w") as f:
-        json.dump({
+def meta_files(issue_number, fingerprint, state, issue_text):
+    files = {
+        "fingerprint.json": json.dumps({
             "fingerprint": fingerprint,
             "issue": issue_number,
-            "recorded_at": now_iso(),
-        }, f, indent=2, sort_keys=True)
-        f.write("\n")
-    blob = run(["git", "hash-object", "-w", path])
-    os.remove(path)
+            "recorded_at": state.get("created_at") or now_iso(),
+        }, indent=2, sort_keys=True) + "\n",
+        META_STATE_NAME: json.dumps(state, indent=1, sort_keys=True) + "\n",
+    }
+    if issue_text is not None:
+        files[META_ISSUE_NAME] = issue_text
+    return files
 
+
+def write_meta_commit(issue_number, files, meta_sha, message):
     index = os.path.join(".git", "oneshot-meta-index")
+    blob_path = os.path.join(".git", "oneshot-meta-blob")
     if os.path.exists(index):
         os.remove(index)
     env = dict(os.environ, GIT_INDEX_FILE=index)
-    run(["git", "update-index", "--add", "--cacheinfo", "100644", blob, "fingerprint.json"], env=env)
-    tree = run(["git", "write-tree"], env=env)
-    os.remove(index)
+    try:
+        for name, text in sorted(files.items()):
+            with open(blob_path, "w") as f:
+                f.write(text)
+            blob = run(["git", "hash-object", "-w", blob_path])
+            run(["git", "update-index", "--add", "--cacheinfo", "100644", blob, name], env=env)
+        tree = run(["git", "write-tree"], env=env)
+    finally:
+        for path in (index, blob_path):
+            if os.path.exists(path):
+                os.remove(path)
 
     ident = []
     if not run(["git", "config", "user.email"], check=False):
         ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
-    tip = run(["git"] + ident + ["commit-tree", tree, "-m", "oneshot(#%d): record issue fingerprint" % issue_number])
-    run(["git", "push", "--quiet", "--force-with-lease=%s:%s" % (ref, meta_sha or ""), "origin", "%s:%s" % (tip, ref)])
-    print("oneshot prepare: recorded issue fingerprint %s at %s (%s)" % (fingerprint[:12], ref, tip[:12]), file=sys.stderr)
+    tip = run(["git"] + ident + ["commit-tree", tree, "-m", message])
+    ref = "refs/heads/%s" % meta_branch(issue_number)
+    run(["git", "push", "--quiet", "--force-with-lease=%s:%s" % (ref, meta_sha or ""),
+         "origin", "%s:%s" % (tip, ref)])
+    return tip
+
+
+def record_fingerprint(issue_number, fingerprint, state, issue_text, meta_sha):
+    tip = write_meta_commit(
+        issue_number,
+        meta_files(issue_number, fingerprint, state, issue_text),
+        meta_sha,
+        "oneshot(#%d): record issue fingerprint" % issue_number,
+    )
+    print("oneshot prepare: recorded issue fingerprint %s and run state at %s (%s)" % (
+        fingerprint[:12], meta_branch(issue_number), tip[:12]), file=sys.stderr)
+
+
+def persist_meta_state(state, issue_text=None):
+    # Best-effort refresh so a fresh sandbox can restore the run from the meta
+    # branch after the local .git state is lost.
+    issue_number = state.get("issue")
+    fingerprint = state.get("fingerprint")
+    if not issue_number or not fingerprint:
+        return ""
+    ref = "refs/heads/%s" % meta_branch(issue_number)
+    try:
+        out = run(["git", "ls-remote", "--heads", "origin", ref], check=False)
+        meta_sha = ""
+        for line in out.splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) == 2 and parts[1] == ref:
+                meta_sha = parts[0]
+        if not meta_sha:
+            return ""
+        if issue_text is None and os.path.exists(ISSUE_PATH):
+            with open(ISSUE_PATH) as f:
+                issue_text = f.read()
+        return write_meta_commit(
+            issue_number,
+            meta_files(issue_number, fingerprint, state, issue_text),
+            meta_sha,
+            "oneshot(#%d): persist run state" % issue_number,
+        )
+    except (SystemExit, OSError) as error:
+        print("oneshot: could not persist run state to %s: %s" % (
+            meta_branch(issue_number), error), file=sys.stderr)
+        return ""
+
+
+def restore_run_files(issue_number):
+    # A fresh sandbox loses .git/oneshot-*; the meta branch keeps the state and
+    # issue snapshot alongside the fingerprint so prepare can resume.
+    if os.path.exists(STATE_PATH) and os.path.exists(ISSUE_PATH):
+        return []
+    ref = "refs/heads/%s" % meta_branch(issue_number)
+    out = run(["git", "ls-remote", "--heads", "origin", ref], check=False)
+    if not any(
+            len(line.split("\t", 1)) == 2 and line.split("\t", 1)[1] == ref
+            for line in out.splitlines()):
+        return []
+    run(["git", "fetch", "--quiet", "origin", ref])
+    restored = []
+    if not os.path.exists(STATE_PATH):
+        raw = run(["git", "show", "FETCH_HEAD:%s" % META_STATE_NAME], check=False)
+        if raw:
+            try:
+                state = json.loads(raw)
+            except ValueError:
+                state = None
+            if not isinstance(state, dict) or state.get("issue") != issue_number:
+                sys.exit("run state at %s is unreadable; start a new run instead of resuming this one" % (
+                    meta_branch(issue_number)))
+            with open(STATE_PATH, "w") as f:
+                json.dump(state, f, indent=1, sort_keys=True)
+            restored.append(STATE_PATH)
+    if not os.path.exists(ISSUE_PATH):
+        raw = run(["git", "show", "FETCH_HEAD:%s" % META_ISSUE_NAME], check=False)
+        if raw:
+            with open(ISSUE_PATH, "w") as f:
+                f.write(raw + "\n")
+            restored.append(ISSUE_PATH)
+    if restored:
+        print("oneshot prepare: restored %s from %s" % (
+            ", ".join(restored), meta_branch(issue_number)), file=sys.stderr)
+    return restored
+
+
+def ensure_helper_script():
+    # Copy the tracked helper into .git idempotently so a fresh sandbox can
+    # still run the installed script after the checkpoint is restored.
+    source = globals().get("__file__") or os.path.join(
+        ".fabro", "workflows", "oneshot", "scripts", "tools.py")
+    target = os.path.join(".git", "oneshot-scripts", "tools.py")
+    if os.path.realpath(source) == os.path.realpath(target):
+        return False
+    if not os.path.exists(source):
+        return False
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    shutil.copyfile(source, target)
+    return True
 
 
 def label_request(method, path, body=None):
@@ -658,6 +769,47 @@ def report_failure(issue_number, state, stage_failure, pr, owner, repo, use_mark
     return detail
 
 
+def push_failure_checkpoint(state):
+    # Preserve the failed run's diff on the remote oneshot branch so the
+    # checkpoint can be recovered even when the sandbox is gone.
+    issue_number = state.get("issue")
+    baseline = state.get("baseline_sha")
+    if not issue_number or not baseline:
+        return ""
+    if not run(["git", "rev-parse", "--git-dir"], check=False):
+        return ""
+    run(["git", "add", "-A"], check=False)
+    tree = run(["git", "write-tree"], check=False)
+    if not tree:
+        return ""
+    if subprocess.run(["git", "diff", "--quiet", baseline, tree]).returncode == 0:
+        return ""
+
+    branch = "oneshot/issue-%d" % issue_number
+    ref = "refs/heads/%s" % branch
+    remote_sha = ""
+    out = run(["git", "ls-remote", "--heads", "origin", ref], check=False)
+    for line in out.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[1] == ref:
+            remote_sha = parts[0]
+    parent = baseline
+    if remote_sha:
+        run(["git", "fetch", "--quiet", "origin", ref], check=False)
+        parent = run(["git", "rev-parse", "FETCH_HEAD"], check=False) or baseline
+
+    ident = []
+    if not run(["git", "config", "user.email"], check=False):
+        ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
+    commit = run(["git"] + ident + ["commit-tree", tree, "-p", parent,
+                  "-m", "oneshot(#%d): checkpoint a failed run" % issue_number], check=False)
+    if not commit:
+        return ""
+    run(["git", "push", "--quiet", "--force-with-lease=%s:%s" % (ref, remote_sha),
+         "origin", "%s:%s" % (commit, ref)], check=False)
+    return branch
+
+
 def fail(argv):
     issue_number = parse_issue_number(argv[0] if argv else "")
     stage_failure = read_stdin_text()
@@ -673,6 +825,13 @@ def fail(argv):
             pr, _ = find_open_pull_request(owner, repo, issue_number)
         except (SystemExit, OSError) as error:
             print("oneshot fail: could not check for an open pull request: %s" % error,
+                  file=sys.stderr)
+        try:
+            branch = push_failure_checkpoint(state)
+            if branch:
+                print("oneshot fail: pushed checkpoint branch %s" % branch, file=sys.stderr)
+        except (SystemExit, OSError) as error:
+            print("oneshot fail: could not push the checkpoint branch: %s" % error,
                   file=sys.stderr)
     detail = report_failure(issue_number, state, stage_failure, pr, owner, repo)
     try:
@@ -691,6 +850,7 @@ def fail(argv):
 
 def prepare(argv):
     issue_number = parse_issue_number(argv[0] if argv else "")
+    ensure_helper_script()
     blocker = github_reachability_blocker()
     if blocker:
         original_blocker = blocker
@@ -704,6 +864,7 @@ def prepare(argv):
         return
     owner, repo = origin_repo()
     run(["git", "fetch", "--prune", "--quiet", "origin"])
+    restore_run_files(issue_number)
     issue = gh("GET", "/repos/%s/%s/issues/%d" % (owner, repo, issue_number))[1]
     if issue.get("pull_request"):
         sys.exit("#%d is a pull request, not an issue" % issue_number)
@@ -753,6 +914,9 @@ def prepare(argv):
         if meta.get("fingerprint") != fingerprint:
             sys.exit("issue #%d changed after this oneshot run started (fingerprint %s recorded %s, current %s); start a new run instead of resuming this one" % (
                 issue_number, str(meta.get("fingerprint", ""))[:12], meta.get("recorded_at", "unknown"), fingerprint[:12]))
+        if state.get("fingerprint") and state["fingerprint"] != meta.get("fingerprint"):
+            sys.exit("run state for issue #%d does not match the fingerprint recorded at %s; start a new run instead of resuming this one" % (
+                issue_number, meta_branch(issue_number)))
     else:
         branch = "oneshot/issue-%d" % issue_number
         if run(["git", "ls-remote", "--heads", "origin", "refs/heads/%s" % branch], check=False):
@@ -763,13 +927,12 @@ def prepare(argv):
                 sys.exit("issue #%d changed after branch %s was published (fingerprint %s recorded %s, current %s); delete the branch and its pull request to regenerate" % (
                     issue_number, branch, str(meta.get("fingerprint", ""))[:12], meta.get("recorded_at", "unknown"), fingerprint[:12]))
 
+    persist_meta = False
     if state is None or state.get("preflight_only") is True:
         missing = [l for l in (READY_LABEL, TYPE_LABEL) if l not in labels]
         if missing:
             sys.exit("issue #%d is not labelled %s (labels: %s); only correctly labelled oneshots may run" % (
                 issue_number, " + ".join(missing), ", ".join(sorted(labels)) or "(none)"))
-        if meta is None or meta.get("fingerprint") != fingerprint:
-            record_fingerprint(issue_number, fingerprint, meta_sha)
         state = {
             "issue": issue_number,
             "issue_title": title,
@@ -779,7 +942,9 @@ def prepare(argv):
             "baseline_sha": run(["git", "rev-parse", "HEAD"]),
             "simplify_round": 0,
             "created_at": now_iso(),
+            "fingerprint": fingerprint,
         }
+        persist_meta = meta is None or meta.get("fingerprint") != fingerprint
         label_request("DELETE", "/repos/%s/%s/issues/%d/labels/%s" % (
             owner, repo, issue_number, urllib.parse.quote(FAILED_LABEL, safe="")))
         gh("POST", "/repos/%s/%s/issues/%d/labels" % (owner, repo, issue_number), {"labels": [RUNNING_LABEL]})
@@ -795,6 +960,10 @@ def prepare(argv):
     state["issue_url"] = issue.get("html_url", "")
     write_issue_file(issue, owner, repo, labels)
     save_state(state)
+    if persist_meta:
+        with open(ISSUE_PATH) as f:
+            issue_text = f.read()
+        record_fingerprint(issue_number, fingerprint, state, issue_text, meta_sha)
 
     print("oneshot prepare: issue=#%d trunk=%s baseline=%s fingerprint=%s" % (
         issue_number, state["trunk"], state["baseline_sha"][:12], fingerprint[:12]), file=sys.stderr)
@@ -944,6 +1113,7 @@ def baseline(argv):
 
     state["baseline_results"] = results
     save_state(state)
+    persist_meta_state(state)
     counts = {status: sum(item["status"] == status for item in results)
               for status in ("passed", "failed", "unknown")}
     print("oneshot baseline: %d passed, %d failed, %d unknown" % (
@@ -977,6 +1147,7 @@ def check(argv):
 
     if lines < DIFF_LIMIT:
         save_state(state)
+        persist_meta_state(state)
         print("oneshot check: %d lines across %d files; under the %d-line limit" % (lines, files, DIFF_LIMIT), file=sys.stderr)
         print(json.dumps({"context_updates": {
             "over_limit": "false",
@@ -989,6 +1160,7 @@ def check(argv):
     state["simplify_round"] = round_
     can_simplify = round_ <= MAX_SIMPLIFY_ROUNDS
     save_state(state)
+    persist_meta_state(state)
     print("oneshot check: %d lines across %d files; over the %d-line limit (simplify round %d of %d)" % (
         lines, files, DIFF_LIMIT, round_, MAX_SIMPLIFY_ROUNDS), file=sys.stderr)
     updates = {
