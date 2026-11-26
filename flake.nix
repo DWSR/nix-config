@@ -2988,6 +2988,14 @@
               litellmPassthru = litellm.package.passthru or { };
               litellmPrismaClient = litellmPassthru.prismaClient or null;
               litellmRouter = litellm.settings.router_settings or { };
+              litellmDecisionDeployments = builtins.filter (
+                deployment: (deployment.model_name or "") == "gpt-6-luna-decisions"
+              ) (litellm.settings.model_list or [ ]);
+              litellmDecisionDeployment =
+                if litellmDecisionDeployments == [ ] then { } else builtins.head litellmDecisionDeployments;
+              litellmJudgeTokenUnit = vm.systemd.services.litellm-chatgpt-token or { };
+              litellmJudgeTokenRefreshUnit = vm.systemd.services.litellm-chatgpt-token-refresh or { };
+              litellmJudgeTokenTimer = vm.systemd.timers.litellm-chatgpt-token-refresh or { };
               litellmMissingUnits = builtins.filter (name: !(builtins.hasAttr name vm.systemd.services)) [
                 "postgresql-setup"
                 "postgres-bootstrap"
@@ -3064,9 +3072,13 @@
               factoryRouter = factoryContainers.llm-router or { };
               factoryProvider = factoryContainers.provider-openai or { };
               factoryState = factoryContainers.state or { };
+              factoryJudge = factoryContainers.judge or { };
+              factoryJudgeOpenai = factoryContainers.judge-openai or { };
               factoryRouterOverride = factoryRouter.config_override or { };
               factoryRouterProviders = factoryRouterOverride.providers or { };
               factoryRouterOpenai = factoryRouterProviders.openai or { };
+              factoryJudgeOverride = factoryJudge.config_override or { };
+              factoryJudgeOpenaiOverride = factoryJudgeOpenai.config_override or { };
               factoryStateAdapter = factoryState.config_override.adapter or { };
               expectedFactoryExecStart = pkgs.lib.escapeShellArgs [
                 (pkgs.lib.getExe vm.fabro.iii.package)
@@ -3279,13 +3291,17 @@
                     && builtins.length (builtins.split "CONFIG_VIRTIO_FS=m" kernelConfig) > 1
                   )
                   "fabro-vm: the stock kernel config must set CONFIG_VIRTIO_FS=m (the state share needs virtiofs) and the guest must not override the kernel derivation (a patch/extraConfig forces an in-guest source compile instead of a cache substitution).";
-                assert pkgs.lib.assertMsg (
-                  vm.systemd.services.litellm.serviceConfig.EnvironmentFile
-                  == [ vm.sops.templates."litellm-env".path ]
-                ) "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template.";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.services.litellm.serviceConfig.EnvironmentFile == [
+                      vm.sops.templates."litellm-env".path
+                      "-${vm.services.litellm.stateDir}/openai.env"
+                    ]
+                  )
+                  "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template and the optional ChatGPT token file materialized by litellm-chatgpt-token.service.";
                 # systemd exports no $HOME for the fixed litellm account
-                # either; litellm 1.86 imports prisma eagerly and
-                # Path.home() would abort startup.
+                # either; litellm imports prisma eagerly and Path.home()
+                # would abort startup.
                 assert pkgs.lib.assertMsg
                   ((vm.systemd.services.litellm.environment.HOME or null) == vm.services.litellm.stateDir)
                   "fabro-vm: the litellm service must export HOME (its DynamicUser unit gets none, and litellm's eager prisma import calls Path.home()).";
@@ -3385,11 +3401,39 @@
                 # owns `prisma db push`.
                 assert pkgs.lib.assertMsg
                   (
-                    toString litellm.package == toString self.nixosConfigurations.fabro-vm.pkgs.litellm-db
+                    toString litellm.package == toString self.nixosConfigurations.fabro-vm.pkgs.litellm-db-unstable
                     && (litellm.package.pname or "") == "litellm"
-                    && (litellm.package.version or "") == "1.86.0"
+                    && (litellm.package.version or "") == "1.108.0"
                   )
-                  "fabro-vm: services.litellm.package must be pkgs.litellm-db (litellm 1.86.0 with the generated Prisma client); got '${toString litellm.package}'.";
+                  "fabro-vm: services.litellm.package must be pkgs.litellm-db-unstable (LiteLLM 1.108.0 with the generated Prisma client); got '${toString litellm.package}'.";
+                assert pkgs.lib.assertMsg (builtins.length litellmDecisionDeployments == 1)
+                  "fabro-vm: LiteLLM's model_list must contain exactly one gpt-6-luna-decisions deployment for judge-openai; got ${toString (builtins.length litellmDecisionDeployments)}.";
+                assert pkgs.lib.assertMsg
+                  (
+                    (litellmDecisionDeployment.model_info.mode or "") == "evaluation"
+                    && (litellmDecisionDeployment.litellm_params.model or "") == "openai/gpt-6-luna"
+                    && (litellmDecisionDeployment.litellm_params.api_key or "") == "os.environ/OPENAI_API_KEY"
+                  )
+                  "fabro-vm: the gpt-6-luna-decisions deployment must be an evaluation-mode openai/gpt-6-luna deployment authenticated by os.environ/OPENAI_API_KEY.";
+                assert pkgs.lib.assertMsg
+                  (
+                    !(litellmCatalog.openCode.models ? gpt-6-luna-decisions)
+                    && !(litellmCatalog.fabro.models ? gpt-6-luna-decisions)
+                  )
+                  "fabro-vm: gpt-6-luna-decisions is a gateway-only Decisions model and must not appear in the OpenCode or Fabro chat model projections.";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.services ? litellm-chatgpt-token
+                    && vm.systemd.services ? litellm-chatgpt-token-refresh
+                    && vm.systemd.paths ? litellm-chatgpt-token-refresh
+                    && builtins.elem "paths.target" (vm.systemd.paths.litellm-chatgpt-token-refresh.wantedBy or [ ])
+                    && builtins.elem "litellm.service" (litellmJudgeTokenUnit.before or [ ])
+                    && builtins.elem "litellm-chatgpt-token.service" (litellmUnit.wants or [ ])
+                    && builtins.elem "litellm-chatgpt-token.service" (litellmUnit.after or [ ])
+                    && builtins.elem "timers.target" (litellmJudgeTokenTimer.wantedBy or [ ])
+                    && (litellmJudgeTokenRefreshUnit.serviceConfig.Type or "") == "oneshot"
+                  )
+                  "fabro-vm: the ChatGPT token helper and its hourly refresh timer must materialize /var/lib/litellm/openai.env before litellm.service starts.";
                 assert pkgs.lib.assertMsg
                   (
                     litellmPassthru ? prismaClient
@@ -3999,19 +4043,47 @@
                   (factoryState.worker or "") == "path://./state"
                 ) "fabro-vm: the software-factory project must declare state as the path worker path://./state.";
                 assert pkgs.lib.assertMsg (
+                  (factoryJudge.worker or "") == "path://./judge"
+                ) "fabro-vm: the software-factory project must declare judge as the path worker path://./judge.";
+                assert pkgs.lib.assertMsg ((factoryJudgeOpenai.worker or "") == "path://./judge-openai")
+                  "fabro-vm: the software-factory project must declare judge-openai as the path worker path://./judge-openai.";
+                assert pkgs.lib.assertMsg (
                   (factoryRouter.required or false)
                   && (factoryProvider.required or false)
                   && (factoryState.required or false)
+                  && (factoryJudge.required or false)
+                  && (factoryJudgeOpenai.required or false)
                   && (factoryRouter.restart or "") == "always"
                   && (factoryProvider.restart or "") == "always"
                   && (factoryState.restart or "") == "always"
+                  && (factoryJudge.restart or "") == "always"
+                  && (factoryJudgeOpenai.restart or "") == "always"
                 ) "fabro-vm: the software-factory workers must be required with restart=always.";
                 assert pkgs.lib.assertMsg ((factoryRouter.config_name or "") == "llm-router")
                   "fabro-vm: the llm-router container must own the `llm-router` configuration entry (config_name), got '${
                     toString (factoryRouter.config_name or null)
                   }'.";
+                assert pkgs.lib.assertMsg ((factoryJudge.config_name or "") == "judge")
+                  "fabro-vm: the judge container must own the `judge` configuration entry (config_name), got '${
+                    toString (factoryJudge.config_name or null)
+                  }'.";
+                assert pkgs.lib.assertMsg ((factoryJudgeOpenai.config_name or "") == "judge-openai")
+                  "fabro-vm: the judge-openai container must own the `judge-openai` configuration entry (config_name), got '${
+                    toString (factoryJudgeOpenai.config_name or null)
+                  }'.";
                 assert pkgs.lib.assertMsg ((factoryRouterOverride.default_provider or "") == "openai")
                   "fabro-vm: the llm-router entry override must default to the `openai` provider (provider-openai behind LiteLLM).";
+                assert pkgs.lib.assertMsg ((factoryJudgeOverride.provider or "") == "openai")
+                  "fabro-vm: the judge entry override must default to the `openai` provider (judge-openai behind LiteLLM).";
+                assert pkgs.lib.assertMsg ((factoryJudgeOpenaiOverride.model or "") == "gpt-6-luna-decisions")
+                  "fabro-vm: the judge-openai entry override must select the gateway-only gpt-6-luna-decisions model, got '${
+                    toString (factoryJudgeOpenaiOverride.model or null)
+                  }'.";
+                assert pkgs.lib.assertMsg
+                  ((vm.fabro.iiiSoftwareFactory.litellmDecisionsApiUrl or "") == "http://127.0.0.1:4000/v1/decisions")
+                  "fabro-vm: litellmDecisionsApiUrl must be LiteLLM's Decisions endpoint http://127.0.0.1:4000/v1/decisions, got '${
+                    toString (vm.fabro.iiiSoftwareFactory.litellmDecisionsApiUrl or null)
+                  }'.";
                 assert pkgs.lib.assertMsg
                   ((factoryRouterOpenai.api_url or "") == "http://127.0.0.1:4000/v1/chat/completions")
                   "fabro-vm: the llm-router openai provider slice must point at LiteLLM's Chat Completions endpoint http://127.0.0.1:4000/v1/chat/completions, got '${
@@ -4036,8 +4108,14 @@
                     &&
                       toString vm.fabro.iiiSoftwareFactory.statePackage
                       == toString self.nixosConfigurations.fabro-vm.pkgs.iii-workers.state
+                    &&
+                      toString vm.fabro.iiiSoftwareFactory.judgePackage
+                      == toString self.nixosConfigurations.fabro-vm.pkgs.iii-workers.judge
+                    &&
+                      toString vm.fabro.iiiSoftwareFactory.judgeOpenaiPackage
+                      == toString self.nixosConfigurations.fabro-vm.pkgs.judgeOpenAiLitellm
                   )
-                  "fabro-vm: fabro.iiiSoftwareFactory must use the pinned pkgs.iii-workers.{llm-router,provider-openai,state} packages.";
+                  "fabro-vm: fabro.iiiSoftwareFactory must use the pinned pkgs.iii-workers.{llm-router,provider-openai,state,judge} packages and the source-built pkgs.judgeOpenAiLitellm.";
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "III_COMPOSE_STATE_DIR=/var/lib/iii-software-factory" (
                   pkgs.lib.concatStringsSep " " (
                     vm.systemd.services.iii-software-factory.serviceConfig.Environment or [ ]
@@ -4197,7 +4275,7 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
                   builtins.readFile ./configurations/fabro-vm/fabro.nix
                 )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; tailscale-reconcile re-runs tailscale up with the sops OAuth key on a two-minute timer whenever the ephemeral node is reaped (Self.Online=false, AuthURL set, or BackendState NeedsLogin/NeedsMachineAuth/Stopped); fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker), supervised by ${vm.fabro.iii.supervisorPackage.pname} (Type=notify/NotifyAccess=main, WatchdogSec ${toString vm.fabro.iii.watchdogSec}s, readiness gate ${toString vm.fabro.iii.readinessTimeoutSec}s on the engine-owned loopback listener, stop timeout ${toString vm.fabro.iii.stopTimeoutSec}s with SIGTERM→SIGKILL escalation); iii console: ${vm.fabro.iiiConsole.package.pname} ${vm.fabro.iiiConsole.package.version} installed as iii-console.service (DynamicUser, state in /var/lib/iii-console, generated console Compose project running the ade path worker on loopback 127.0.0.1:3113 and connected to ws://127.0.0.1:49134); iii software-factory: ${vm.fabro.iiiSoftwareFactory.llmRouterPackage.pname} ${vm.fabro.iiiSoftwareFactory.llmRouterPackage.version} + ${vm.fabro.iiiSoftwareFactory.providerOpenaiPackage.pname} ${vm.fabro.iiiSoftwareFactory.providerOpenaiPackage.version} + ${vm.fabro.iiiSoftwareFactory.statePackage.pname} ${vm.fabro.iiiSoftwareFactory.statePackage.version} installed as iii-software-factory.service (DynamicUser, state in /var/lib/iii-software-factory incl. the file-backed state worker store, generated software-factory Compose project on ws://127.0.0.1:49134 with the llm-router entry pointed at LiteLLM's http://127.0.0.1:4000/v1/chat/completions and the master key via sops OPENAI_API_KEY); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 and svc:iii-console tcp:443→127.0.0.1:3113 after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db-unstable (LiteLLM 1.108.0) plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, an hourly litellm-chatgpt-token-refresh timer materializing the ChatGPT OAuth token as /var/lib/litellm/openai.env for the Decisions deployment (litellm.service reads it as an optional EnvironmentFile), and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; tailscale-reconcile re-runs tailscale up with the sops OAuth key on a two-minute timer whenever the ephemeral node is reaped (Self.Online=false, AuthURL set, or BackendState NeedsLogin/NeedsMachineAuth/Stopped); fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker), supervised by ${vm.fabro.iii.supervisorPackage.pname} (Type=notify/NotifyAccess=main, WatchdogSec ${toString vm.fabro.iii.watchdogSec}s, readiness gate ${toString vm.fabro.iii.readinessTimeoutSec}s on the engine-owned loopback listener, stop timeout ${toString vm.fabro.iii.stopTimeoutSec}s with SIGTERM→SIGKILL escalation); iii console: ${vm.fabro.iiiConsole.package.pname} ${vm.fabro.iiiConsole.package.version} installed as iii-console.service (DynamicUser, state in /var/lib/iii-console, generated console Compose project running the ade path worker on loopback 127.0.0.1:3113 and connected to ws://127.0.0.1:49134); iii software-factory: ${vm.fabro.iiiSoftwareFactory.llmRouterPackage.pname} ${vm.fabro.iiiSoftwareFactory.llmRouterPackage.version} + ${vm.fabro.iiiSoftwareFactory.providerOpenaiPackage.pname} ${vm.fabro.iiiSoftwareFactory.providerOpenaiPackage.version} + ${vm.fabro.iiiSoftwareFactory.statePackage.pname} ${vm.fabro.iiiSoftwareFactory.statePackage.version} + ${vm.fabro.iiiSoftwareFactory.judgePackage.pname} ${vm.fabro.iiiSoftwareFactory.judgePackage.version} + ${vm.fabro.iiiSoftwareFactory.judgeOpenaiPackage.pname} ${vm.fabro.iiiSoftwareFactory.judgeOpenaiPackage.version} installed as iii-software-factory.service (DynamicUser, state in /var/lib/iii-software-factory incl. the file-backed state worker store, generated software-factory Compose project on ws://127.0.0.1:49134 with the llm-router entry pointed at LiteLLM's http://127.0.0.1:4000/v1/chat/completions, the judge entry defaulting to the judge-openai provider compiled against LiteLLM's http://127.0.0.1:4000/v1/decisions and its gateway-only gpt-6-luna-decisions model, and the master key via sops OPENAI_API_KEY); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 and svc:iii-console tcp:443→127.0.0.1:3113 after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
 
             in
             pkgs.runCommand "fabro-vm-guest-eval"

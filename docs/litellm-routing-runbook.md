@@ -1,7 +1,9 @@
 # LiteLLM routing runbook
 
-The fabro-vm guest runs one LiteLLM 1.86.0 gateway on
-`http://127.0.0.1:4000`. It serves the provider-free logical model ids
+The fabro-vm guest runs one LiteLLM 1.108.0 gateway on
+`http://127.0.0.1:4000` (nixpkgs-unstable, for the Decisions API). Behaviour
+notes below that name 1.86.0 explicitly record the pre-Decisions proxy and
+may differ on the current build. It serves the provider-free logical model ids
 generated from `configurations/fabro-vm/litellm-catalog.nix`. Each response
 carries `x-litellm-model-id: <logical>@<provider>`, naming the deployment
 that served the request; that header is the primary observation point. A

@@ -319,8 +319,8 @@ test('a deployment without weight emits weight 1', () => {
 test('the real catalog weights every deployment and keeps deployment ids unique', () => {
   const catalog = realCatalog();
 
-  assert.equal(catalog.modelList.length, 11);
-  assert.equal(catalog.logicalIds.length, 10);
+  assert.equal(catalog.modelList.length, 12);
+  assert.equal(catalog.logicalIds.length, 11);
   assert.equal(catalog.maxGroupSize, 2);
 
   const deploymentIds = catalog.modelList.map((entry) => entry.model_info.id);
