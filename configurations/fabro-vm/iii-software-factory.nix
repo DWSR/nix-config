@@ -5,7 +5,14 @@
 # pointed at LiteLLM's Chat Completions endpoint (`/v1/chat/completions`; any
 # endpoint not ending in `/responses` selects that wire format). The project
 # also runs the pinned `state` worker, which llm-router and provider-openai
-# need for their registry, catalog, and registration-token state.
+# need for their registry, catalog, and registration-token state, and the
+# pinned `github` worker, which exposes the GitHub CLI as typed `github::*`
+# functions. The github worker shells out to the pinned `gh` package: its
+# absolute store path is the container's `gh_executable` setting, and the
+# GitHub PAT reaches each child gh process as `GH_TOKEN` from the sops
+# `iii-software-factory-env` template. PR webhooks stay disabled (the upstream
+# default), so the project does not run the `http`, `queue`, or `cron` workers
+# that path would need.
 #
 # The same project runs the evaluation pair: the pinned `judge` hub and a
 # source-built `judge-openai` provider whose fixed OpenAI Decisions endpoint
@@ -56,6 +63,7 @@ let
     "llm-router"
     "provider-openai"
     "state"
+    "github"
     "judge"
     "judge-openai"
   ];
@@ -114,6 +122,21 @@ let
           "llm-router"
         ];
         scripts.run = lib.getExe cfg.providerOpenaiPackage;
+      };
+
+      # The github worker exposes gh as typed github::* functions. It resolves
+      # the pinned gh package from this absolute path and inherits GH_TOKEN
+      # from the unit environment for its child gh processes.
+      github = {
+        worker = "path://./github";
+        required = true;
+        restart = "always";
+        startup_timeout = "60s";
+        # Upstream's configuration entry is `github`; without this name
+        # Compose would use `software-factory-github`.
+        config_name = "github";
+        scripts.run = lib.getExe cfg.githubPackage;
+        config_override.gh_executable = lib.getExe cfg.ghPackage;
       };
 
       # The judge hub forwards typed Noul/Choice/Score questions to the
@@ -195,6 +218,24 @@ in
       description = ''
         Pinned state worker package backing llm-router's registry and the
         provider registration tokens.
+      '';
+    };
+
+    githubPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.iii-workers.github;
+      description = ''
+        Pinned github worker package exposing the GitHub CLI as typed
+        `github::*` functions.
+      '';
+    };
+
+    ghPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.gh;
+      description = ''
+        GitHub CLI the github worker shells out to. The absolute store path is
+        supplied as the worker's `gh_executable` setting.
       '';
     };
 
@@ -329,9 +370,10 @@ in
         WorkingDirectory = "/var/lib/${stateDir}";
 
         # OPENAI_API_KEY (the LiteLLM master key) for provider-openai's
-        # credential fallback and judge-openai's proxy authentication;
-        # systemd reads the root-only sops template before dropping to the
-        # dynamic user.
+        # credential fallback and judge-openai's proxy authentication, and
+        # GH_TOKEN (the GitHub PAT) for the github worker's child gh
+        # processes; systemd reads the root-only sops template before dropping
+        # to the dynamic user.
         EnvironmentFile = config.sops.templates."iii-software-factory-env".path;
 
         # Compose reads its state root from III_COMPOSE_STATE_DIR; the state
