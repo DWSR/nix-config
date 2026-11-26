@@ -252,6 +252,18 @@
           programs.nixfmt.enable = true;
         }
       );
+
+      # Source store paths of every flake input, walked recursively so
+      # transitive inputs that do NOT follow one of the root's inputs are
+      # included too (fenix's rust-analyzer-src, nix-snapshotter's
+      # flake-parts/globset, homebrew's brew-src, ...). The fabro guest roots
+      # this closure in its store (configurations/fabro-vm/sandbox.nix) so its
+      # sandbox containers, which bind-mount the guest `/nix/store`, resolve
+      # `nix flake metadata` / `nix flake check --no-build` inputs offline
+      # instead of re-fetching the pinned archives from GitHub.
+      flakeInputSources = (import ./scripts/fabro-flake-inputs.nix) {
+        inputs = builtins.removeAttrs inputs [ "self" ];
+      };
     in
     {
       formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
@@ -5149,6 +5161,10 @@
         ];
         specialArgs = {
           inherit (inputs) rsync34;
+          # Every locked flake input source, threaded through so the guest
+          # can root the repository's input closure in its store for the
+          # sandbox prewarm (configurations/fabro-vm/sandbox.nix).
+          inherit flakeInputSources;
           # The pinned nix-snapshotter flake, threaded through so the guest
           # modules can reference its `buildImage`/archive derivations
           # without re-deriving them from nixpkgs (configurations/fabro-vm
