@@ -71,17 +71,23 @@ pull request; a separate reviewer will adversarially re-check your work.
 
 Before finishing, write `.git/oneshot-publish.json` with the proposed PR metadata as a
 single JSON object: `{"title": "<single-line Conventional Commits title: type(scope): summary>", "summary": "<short markdown summary for the PR body>"}`.
-Then end your response with exactly one JSON object as the final content; nothing after
-it. Keep every value a single-line JSON string; escape embedded double quotes as `\"` and
-newlines as `\n`.
+Then end your response with exactly one JSON object that satisfies the typed result schema
+Fabro appends, and nothing after it. Keep every value a single-line JSON string; escape
+embedded double quotes as `\"` and newlines as `\n`.
+
+Set `verdict` to `APPROVED` when the change is ready and `BLOCKED` when it is not. Set
+`failure_class` to `none` on success, or to `network`, `rate_limit`, `baseline`, `code`, or
+`environment` for the matching blocker. Put one entry per command in `check_results`,
+keyed by a short name, with `command`, `status`, `baseline_status`, and `reason`; use
+`not_recorded` when no baseline result exists.
 
 On success:
 
-{"outcome": "succeeded", "context_updates": {"impl_status": "READY", "impl_summary": "<one line describing the delivered change>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": "<non-blocking concerns for the reviewer, or empty>"}}
+{"verdict": "APPROVED", "failure_class": "none", "check_results": {"typed result tests": {"command": "python3 tests/fabro-workflows/oneshot-typed-result.test.py", "status": "passed", "baseline_status": "not_recorded", "reason": "exit 0"}}, "impl_summary": "<one line describing the delivered change>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": "<non-blocking concerns for the reviewer, or empty>"}
 
 When blocked:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>", "stage_failure": "implement: <the same concrete blocker>"}}
+{"verdict": "BLOCKED", "failure_class": "environment", "check_results": {}, "stage_failure": "implement: <the same concrete blocker>", "impl_summary": "<one line describing how far the change got>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": ""}
 
 Use the same `stage_failure` shape for any other failure that stops the implementation
 before the change is ready, not only a blocked change.

@@ -4461,6 +4461,7 @@
                 cd source
                 python3 tests/fabro-workflows/model-fallbacks.test.py
                 python3 tests/fabro-workflows/oneshot-salvage.test.py
+                python3 tests/fabro-workflows/oneshot-typed-result.test.py
                 python3 tests/oneshot-workflow.test.py
                 touch $out
               '';
