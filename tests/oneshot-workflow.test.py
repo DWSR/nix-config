@@ -3,6 +3,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,12 +13,28 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS = ROOT / ".fabro/workflows/oneshot/scripts/tools.py"
 GRAPH = ROOT / ".fabro/workflows/oneshot/workflow.fabro"
+GIT_ENV = dict(
+    os.environ,
+    GIT_AUTHOR_NAME="Test",
+    GIT_AUTHOR_EMAIL="test@example.com",
+    GIT_COMMITTER_NAME="Test",
+    GIT_COMMITTER_EMAIL="test@example.com",
+)
 
 
 def load_tools():
-    namespace = {"__name__": "oneshot_workflow_test"}
+    namespace = {"__name__": "oneshot_workflow_test", "__file__": str(TOOLS)}
     exec(compile(TOOLS.read_text(), str(TOOLS), "exec"), namespace)
     return namespace
+
+
+def git(cwd, *args):
+    result = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, env=GIT_ENV
+    )
+    if result.returncode:
+        raise AssertionError("git %s failed: %s" % (" ".join(args), result.stderr))
+    return result.stdout.strip()
 
 
 class ProbeTests(unittest.TestCase):
@@ -472,6 +489,146 @@ class FailureSummaryTests(unittest.TestCase):
             '"stage_failure": "simplify:', (prompts / "simplify.md").read_text())
         self.assertIn(
             '"stage_failure": "implement:', (prompts / "implement.md").read_text())
+
+
+class ResumeStateTests(unittest.TestCase):
+    ISSUE_NUMBER = 383
+    ISSUE = {
+        "number": 383,
+        "state": "open",
+        "title": "feat(oneshot): persist run state",
+        "body": "Persist state so a fresh sandbox can resume.",
+        "html_url": "https://github.com/example/project/issues/383",
+        "labels": [{"name": "fabro-ready"}, {"name": "type/oneshot"}],
+    }
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = pathlib.Path(self.temp.name)
+        self.origin = root / "origin.git"
+        self.work = root / "work"
+        subprocess.run(["git", "init", "--bare", "-b", "main", str(self.origin)],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main", str(self.work)],
+                       check=True, capture_output=True)
+        git(self.work, "config", "user.email", "test@example.com")
+        git(self.work, "config", "user.name", "Test")
+        (self.work / "fixture.txt").write_text("baseline\n")
+        git(self.work, "add", "fixture.txt")
+        git(self.work, "commit", "-m", "baseline")
+        git(self.work, "remote", "add", "origin", str(self.origin))
+        git(self.work, "push", "origin", "main")
+        self.baseline = git(self.work, "rev-parse", "HEAD")
+        self.tools = load_tools()
+
+    def fingerprint(self):
+        return self.tools["issue_fingerprint"](self.ISSUE["title"], self.ISSUE["body"])
+
+    def state(self):
+        return {
+            "issue": self.ISSUE_NUMBER,
+            "issue_title": self.ISSUE["title"],
+            "issue_url": self.ISSUE["html_url"],
+            "repo": "example/project",
+            "trunk": "main",
+            "baseline_sha": self.baseline,
+            "simplify_round": 0,
+            "created_at": "2026-01-01T00:00:00Z",
+            "fingerprint": self.fingerprint(),
+        }
+
+    def chdir(self):
+        previous = os.getcwd()
+        os.chdir(self.work)
+        self.addCleanup(os.chdir, previous)
+
+    def write_meta(self, state, issue_text):
+        previous = os.getcwd()
+        os.chdir(self.work)
+        try:
+            self.tools["write_meta_commit"](
+                self.ISSUE_NUMBER,
+                self.tools["meta_files"](
+                    self.ISSUE_NUMBER, state["fingerprint"], state, issue_text),
+                "",
+                "test meta",
+            )
+        finally:
+            os.chdir(previous)
+
+    def fake_gh(self, method, path, body=None, expect=(200, 201, 204)):
+        if method == "GET" and path.endswith("/issues/%d" % self.ISSUE_NUMBER):
+            return 200, dict(self.ISSUE)
+        if method == "GET" and "/pulls?" in path:
+            return 200, []
+        return 200, None
+
+    def prepare_with_fakes(self):
+        tools = self.tools
+        tools["github_reachability_blocker"] = lambda: ""
+        tools["origin_repo"] = lambda: ("example", "project")
+        tools["detect_trunk"] = lambda: "main"
+        tools["live_oneshot_runs"] = lambda *_args: []
+        tools["gh"] = self.fake_gh
+        self.chdir()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            tools["prepare"]([str(self.ISSUE_NUMBER)])
+        return json.loads(output.getvalue().strip().splitlines()[-1])["context_updates"]
+
+    def test_prepare_restores_state_and_helper_after_a_fresh_sandbox(self):
+        issue_text = "# GitHub issue #383: feat(oneshot): persist run state\n\nbody\n"
+        state = self.state()
+        state["simplify_round"] = 2
+        state["baseline_results"] = [
+            {"command": "baseline", "status": "passed", "reason": "exit 0"},
+        ]
+        self.write_meta(state, issue_text)
+        scripts = self.work / ".git/oneshot-scripts"
+        shutil.rmtree(scripts, ignore_errors=True)
+        (self.work / ".git/oneshot-state.json").unlink(missing_ok=True)
+        (self.work / ".git/oneshot-issue.md").unlink(missing_ok=True)
+
+        context = self.prepare_with_fakes()
+
+        self.assertEqual(context["issue_number"], "383")
+        self.assertEqual(context["baseline_sha"], self.baseline)
+        restored = json.loads((self.work / ".git/oneshot-state.json").read_text())
+        self.assertEqual(restored["baseline_sha"], self.baseline)
+        self.assertEqual(restored["fingerprint"], self.fingerprint())
+        # These only survive when prepare restores the persisted state instead
+        # of starting a new run with a fresh baseline.
+        self.assertEqual(restored["simplify_round"], 2)
+        self.assertEqual(restored["created_at"], "2026-01-01T00:00:00Z")
+        self.assertTrue((scripts / "tools.py").exists())
+        self.assertIn("# GitHub issue #383", (self.work / ".git/oneshot-issue.md").read_text())
+
+    def test_prepare_persists_state_and_issue_snapshot_on_the_meta_branch(self):
+        context = self.prepare_with_fakes()
+
+        self.assertEqual(context["baseline_sha"], self.baseline)
+        state = json.loads(git(self.origin, "show", "oneshot-meta/issue-383:oneshot-state.json"))
+        self.assertEqual(state["baseline_sha"], self.baseline)
+        self.assertEqual(state["fingerprint"], self.fingerprint())
+        fingerprint = json.loads(git(self.origin, "show", "oneshot-meta/issue-383:fingerprint.json"))
+        self.assertEqual(fingerprint["fingerprint"], self.fingerprint())
+        snapshot = git(self.origin, "show", "oneshot-meta/issue-383:oneshot-issue.md")
+        self.assertIn("# GitHub issue #383", snapshot)
+
+    def test_failed_run_pushes_the_checkpoint_branch(self):
+        (self.work / "fixture.txt").write_text("implemented\n")
+        (self.work / ".git/oneshot-state.json").write_text(json.dumps(self.state()))
+        tools = self.tools
+        tools["origin_repo"] = lambda: ("example", "project")
+        tools["gh"] = self.fake_gh
+        self.chdir()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            tools["fail"]([str(self.ISSUE_NUMBER)])
+
+        refs = git(self.origin, "for-each-ref", "--format=%(refname)", "refs/heads")
+        self.assertIn("refs/heads/oneshot/issue-383", refs)
+        self.assertEqual(git(self.origin, "show", "oneshot/issue-383:fixture.txt"), "implemented")
 
 
 if __name__ == "__main__":
