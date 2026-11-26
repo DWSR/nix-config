@@ -32,28 +32,57 @@ def node_block(graph, node):
     return match.group()
 
 
-def review_routes(graph):
+def fabro_context(updates):
+    # Fabro stores the reserved context value "none" as an empty string before
+    # routing (verified against Fabro 0.414.0). Model that here so the routing
+    # assertions exercise the same values the engine sees.
+    return {
+        key: "" if str(value) == "none" else str(value)
+        for key, value in updates.items()
+    }
+
+
+def stage_context(stage, verdict, failure_class):
+    tools = load_tools()
+    payload = {"verdict": verdict, "failure_class": failure_class,
+               "check_results": {}}
+    self_error = tools["stage_result_error"](stage, payload)
+    if self_error:
+        raise AssertionError(self_error)
+    return fabro_context(tools["normalize_stage_result"](stage, payload))
+
+
+def stage_routes(graph, stage):
     pattern = re.compile(
-        r'normalize_review -> (\w+) \[condition="([^"]+)"(?:, weight=(\d+))?\]')
+        r'normalize_%s -> (\w+) \[condition="([^"]+)"(?:, weight=(\d+))?\]'
+        % re.escape(stage))
     return [
         (target, condition, int(weight or 0))
         for target, condition, weight in pattern.findall(graph)
     ]
 
 
-def review_target(graph, verdict, failure_class):
-    context = {"verdict": verdict, "failure_class": failure_class}
+def condition_matches(condition, context):
+    for clause in condition.split(" && "):
+        clause = clause.strip()
+        if clause.startswith("outcome="):
+            continue
+        key, sep, value = clause.partition("!=")
+        if sep:
+            if context.get(key[len("context."):]) == value:
+                return False
+            continue
+        key, _sep, value = clause.partition("=")
+        if context.get(key[len("context."):]) != value:
+            return False
+    return True
+
+
+def stage_target(graph, stage, verdict, failure_class):
+    context = stage_context(stage, verdict, failure_class)
     candidates = []
-    for target, condition, weight in review_routes(graph):
-        matched = True
-        for clause in condition.split(" && "):
-            if clause.startswith("outcome="):
-                continue
-            key, _op, value = clause.partition("=")
-            if context.get(key[len("context."):]) != value:
-                matched = False
-                break
-        if matched:
+    for target, condition, weight in stage_routes(graph, stage):
+        if condition_matches(condition, context):
             candidates.append((weight, target))
     if not candidates:
         return "fail"
@@ -109,22 +138,62 @@ class SchemaTests(unittest.TestCase):
 class RoutingTests(unittest.TestCase):
     def test_every_verdict_has_an_exact_route(self):
         graph = GRAPH.read_text()
-        self.assertEqual(review_target(graph, "APPROVED", "none"), "publish")
-        self.assertEqual(review_target(graph, "REJECTED", "code"), "rework")
-        self.assertEqual(review_target(graph, "BLOCKED", "code"), "salvage")
+        self.assertEqual(stage_target(graph, "review", "APPROVED", "none"),
+                         "publish")
+        self.assertEqual(stage_target(graph, "review", "REJECTED", "code"),
+                         "rework")
+        self.assertEqual(stage_target(graph, "review", "BLOCKED", "code"),
+                         "salvage")
 
     def test_every_failure_class_has_an_exact_route(self):
         graph = GRAPH.read_text()
-        self.assertEqual(review_target(graph, "APPROVED", "none"), "publish")
-        self.assertEqual(review_target(graph, "BLOCKED", "network"), "salvage")
-        self.assertEqual(review_target(graph, "REJECTED", "network"), "salvage")
-        self.assertEqual(review_target(graph, "BLOCKED", "rate_limit"),
-                         "wait_review_rate_limit")
-        self.assertEqual(review_target(graph, "REJECTED", "rate_limit"),
-                         "wait_review_rate_limit")
-        self.assertEqual(review_target(graph, "BLOCKED", "baseline"), "salvage")
-        self.assertEqual(review_target(graph, "REJECTED", "code"), "rework")
-        self.assertEqual(review_target(graph, "BLOCKED", "environment"), "salvage")
+        routes = {
+            "none": ("APPROVED", "publish"),
+            "network": ("BLOCKED", "salvage"),
+            "rate_limit": ("BLOCKED", "wait_review_rate_limit"),
+            "baseline": ("BLOCKED", "salvage"),
+            "code": ("REJECTED", "rework"),
+            "environment": ("BLOCKED", "salvage"),
+        }
+        self.assertEqual(
+            sorted(routes), sorted(json.loads(SCHEMA.read_text())["properties"]
+                                   ["failure_class"]["enum"]))
+        for failure_class, (verdict, expected) in routes.items():
+            with self.subTest(failure_class=failure_class):
+                self.assertEqual(
+                    stage_target(graph, "review", verdict, failure_class),
+                    expected)
+
+    def test_implement_and_simplify_route_on_their_own_status(self):
+        graph = GRAPH.read_text()
+        for stage in ("implement", "simplify"):
+            with self.subTest(stage=stage):
+                waiter = "wait_%s_rate_limit" % stage
+                self.assertEqual(
+                    stage_target(graph, stage, "APPROVED", "none"), "check")
+                self.assertEqual(
+                    stage_target(graph, stage, "BLOCKED", "rate_limit"), waiter)
+        # The implement node salvages blocked runs; simplify keeps its existing
+        # fail path.
+        self.assertEqual(
+            stage_target(graph, "implement", "BLOCKED", "environment"),
+            "salvage")
+        self.assertEqual(
+            stage_target(graph, "simplify", "BLOCKED", "environment"), "fail")
+
+    def test_routing_avoids_the_reserved_none_context_value(self):
+        graph = GRAPH.read_text()
+        # Fabro rewrites `context.failure_class=none` to an empty value, so a
+        # route on that literal would never match. The normalize stage mirrors
+        # the success case into `failure_class_ok` instead.
+        self.assertNotIn("failure_class=none", graph)
+        self.assertIn("context.failure_class_ok=true", graph)
+        updates = stage_context("review", "APPROVED", "none")
+        self.assertEqual(updates["failure_class"], "")
+        self.assertEqual(updates["failure_class_ok"], "true")
+        updates = stage_context("review", "BLOCKED", "network")
+        self.assertEqual(updates["failure_class"], "network")
+        self.assertEqual(updates["failure_class_ok"], "false")
 
     def test_conditions_match_exact_enum_values_instead_of_prose(self):
         graph = GRAPH.read_text()
@@ -132,7 +201,7 @@ class RoutingTests(unittest.TestCase):
             "context.verdict=APPROVED",
             "context.verdict=REJECTED",
             "context.verdict=BLOCKED",
-            "context.failure_class=none",
+            "context.failure_class_ok=true",
             "context.failure_class=network",
             "context.failure_class=rate_limit",
             "context.failure_class=environment",
@@ -189,6 +258,9 @@ class NormalizeTests(unittest.TestCase):
                         updates = tools["normalize_stage_result"](stage, payload)
                         self.assertEqual(updates["verdict"], verdict)
                         self.assertEqual(updates["failure_class"], failure_class)
+                        self.assertEqual(
+                            updates["failure_class_ok"],
+                            "true" if failure_class == "none" else "false")
                         if stage in ("implement", "simplify"):
                             self.assertEqual(
                                 updates["impl_status"],

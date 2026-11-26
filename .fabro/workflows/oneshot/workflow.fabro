@@ -186,7 +186,7 @@ digraph Oneshot {
 
     implement -> normalize_implement [condition="outcome=succeeded"]
     implement -> fail
-    normalize_implement -> check [condition="outcome=succeeded && context.impl_status=READY && context.failure_class=none"]
+    normalize_implement -> check [condition="outcome=succeeded && context.impl_status=READY && context.failure_class_ok=true"]
     normalize_implement -> wait_implement_rate_limit [condition="context.failure_class=rate_limit", weight=10]
     normalize_implement -> salvage [condition="context.impl_status=BLOCKED"]
     normalize_implement -> fail
@@ -200,7 +200,7 @@ digraph Oneshot {
 
     simplify -> normalize_simplify [condition="outcome=succeeded"]
     simplify -> fail
-    normalize_simplify -> check [condition="outcome=succeeded && context.impl_status=READY && context.failure_class=none"]
+    normalize_simplify -> check [condition="outcome=succeeded && context.impl_status=READY && context.failure_class_ok=true"]
     normalize_simplify -> wait_simplify_rate_limit [condition="context.failure_class=rate_limit", weight=10]
     normalize_simplify -> fail
     wait_simplify_rate_limit -> simplify [condition="outcome=succeeded"]
@@ -208,7 +208,7 @@ digraph Oneshot {
 
     review -> normalize_review [condition="outcome=succeeded"]
     review -> fail
-    normalize_review -> publish [condition="outcome=succeeded && context.verdict=APPROVED && context.failure_class=none"]
+    normalize_review -> publish [condition="outcome=succeeded && context.verdict=APPROVED && context.failure_class_ok=true"]
     normalize_review -> wait_review_rate_limit [condition="context.failure_class=rate_limit", weight=10]
     normalize_review -> salvage [condition="context.failure_class=network", weight=5]
     normalize_review -> salvage [condition="context.failure_class=environment", weight=5]

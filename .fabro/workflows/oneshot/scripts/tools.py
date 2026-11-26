@@ -431,6 +431,10 @@ def normalize_stage_result(stage, result):
     updates = {
         "verdict": result["verdict"],
         "failure_class": result["failure_class"],
+        # Fabro rewrites the literal context value "none" to an empty string,
+        # so routing cannot test `failure_class=none` directly. Mirror the
+        # success case into a value Fabro leaves untouched.
+        "failure_class_ok": "true" if result["failure_class"] == "none" else "false",
     }
     for field in STAGE_RESULT_FIELDS[stage]:
         updates[field] = str(result.get(field) or "")
