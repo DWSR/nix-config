@@ -42,9 +42,9 @@ export PGPORT="$PG_PORT"
 export PGUSER="$MIGRATION_ROLE"
 
 # `prisma db push` creates one table per `model` block in the pinned
-# schema.prisma; LiteLLM 1.86.0 declares 64 models. The eight views are the
+# schema.prisma; LiteLLM 1.108.0 declares 101 models. The eight views are the
 # body of `litellm-views.sql`, which the script applies after the push.
-EXPECTED_TABLES=64
+EXPECTED_TABLES=101
 EXPECTED_VIEWS=(
   LiteLLM_VerificationTokenView
   MonthlyGlobalSpend
@@ -200,7 +200,7 @@ step "asserting the pinned schema declares $EXPECTED_TABLES Prisma models"
 model_count="$(grep -c '^model ' "$LITELLM_SCHEMA")" ||
   fail "could not read the Prisma schema $LITELLM_SCHEMA; the init script's schema must be in the guest's litellm-db closure"
 if [ "$model_count" != "$EXPECTED_TABLES" ]; then
-  fail "the guest's pinned schema declares $model_count model blocks; this check and the design expect $EXPECTED_TABLES Prisma tables for LiteLLM 1.86.0 (Requirement 7.4)"
+  fail "the guest's pinned schema declares $model_count model blocks; this check and the design expect $EXPECTED_TABLES Prisma tables for LiteLLM 1.108.0 (Requirement 7.4)"
 fi
 
 step "starting PostgreSQL with listen_addresses = '', socket $PG_SOCKET_DIR, port $PG_PORT"

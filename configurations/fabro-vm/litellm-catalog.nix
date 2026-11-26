@@ -31,6 +31,17 @@ let
       allowedOpenAIParams = [ "reasoning_effort" ];
       requiresClientSessionHeader = true;
     };
+    # The judge hub's OpenAI Decisions provider. LiteLLM serves the
+    # OpenAI-format /v1/decisions route through this deployment; the
+    # credential is the ChatGPT subscription token materialized by
+    # litellm.nix (never a stored API key).
+    decisions-openai = {
+      modelPrefix = "openai/";
+      apiBase = null;
+      apiKeyEnvVar = "OPENAI_API_KEY";
+      allowedOpenAIParams = [ ];
+      requiresClientSessionHeader = false;
+    };
   };
 
   # One entry per client-callable id. Each deployment carries its own wire
@@ -64,6 +75,28 @@ let
           };
           limits = {
             contextTokens = 1050000;
+            maxOutputTokens = 128000;
+          };
+          weight = 1;
+        }
+      ];
+    };
+
+    gpt-6-luna-decisions = {
+      displayName = "GPT-6 Luna (Decisions)";
+      # Gateway-only: the judge hub selects it through judge-openai, but it
+      # must not appear as a chat model in the Fabro or OpenCode projections.
+      decisionsOnly = true;
+      deployments = [
+        {
+          provider = "decisions-openai";
+          upstreamModel = "gpt-6-luna";
+          mode = "evaluation";
+          requestDefaults = { };
+          limits = {
+            # judge-openai reports the Decisions model's 922k-token input
+            # window.
+            contextTokens = 922000;
             maxOutputTokens = 128000;
           };
           weight = 1;
@@ -403,6 +436,14 @@ let
         logicalId: model: validateLogicalModel logicalId model
       ) logicalModels;
 
+      # Decisions-only gateway entries are reachable through their dedicated
+      # API route (judge-openai) and are not chat models for Fabro/OpenCode.
+      clientFacingLogicalModels = lib.filterAttrs (
+        _: model: !(model.decisionsOnly or false)
+      ) normalizedLogicalModels;
+
+      clientLogicalIds = lib.attrNames clientFacingLogicalModels;
+
       validateAll =
         tables: builtins.all (logicalId: builtins.isAttrs tables.${logicalId}) (lib.attrNames tables);
 
@@ -463,7 +504,7 @@ let
 
       openCode = {
         inherit defaultModel;
-        models = lib.mapAttrs mkOpenCodeRecord normalizedLogicalModels;
+        models = lib.mapAttrs mkOpenCodeRecord clientFacingLogicalModels;
       };
 
       mkFabroRecord =
@@ -501,7 +542,7 @@ let
 
       fabro = {
         inherit defaultModel;
-        models = lib.mapAttrs mkFabroRecord normalizedLogicalModels;
+        models = lib.mapAttrs mkFabroRecord clientFacingLogicalModels;
       };
     in
     builtins.seq (validateAll normalizedLogicalModels) (
@@ -513,6 +554,7 @@ let
             modelList
             forwardClientHeaders
             logicalIds
+            clientLogicalIds
             maxGroupSize
             openCode
             fabro

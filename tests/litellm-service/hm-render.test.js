@@ -367,10 +367,12 @@ test('fabro-vm serves the catalog ids with dynamic session forwarding', () => {
     {
       modelNames = builtins.map (deployment: deployment.model_name) modelList;
       deploymentIds = builtins.attrNames deploymentStatus;
-      allAllowReasoningEffort =
-        builtins.all (d: d.allowsReasoningEffort) (builtins.attrValues deploymentStatus);
+      allAllowReasoningEffort = builtins.all
+        (d: d.allowsReasoningEffort)
+        (builtins.attrValues (builtins.removeAttrs deploymentStatus [ "gpt-6-luna-decisions@decisions-openai" ]));
       chatgptLuna = deploymentStatus."gpt-6-luna@chatgpt";
       goLuna = deploymentStatus."gpt-6-luna@opencode-go";
+      decisionsLuna = deploymentStatus."gpt-6-luna-decisions@decisions-openai";
       chatgptLunaNone = deploymentStatus."gpt-6-luna-none@chatgpt";
       chatgptAstra = deploymentStatus."gpt-6-astra@chatgpt";
       chatgptSol = deploymentStatus."gpt-6.1-sol@chatgpt";
@@ -394,6 +396,7 @@ test('fabro-vm serves the catalog ids with dynamic session forwarding', () => {
     'gpt-6-astra',
     'gpt-6-luna',
     'gpt-6-luna',
+    'gpt-6-luna-decisions',
     'gpt-6-luna-none',
     'gpt-6.1-sol',
     'longcat-2.0',
@@ -405,6 +408,7 @@ test('fabro-vm serves the catalog ids with dynamic session forwarding', () => {
     'deepseek-v4.1-flash@opencode-go',
     'glm-5.3-flash@opencode-go',
     'gpt-6-astra@chatgpt',
+    'gpt-6-luna-decisions@decisions-openai',
     'gpt-6-luna-none@chatgpt',
     'gpt-6-luna@chatgpt',
     'gpt-6-luna@opencode-go',
@@ -417,6 +421,9 @@ test('fabro-vm serves the catalog ids with dynamic session forwarding', () => {
   // The catalog defaults survive group validation.
   assert.equal(rendered.chatgptLuna.defaultEffort, 'xhigh');
   assert.equal(rendered.chatgptLuna.mode, 'responses');
+  assert.equal(rendered.decisionsLuna.mode, 'evaluation');
+  assert.equal(rendered.decisionsLuna.apiKey, 'os.environ/OPENAI_API_KEY');
+  assert.equal(rendered.decisionsLuna.allowsReasoningEffort, false);
   assert.equal(rendered.goLuna.defaultEffort, 'xhigh');
   assert.equal(rendered.goLuna.mode, 'responses');
   assert.equal(rendered.chatgptLunaNone.defaultEffort, 'none');

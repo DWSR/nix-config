@@ -106,8 +106,8 @@ test('model_list is exactly the catalog projection with unique ids and explicit 
   const { model_list: modelList } = settings;
 
   assert.deepEqual(modelList, catalog.modelList);
-  assert.equal(modelList.length, 11);
-  assert.equal(catalog.modelList.length, 11);
+  assert.equal(modelList.length, 12);
+  assert.equal(catalog.modelList.length, 12);
 
   const deploymentIds = modelList.map((entry) => entry.model_info.id);
   assert.equal(
@@ -271,7 +271,7 @@ test('the real settings and rendered YAML carry no credential values', () => {
   assert.equal(yaml.includes('sk-'), false, 'rendered YAML must not contain sk- values');
 
   const apiKeyLines = Array.from(yaml.matchAll(/^\s*api_key:\s*(.+)$/gm), (match) => match[1].trim());
-  assert.equal(apiKeyLines.length, 7);
+  assert.equal(apiKeyLines.length, 8);
   for (const value of apiKeyLines) {
     assert.ok(
       value.startsWith('os.environ/'),

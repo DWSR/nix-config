@@ -16,7 +16,7 @@ const clientExpr = `
     catalog = (import ${repoRoot}/configurations/fabro-vm/litellm-catalog.nix { inherit lib; }).catalog;
   in
   {
-    inherit (catalog) logicalIds openCode fabro;
+    inherit (catalog) logicalIds clientLogicalIds openCode fabro;
     tables = catalog.tables;
   }
 `;
@@ -76,27 +76,27 @@ function assertNoLegacyIds(filePath, sourceText) {
   }
 }
 
-test('both client projections expose exactly the catalog ids', () => {
-  const { logicalIds, openCode, fabro } = clientCatalog();
+test('both client projections expose exactly the client-facing catalog ids', () => {
+  const { logicalIds, clientLogicalIds, openCode, fabro } = clientCatalog();
 
-  assert.equal(logicalIds.length, 10);
-  assert.deepEqual(Object.keys(openCode.models).sort(), logicalIds);
-  assert.deepEqual(Object.keys(fabro.models).sort(), logicalIds);
+  assert.equal(logicalIds.length, 11);
+  assert.deepEqual(Object.keys(openCode.models).sort(), clientLogicalIds.slice().sort());
+  assert.deepEqual(Object.keys(fabro.models).sort(), clientLogicalIds.slice().sort());
 
   assert.ok(
-    logicalIds.includes(openCode.defaultModel),
+    clientLogicalIds.includes(openCode.defaultModel),
     `OpenCode default '${openCode.defaultModel}' is not a served logical id`,
   );
   assert.ok(
-    logicalIds.includes(fabro.defaultModel),
+    clientLogicalIds.includes(fabro.defaultModel),
     `Fabro default '${fabro.defaultModel}' is not a served logical id`,
   );
 });
 
 test('OpenCode and Fabro agree on the display name for every logical id', () => {
-  const { logicalIds, openCode, fabro } = clientCatalog();
+  const { clientLogicalIds, openCode, fabro } = clientCatalog();
 
-  for (const logicalId of logicalIds) {
+  for (const logicalId of clientLogicalIds) {
     assert.equal(
       openCode.models[logicalId].name,
       fabro.models[logicalId].display_name,
@@ -106,9 +106,9 @@ test('OpenCode and Fabro agree on the display name for every logical id', () => 
 });
 
 test('every Fabro record enables caching and cache_routing with the catalog limits', () => {
-  const { logicalIds, fabro, tables } = clientCatalog();
+  const { clientLogicalIds, fabro, tables } = clientCatalog();
 
-  for (const logicalId of logicalIds) {
+  for (const logicalId of clientLogicalIds) {
     const record = fabro.models[logicalId];
     const [deployment] = tables.logicalModels[logicalId].deployments;
 
@@ -142,10 +142,10 @@ test('every Fabro record enables caching and cache_routing with the catalog limi
     );
   }
 
-  const smallDefaults = logicalIds.filter((logicalId) => fabro.models[logicalId].small_default === true);
+  const smallDefaults = clientLogicalIds.filter((logicalId) => fabro.models[logicalId].small_default === true);
   assert.deepEqual(smallDefaults, ['deepseek-v4.1-flash']);
 
-  for (const logicalId of logicalIds) {
+  for (const logicalId of clientLogicalIds) {
     if (logicalId === 'deepseek-v4.1-flash') {
       continue;
     }

@@ -25,8 +25,8 @@ let
   postgresql = config.services.postgresql.finalPackage;
 
   # LiteLLM's pinned proxy schema: the generated Prisma client and this init
-  # step both read it from the same `litellm-db` closure.
-  schemaPath = pkgs.litellm-db.passthru.schemaPath;
+  # step both read it from the same `litellm-db-unstable` closure.
+  schemaPath = pkgs.litellm-db-unstable.passthru.schemaPath;
 
   viewsFile = ./postgres/litellm-views.sql;
 
@@ -64,7 +64,7 @@ let
       fi
 
       echo "litellm-db-init: applying LiteLLM's Prisma schema"
-      ${pkgs.litellm-prisma-cli}/bin/prisma db push --skip-generate --schema ${schemaPath}
+      ${pkgs.litellm-prisma-cli-unstable}/bin/prisma db push --skip-generate --schema ${schemaPath}
 
       echo "litellm-db-init: applying the LiteLLM views"
       ${postgresql}/bin/psql -v ON_ERROR_STOP=1 -f ${viewsFile}
@@ -146,6 +146,11 @@ in
   # recursively re-own the existing tree to the fixed `litellm` user. The
   # rules only set ownership/mode: no credential value is read or written.
   systemd.tmpfiles.rules = [
+    # The boot-time ChatGPT token helper runs before litellm.service and
+    # writes into the state dir, so create the parent here (owned by the
+    # fixed proxy account).
+    "d ${config.services.litellm.stateDir} 0755 litellm litellm - -"
+    "Z ${config.services.litellm.stateDir} 0755 litellm litellm - -"
     "d ${config.services.litellm.stateDir}/chatgpt 0700 litellm litellm - -"
     "Z ${config.services.litellm.stateDir}/chatgpt 0700 litellm litellm - -"
   ];
@@ -189,8 +194,8 @@ in
       HOME = "/tmp";
       CHECKPOINT_DISABLE = "1";
       PRISMA_HIDE_UPDATE_MESSAGE = "1";
-      PRISMA_SCHEMA_ENGINE_BINARY = "${pkgs.litellm-prisma-engines}/bin/schema-engine";
-      PRISMA_QUERY_ENGINE_BINARY = "${pkgs.litellm-prisma-engines}/bin/query-engine";
+      PRISMA_SCHEMA_ENGINE_BINARY = "${pkgs.litellm-prisma-engines-unstable}/bin/schema-engine";
+      PRISMA_QUERY_ENGINE_BINARY = "${pkgs.litellm-prisma-engines-unstable}/bin/query-engine";
       PRISMA_CLI_QUERY_ENGINE_TYPE = "binary";
     };
   };
@@ -231,12 +236,12 @@ in
   };
 
   services.litellm = {
-    package = pkgs.litellm-db;
+    package = pkgs.litellm-db-unstable;
 
     environment = {
       DATABASE_URL = "postgresql://litellm_app@localhost/litellm?host=/run/postgresql";
       DISABLE_SCHEMA_UPDATE = "true";
-      PRISMA_QUERY_ENGINE_BINARY = "${pkgs.litellm-prisma-engines}/bin/query-engine";
+      PRISMA_QUERY_ENGINE_BINARY = "${pkgs.litellm-prisma-engines-unstable}/bin/query-engine";
     };
   };
 }

@@ -9,6 +9,21 @@ let
   omlx = import ./omlx { inherit inputs; };
   fabro = import ./fabro.nix;
   litellmDb = import ./litellm-db.nix;
+  # The guest's proxy moved to nixpkgs-unstable's LiteLLM (1.108) for the
+  # Decisions API. Rebuild the same offline Prisma wiring against that
+  # package set so the proxy keeps its generated client and no runtime
+  # generation.
+  litellmDbUnstable =
+    final: _prev:
+    let
+      unstable = final.unstable.extend (import ./litellm-db.nix);
+    in
+    {
+      litellm-db-unstable = unstable.litellm-db;
+      litellm-prisma-cli-unstable = unstable.litellm-prisma-cli;
+      litellm-prisma-engines-unstable = unstable.litellm-prisma-engines;
+      litellm-prisma-client-unstable = unstable.litellm-prisma-client;
+    };
   tailscale = import ./tailscale.nix;
   agentmemoryFlake = final: _prev: {
     agentmemory =
@@ -170,6 +185,7 @@ in
     // (omlx final prev)
     // (fabro final prev)
     // (litellmDb final prev)
+    // (litellmDbUnstable final prev)
     // (tailscale final prev)
     // (agentmemoryFlake final prev);
 

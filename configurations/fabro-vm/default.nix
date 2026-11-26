@@ -76,9 +76,9 @@ in
     # inside a generated `console` Compose project against the loopback
     # engine, with its state in /var/lib/iii-console.
     ./iii-console.nix
-    # The `software-factory` iii Compose project: the pinned `llm-router`
-    # worker plus the pinned `provider-openai` and `state` workers, pointed
-    # at the loopback LiteLLM proxy, with its state in
+    # The `software-factory` iii Compose project: the pinned `llm-router`,
+    # `provider-openai`, `state`, `judge`, and source-built `judge-openai`
+    # workers, pointed at the loopback LiteLLM proxy, with its state in
     # /var/lib/iii-software-factory.
     ./iii-software-factory.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
@@ -293,10 +293,10 @@ in
       #     as both GITHUB_TOKEN and GH_TOKEN), the litellm master key for
       #     the provider's `{env:LITELLM_MASTER_KEY}` api key, and the
       #     server's basic-auth password.
-      #   * iii-software-factory-env — OPENAI_API_KEY, the provider-openai
-      #     credential fallback read in llm-router's process, carrying the
-      #     LiteLLM master key so the router authenticates to the loopback
-      #     proxy (iii-software-factory.nix).
+      #   * iii-software-factory-env — OPENAI_API_KEY, the credential
+      #     fallback read in llm-router's process and judge-openai's proxy
+      #     authentication, carrying the LiteLLM master key so both workers
+      #     authenticate to the loopback proxy (iii-software-factory.nix).
       #
       # Each template restarts its consumer when the rendered value
       # changes: systemd does not track EnvironmentFile contents, so
@@ -331,8 +331,9 @@ in
         };
 
         # provider-openai's credential_env_var is OPENAI_API_KEY, read by the
-        # llm-router process; the value is the same LiteLLM master key the
-        # `litellm-env` template gives the proxy.
+        # llm-router process, and judge-openai reads the same variable to
+        # authenticate to the proxy; the value is the same LiteLLM master key
+        # the `litellm-env` template gives the proxy.
         "iii-software-factory-env" = {
           restartUnits = [ "iii-software-factory.service" ];
           content = ''
@@ -586,11 +587,12 @@ in
     environment.systemPackages = with pkgs; [
       # Packages installed with the pivot off macOS (the mac-side launchd
       # services were removed with it; the systemd services live in
-      # fabro.nix and litellm.nix). `fabro` and `litellm-db` come from the
-      # repo's overlay (applied in flake.nix): `litellm-db` is the offline
-      # proxy build with the generated Prisma client, not nixpkgs' litellm.
+      # fabro.nix and litellm.nix). `fabro` and `litellm-db-unstable` come
+      # from the repo's overlay (applied in flake.nix): the latter is the
+      # offline LiteLLM 1.108 proxy build (nixpkgs-unstable) with the
+      # generated Prisma client, not nixpkgs' stable litellm.
       fabro
-      pkgs.litellm-db
+      pkgs.litellm-db-unstable
       # The pinned iii 0.26.0 engine (overlays/iii.nix) that iii.service
       # (./iii.nix) executes with `lib.getExe`.
       iii

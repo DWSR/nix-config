@@ -18,6 +18,10 @@
 # `<name>.targets.<system>.{url,hash}` leaves), which evaluates to
 # `workers.<name>.{version,binary,targets.<system>.{url,hash}}` without any
 # evaluation-time assembly.
+#
+# `judge` is bumped to 0.3.6, the release paired with the source-built
+# `judge-openai` 0.4.1 provider; everything else stays at the 2026-11-16
+# snapshot.
 {
   engineVersion = "0.26.0";
 
@@ -172,12 +176,12 @@
     image-resize.targets.aarch64-linux.hash = "sha256-mBqKz+wf4TfQvxknxWPxVbqcBWzxIwrbdn03LGXaESU=";
     image-resize.targets.aarch64-darwin.url = "https://cdn.iii.cloud/workers/image-resize/0.2.1/image-resize-aarch64-apple-darwin.tar.gz";
     image-resize.targets.aarch64-darwin.hash = "sha256-eZ8r0ttANODg8gc3G0s5mDhkKuXJXdvobLpjcpVec0w=";
-    judge.version = "0.3.3";
+    judge.version = "0.3.6";
     judge.binary = "judge";
-    judge.targets.aarch64-linux.url = "https://cdn.iii.cloud/workers/judge/0.3.3/judge-aarch64-unknown-linux-gnu.tar.gz";
-    judge.targets.aarch64-linux.hash = "sha256-zq88B0sN+xrNWuQxa7yjssHHPS5Q6frepfqgXgR2WS4=";
-    judge.targets.aarch64-darwin.url = "https://cdn.iii.cloud/workers/judge/0.3.3/judge-aarch64-apple-darwin.tar.gz";
-    judge.targets.aarch64-darwin.hash = "sha256-uA7xwr4McDvAk+jKGvgjB0k4ARM8QabFGR+O41uQOQw=";
+    judge.targets.aarch64-linux.url = "https://cdn.iii.cloud/workers/judge/0.3.6/judge-aarch64-unknown-linux-gnu.tar.gz";
+    judge.targets.aarch64-linux.hash = "sha256-Z83Dz/oIVb3jY3aozLblQHp5ql0mnqyNyz8csmlgcis=";
+    judge.targets.aarch64-darwin.url = "https://cdn.iii.cloud/workers/judge/0.3.6/judge-aarch64-apple-darwin.tar.gz";
+    judge.targets.aarch64-darwin.hash = "sha256-v+bxB/p3vAqfNdhl22iiH4EsWzbMFTOBH0UM+RlWPjM=";
     judge-clef.version = "0.3.2";
     judge-clef.binary = "judge-clef";
     judge-clef.targets.aarch64-linux.url = "https://cdn.iii.cloud/workers/judge-clef/0.3.2/judge-clef-aarch64-unknown-linux-gnu.tar.gz";

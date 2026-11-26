@@ -1,6 +1,6 @@
 # Prisma 5.17.0 for LiteLLM's Python Prisma client.
 #
-# LiteLLM 1.86.0 ships a Prisma schema and prisma-client-py 0.15.0, which pins
+# The LiteLLM package ships a Prisma schema and prisma-client-py 0.15.0, which pins
 # the internal Prisma version to 5.17.0 (engine commit
 # 393aa359c9ad4a4bb28630fb5613f9c281cde053). nixpkgs only packages Prisma 6 and
 # 7, and prisma-client-py has no release for either, so this overlay pins the
@@ -126,6 +126,12 @@ in
   litellm-prisma-client = final.python3Packages.prisma.overridePythonAttrs (old: {
     pname = "litellm-prisma-client";
 
+    # The installed metadata still names the upstream distribution (`prisma`),
+    # so the generic pname/version consistency check cannot pass for the
+    # renamed generated client. The proxy's own import check below covers
+    # the runtime behavior that matters.
+    dontCheckPythonMetadata = true;
+
     # The base package's pythonImportsCheck imports the generated package
     # after postInstall; without this the interpreter writes timestamp-based
     # .pyc files into $out and the build output stops being reproducible.
@@ -215,35 +221,53 @@ in
       litellm = final.python3Packages.litellm;
       prismaClient = final.litellm-prisma-client;
 
-      # The wrapped `litellm` binary is the deployed proxy runtime; the
-      # `passthru` contract below is attached after this binding so the check
-      # can reference the runtime without a self-reference.
-      litellmProxy = final.python3Packages.toPythonApplication (
-        litellm.overridePythonAttrs (oldAttrs: {
-          dependencies =
-            builtins.filter (dep: (dep.pname or dep.name or "") != "prisma") (
-              (oldAttrs.dependencies or [ ])
-              ++ oldAttrs.optional-dependencies.proxy
-              ++ oldAttrs.optional-dependencies.extra_proxy
-              ++ oldAttrs.optional-dependencies.proxy-runtime
-            )
-            ++ [ prismaClient ];
-        })
-      );
+      # The cached upstream `litellm` package stays untouched: rebuilding it
+      # just to swap one runtime dependency recompiles its Rust bridge (and
+      # can exhaust a builder's memory). Assemble the proxy environment from
+      # the package's own proxy/extra-proxy/proxy-runtime extras instead,
+      # replacing `prisma` in the package set with the generated client. The
+      # override also catches transitive references, so the only `prisma`
+      # module in the environment is the generated client.
+      litellmPython = final.python3.override {
+        packageOverrides = _pyfinal: _pyprev: {
+          prisma = prismaClient;
+        };
+      };
 
-      # Runs against the proxy's own runtime closure: `nativeBuildInputs` puts
-      # every propagated dependency's site-packages on `PYTHONPATH`, exactly as
-      # the wrapped `litellm` binary does at start. Both imports are
-      # connection-free, so no PostgreSQL socket and no `DATABASE_URL` are
-      # needed.
+      litellmProxy =
+        (litellmPython.withPackages (
+          pythonPackages:
+          [
+            pythonPackages.litellm
+            prismaClient
+          ]
+          ++ pythonPackages.litellm.optional-dependencies.proxy
+          ++ pythonPackages.litellm.optional-dependencies.extra_proxy
+          ++ pythonPackages.litellm.optional-dependencies.proxy-runtime
+        )).overrideAttrs
+          (old: {
+            pname = "litellm";
+            inherit (litellm) version;
+            meta = (old.meta or { }) // {
+              inherit (litellm.meta) description homepage license;
+              mainProgram = "litellm";
+            };
+          });
+
+      # Runs against the proxy's own runtime closure: the withPackages
+      # environment puts every selected package's site-packages on
+      # PYTHONPATH. Both imports are connection-free, so no PostgreSQL socket
+      # and no `DATABASE_URL` are needed.
       prismaClientCheck = ''
+        import os
         import prisma
         from prisma import Prisma
         from prisma.models import LiteLLM_BudgetTable
         from litellm.proxy.db import prisma_client
 
-        assert "litellm-prisma-client" in prisma.__file__, (
-            f"prisma resolved to {prisma.__file__}, not the generated client"
+        prisma_file = os.path.realpath(prisma.__file__)
+        assert "litellm-prisma-client" in prisma_file, (
+            f"prisma resolved to {prisma_file}, not the generated client"
         )
         assert LiteLLM_BudgetTable.__name__ == "LiteLLM_BudgetTable"
         assert prisma_client.PrismaWrapper is not None
@@ -261,7 +285,11 @@ in
 
             echo "litellm-db: importing prisma.Prisma and LiteLLM's prisma_client"
             unset DATABASE_URL
-            ${final.python3.interpreter} -c ${final.lib.escapeShellArg prismaClientCheck}
+            # The withPackages wrapper exports the env's certificate bundle;
+            # this connection-free import has no need for it and the build
+            # sandbox does not carry that path.
+            unset SSL_CERT_FILE
+            ${litellmProxy}/bin/python3 -c ${final.lib.escapeShellArg prismaClientCheck}
 
             echo "litellm-db: the proxy runtime exposes no Prisma CLI"
             if command -v prisma > /dev/null; then
@@ -274,9 +302,9 @@ in
             mkdir -p "$HOME"
             version=$("${litellmProxy}/bin/litellm" --version 2>&1)
             case "$version" in
-              *"LiteLLM: Current Version = 1.86.0"*) ;;
+              *"LiteLLM: Current Version = ${final.python3Packages.litellm.version}"*) ;;
               *)
-                echo "FAIL: litellm --version did not report 1.86.0:" >&2
+                echo "FAIL: litellm --version did not report ${final.python3Packages.litellm.version}:" >&2
                 echo "$version" >&2
                 exit 1
                 ;;

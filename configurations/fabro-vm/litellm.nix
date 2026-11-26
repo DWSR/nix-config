@@ -28,6 +28,12 @@
 # dir persists across switches), then restart litellm.service.
 # /v1/chat/completions is bridged to the Responses API upstream.
 #
+# The guest runs the nixpkgs-unstable LiteLLM (1.108), which also serves
+# `/v1/decisions`. The gateway-only `gpt-6-luna-decisions` deployment uses the
+# same ChatGPT subscription token, materialized into a root-only environment
+# file by `litellm-chatgpt-token.service`; `judge-openai` in the
+# software-factory project consumes that route.
+#
 # Authentication: the proxy enforces a master key, supplied as the
 # LITELLM_MASTER_KEY env var from the sops-nix `litellm-env` template
 # (decrypted from secrets/fabro.fabro.yaml; the same env-var shape the
@@ -72,17 +78,69 @@ let
     runtimeInputs = [ pkgs.coreutils ];
     text = ''
       export CHATGPT_TOKEN_DIR=${lib.escapeShellArg litellmTokenDir}
+      export LITELLM_LOCAL_MODEL_COST_MAP=True
 
       # Device flow: prints the verification URL + code and waits for the
       # human to approve it, then writes auth.json under CHATGPT_TOKEN_DIR.
       ${
-        (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.litellm ])).interpreter
+        (pkgs.unstable.python3.withPackages (pythonPackages: [ pythonPackages.litellm ])).interpreter
       } -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
 
       # Hand the credentials to the fixed `litellm` proxy (the service
       # reads and refreshes auth.json in place): copy the state dir's owner
       # onto the token dir tree.
       chown -R --reference=${config.services.litellm.stateDir} "${litellmTokenDir}"
+    '';
+  };
+
+  # The OpenAI Decisions deployment authenticates as the ChatGPT
+  # subscription. LiteLLM's chatgpt provider refreshes that OAuth token in
+  # auth.json, but a model_list deployment can only read a static
+  # `os.environ/OPENAI_API_KEY` at proxy start. This helper materialises the
+  # current access token into a root-only environment file: at boot before
+  # the proxy starts, and hourly from a timer that restarts the proxy only
+  # when the token actually changed. The authenticator runs as the fixed
+  # `litellm` account so a refresh keeps auth.json owned and writable by the
+  # proxy.
+  litellmTokenPython = pkgs.unstable.python3.withPackages (pythonPackages: [
+    pythonPackages.litellm
+  ]);
+
+  litellmChatGptToken = pkgs.writeShellApplication {
+    name = "litellm-chatgpt-token";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.systemd
+      (lib.getBin pkgs.util-linux)
+      litellmTokenPython
+    ];
+    text = ''
+      set -eu
+      umask 077
+      token_dir=${lib.escapeShellArg litellmTokenDir}
+      token_file=${lib.escapeShellArg "${config.services.litellm.stateDir}/openai.env"}
+      tmp=$(mktemp)
+      trap 'rm -f "$tmp"' EXIT
+      token="$(
+        runuser -u litellm -- \
+          env CHATGPT_TOKEN_DIR="$token_dir" HOME=${lib.escapeShellArg config.services.litellm.stateDir} \
+          ${lib.escapeShellArg litellmTokenPython.interpreter} -c \
+          'from litellm.llms.chatgpt.authenticator import Authenticator; print(Authenticator().get_access_token())'
+      )"
+      if [ -z "$token" ]; then
+        echo "litellm-chatgpt-token: authenticator returned an empty token" >&2
+        exit 1
+      fi
+      printf 'OPENAI_API_KEY=%s\n' "$token" > "$tmp"
+      if [ -f "$token_file" ] && cmp -s "$tmp" "$token_file"; then
+        exit 0
+      fi
+      install -m 0600 "$tmp" "$token_file"
+      rm -f "$tmp"
+      trap - EXIT
+      if [ "''${1:-}" = "--restart" ]; then
+        systemctl try-restart litellm.service
+      fi
     '';
   };
 
@@ -145,6 +203,62 @@ in
   systemd.services.litellm.serviceConfig.ExecStart =
     lib.mkForce "${lib.getExe config.services.litellm.package} --host \"${config.services.litellm.host}\" --port ${toString config.services.litellm.port} --config ${litellmConfig}/config.yaml";
 
+  # The boot-time token materialization: the proxy's static model_list wants
+  # OPENAI_API_KEY at start, so the file exists before litellm.service runs.
+  systemd.services.litellm-chatgpt-token = {
+    description = "Materialize the ChatGPT OAuth token for LiteLLM Decisions";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "litellm.service" ];
+    environment = {
+      CHATGPT_TOKEN_DIR = litellmTokenDir;
+      LITELLM_LOCAL_MODEL_COST_MAP = "True";
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = lib.getExe litellmChatGptToken;
+    };
+  };
+
+  # The OAuth access token expires; refresh from the authenticator (which
+  # rewrites auth.json) and restart the proxy only when the materialized
+  # value changed. The static model_list has no hot-reload path for
+  # os.environ references.
+  systemd.services.litellm-chatgpt-token-refresh = {
+    description = "Refresh the LiteLLM ChatGPT token and restart the proxy on change";
+    environment = {
+      CHATGPT_TOKEN_DIR = litellmTokenDir;
+      LITELLM_LOCAL_MODEL_COST_MAP = "True";
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${lib.getExe litellmChatGptToken} --restart";
+    };
+  };
+
+  systemd.timers.litellm-chatgpt-token-refresh = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "hourly";
+      Persistent = true;
+    };
+  };
+
+  # The proxy itself refreshes auth.json on use; propagate that immediately
+  # instead of waiting for the hourly fallback timer.
+  systemd.paths.litellm-chatgpt-token-refresh = {
+    wantedBy = [ "paths.target" ];
+    pathConfig.PathChanged = "${litellmTokenDir}/auth.json";
+  };
+
+  systemd.services.litellm = {
+    wants = [ "litellm-chatgpt-token.service" ];
+    after = [ "litellm-chatgpt-token.service" ];
+    serviceConfig.EnvironmentFile = lib.mkForce [
+      config.sops.templates."litellm-env".path
+      "-${config.services.litellm.stateDir}/openai.env"
+    ];
+  };
+
   services.litellm = {
     enable = true;
     host = "127.0.0.1";
@@ -167,7 +281,7 @@ in
       PYTHONDONTWRITEBYTECODE = "1";
 
       # systemd's HOME for this fixed system account is the non-writable
-      # /var/empty. litellm 1.86's proxy_server imports prisma eagerly, and
+      # /var/empty. litellm's proxy_server imports prisma eagerly, and
       # prisma's DefaultConfig evaluates Path.home() at import time. The
       # state dir is already WorkingDirectory, exists via StateDirectory,
       # and is untouched by ProtectHome, so it is the proxy's writable HOME.

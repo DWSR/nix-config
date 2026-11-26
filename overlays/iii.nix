@@ -124,8 +124,68 @@ let
     };
 
   iiiWorkers = requireSupported (builtins.mapAttrs mkWorker manifest.workers);
+
+  # `judge-openai` hardcodes OpenAI's Decisions endpoint, so the registry
+  # artifact cannot be pointed at the loopback LiteLLM gateway. Build the
+  # pinned 0.4.1 source with two deliberate patches:
+  #
+  #   * the endpoint constant becomes the compile-time
+  #     `JUDGE_OPENAI_ENDPOINT` value (the module passes LiteLLM's
+  #     `/v1/decisions` URL);
+  #   * `gpt-6-luna-decisions` joins the supported-model list, the logical
+  #     LiteLLM model that carries the ChatGPT subscription token.
+  #
+  # The console UI feature is off: its build script expects npm-built
+  # `dist/` assets that the source checkout does not carry. This project is
+  # headless and configures the worker through the engine's configuration
+  # entry, so the UI functions are not needed.
+  judgeOpenAiLitellm = requireSupported (
+    final.rustPlatform.buildRustPackage {
+      pname = "iii-worker-judge-openai-litellm";
+      version = "0.4.1";
+
+      src = final.fetchFromGitHub {
+        owner = "iii-hq";
+        repo = "workers";
+        rev = "069502227cb1b207d1979df659798c770fafa14b";
+        hash = "sha256-gYpkSmc2m2TrFMBiYdqjLYKXS3wOWmJqyLXHnZMQ5oI=";
+      };
+
+      cargoRoot = "judge-openai";
+      buildAndTestSubdir = "judge-openai";
+      cargoHash = "sha256-RhjDeAphzGas1JIHYN0T0PsFjnGqkt/qvBVWSus2ZOU=";
+      cargoBuildFlags = [ "--no-default-features" ];
+      doCheck = false;
+
+      env.JUDGE_OPENAI_ENDPOINT = "http://127.0.0.1:4000/v1/decisions";
+
+      postPatch = ''
+        substituteInPlace judge-openai/src/client.rs \
+          --replace-fail \
+            'const ENDPOINT: &str = "https://api.openai.com/v1/decisions";' \
+            'const ENDPOINT: &str = env!("JUDGE_OPENAI_ENDPOINT");'
+        substituteInPlace judge-openai/src/lib.rs \
+          --replace-fail \
+            'pub const SUPPORTED_MODELS: &[&str] = &["gpt-6-luna"];' \
+            'pub const SUPPORTED_MODELS: &[&str] = &["gpt-6-luna", "gpt-6-luna-decisions"];'
+      '';
+
+      passthru = {
+        endpoint = "http://127.0.0.1:4000/v1/decisions";
+        sourceRevision = "069502227cb1b207d1979df659798c770fafa14b";
+      };
+
+      meta = {
+        description = "iii judge-openai provider built to call LiteLLM's Decisions endpoint";
+        homepage = "https://github.com/iii-hq/workers";
+        mainProgram = "judge-openai";
+        platforms = supportedSystems;
+      };
+    }
+  );
 in
 {
   inherit iii;
   iii-workers = iiiWorkers;
+  inherit judgeOpenAiLitellm;
 }

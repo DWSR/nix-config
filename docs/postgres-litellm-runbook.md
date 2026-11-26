@@ -1,7 +1,7 @@
 # PostgreSQL and LiteLLM database runbook
 
 The fabro guest runs one socket-only PostgreSQL 18.6 cluster. LiteLLM
-1.86.0 keeps its virtual keys, spend logs, and admin UI users in the
+1.108.0 keeps its virtual keys, spend logs, and admin UI users in the
 `litellm` database of that cluster. The cluster binds no TCP address, uses
 peer authentication over the Unix socket, and stores no database password.
 This document records where the cluster's files live, how the

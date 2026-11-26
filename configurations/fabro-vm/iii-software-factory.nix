@@ -7,6 +7,14 @@
 # also runs the pinned `state` worker, which llm-router and provider-openai
 # need for their registry, catalog, and registration-token state.
 #
+# The same project runs the evaluation pair: the pinned `judge` hub and a
+# source-built `judge-openai` provider whose fixed OpenAI Decisions endpoint
+# is patched to LiteLLM's `/v1/decisions` (overlays/iii.nix). judge-openai
+# authenticates to LiteLLM with the unit's `OPENAI_API_KEY` (the LiteLLM
+# master key); the gateway owns the upstream ChatGPT subscription token.
+# The hub's default provider is `openai`, so callers reach it through
+# `judge::evaluate` without a per-session picker.
+#
 # The project is generated as `software-factory/worker-compose.yaml` and
 # started with `--engine` pointing at the loopback engine from `iii.service`,
 # so Compose connects to the existing engine instead of owning a second one.
@@ -48,6 +56,8 @@ let
     "llm-router"
     "provider-openai"
     "state"
+    "judge"
+    "judge-openai"
   ];
 
   composeConfig = {
@@ -105,6 +115,41 @@ let
         ];
         scripts.run = lib.getExe cfg.providerOpenaiPackage;
       };
+
+      # The judge hub forwards typed Noul/Choice/Score questions to the
+      # selected judge-<provider> worker. The default provider is the
+      # `judge-openai` worker below; the provider is started first so the
+      # hub has a registered target by the time callers arrive.
+      judge = {
+        worker = "path://./judge";
+        required = true;
+        restart = "always";
+        startup_timeout = "60s";
+        start_after = [ "judge-openai" ];
+        # The hub reads the `judge` configuration entry (`III_CONFIG_NAME`);
+        # without this name Compose would use `software-factory-judge`.
+        config_name = "judge";
+        scripts.run = lib.getExe cfg.judgePackage;
+        config_override.provider = "openai";
+      };
+
+      # `judge-openai` is built from the pinned 0.4.1 source with its fixed
+      # OpenAI Decisions endpoint patched to LiteLLM's `/v1/decisions`
+      # (overlays/iii.nix). It authenticates to the loopback proxy with the
+      # LiteLLM master key from the unit's sops environment; LiteLLM owns
+      # the upstream ChatGPT subscription token.
+      judge-openai = {
+        worker = "path://./judge-openai";
+        required = true;
+        restart = "always";
+        startup_timeout = "60s";
+        start_after = [ "state" ];
+        # The provider reads its `judge-openai` configuration entry; the
+        # model is the gateway-only Decisions logical model.
+        config_name = "judge-openai";
+        scripts.run = lib.getExe cfg.judgeOpenaiPackage;
+        config_override.model = "gpt-6-luna-decisions";
+      };
     };
   };
 
@@ -153,6 +198,33 @@ in
       '';
     };
 
+    judgePackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.iii-workers.judge;
+      description = ''
+        Pinned `judge` hub worker package forwarding typed evaluations to a
+        registered `judge-<provider>` worker.
+      '';
+    };
+
+    judgeOpenaiPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.judgeOpenAiLitellm;
+      description = ''
+        Source-built `judge-openai` provider whose fixed Decisions endpoint is
+        compiled as LiteLLM's `/v1/decisions` URL (overlays/iii.nix).
+      '';
+    };
+
+    litellmDecisionsApiUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "http://${config.services.litellm.host}:${toString config.services.litellm.port}/v1/decisions";
+      description = ''
+        LiteLLM Decisions endpoint the default `judgeOpenaiPackage` was built
+        against. Overriding this URL requires overriding the package too.
+      '';
+    };
+
     engineUrl = lib.mkOption {
       type = lib.types.str;
       default = "ws://${config.fabro.iii.host}:${toString config.fabro.iii.port}";
@@ -193,8 +265,19 @@ in
   };
 
   config = {
+    assertions = [
+      {
+        assertion =
+          (cfg.judgeOpenaiPackage.passthru.endpoint or cfg.litellmDecisionsApiUrl)
+          == cfg.litellmDecisionsApiUrl;
+        message = "fabro.iiiSoftwareFactory: litellmDecisionsApiUrl must match the endpoint compiled into judgeOpenaiPackage (${
+          toString (cfg.judgeOpenaiPackage.passthru.endpoint or "<unknown>")
+        }).";
+      }
+    ];
+
     systemd.services.iii-software-factory = {
-      description = "iii software-factory project (llm-router routed through LiteLLM)";
+      description = "iii software-factory project (llm-router and judge routed through LiteLLM)";
       wantedBy = [ "multi-user.target" ];
       after = [
         "iii.service"
@@ -246,8 +329,9 @@ in
         WorkingDirectory = "/var/lib/${stateDir}";
 
         # OPENAI_API_KEY (the LiteLLM master key) for provider-openai's
-        # credential fallback; systemd reads the root-only sops template
-        # before dropping to the dynamic user.
+        # credential fallback and judge-openai's proxy authentication;
+        # systemd reads the root-only sops template before dropping to the
+        # dynamic user.
         EnvironmentFile = config.sops.templates."iii-software-factory-env".path;
 
         # Compose reads its state root from III_COMPOSE_STATE_DIR; the state

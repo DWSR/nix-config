@@ -1,23 +1,29 @@
 -- LiteLLM proxy views.
 --
--- Transcribed from the pinned LiteLLM 1.86.0
+-- Transcribed from the pinned LiteLLM 1.108.0
 -- `litellm/proxy/db/create_views.py` so the schema-initialization unit can
 -- create all eight views as the database's migration role before the proxy
 -- starts. The proxy's own startup path would otherwise try to create them as
 -- the application role, which holds no DDL privilege.
 --
--- `CREATE OR REPLACE VIEW` keeps the file safe to apply on every switch: the
--- view definitions are refreshed in place and no existing object is dropped.
+-- The verification view changed shape between LiteLLM 1.86 and 1.108
+-- (two team columns), so it is dropped and recreated; a plain
+-- `CREATE OR REPLACE VIEW` cannot reorder or add columns before the last
+-- one. The remaining views keep `CREATE OR REPLACE` and refresh in place.
 -- This file is pure view SQL; ownership and grants are applied by the
 -- `fabro.postgres` provisioning units.
 
-CREATE OR REPLACE VIEW "LiteLLM_VerificationTokenView" AS
+DROP VIEW IF EXISTS "LiteLLM_VerificationTokenView";
+
+CREATE VIEW "LiteLLM_VerificationTokenView" AS
 SELECT
     v.*,
     t.spend AS team_spend,
     t.max_budget AS team_max_budget,
+    t.model_max_budget AS team_model_max_budget,
     t.tpm_limit AS team_tpm_limit,
     t.rpm_limit AS team_rpm_limit,
+    t.tpd_limit AS team_tpd_limit,
     p.project_alias AS project_alias
 FROM "LiteLLM_VerificationToken" v
 LEFT JOIN "LiteLLM_TeamTable" t ON v.team_id = t.team_id
