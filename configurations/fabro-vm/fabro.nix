@@ -105,7 +105,16 @@ let
         local.root = "${fabroDataDir}/objects";
       };
 
-      auth.methods = [ "dev-token" ];
+      auth = {
+        methods = [ "dev-token" ];
+        # Fabro refuses to start when github auth is enabled with an empty
+        # allowlist. The sandbox server configuration derives from this file,
+        # and the oneshot reviewer runs `fabro preflight` for workflow diffs,
+        # so leaving the list empty turns every such review into an
+        # environment block. DWSR is the only human account that signs in
+        # through the web UI.
+        github.allowed_usernames = [ "DWSR" ];
+      };
 
       integrations.github.strategy = "token";
 
