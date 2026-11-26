@@ -115,11 +115,11 @@ class ModelFallbackTests(unittest.TestCase):
     def test_oneshot_routes_non_approval_paths_to_salvage(self):
         graph = ONESHOT_GRAPH.read_text()
         expected_edges = (
-            'implement -> salvage [condition="outcome=failed && context.impl_status=BLOCKED"]',
+            'normalize_implement -> salvage [condition="context.impl_status=BLOCKED"]',
             'check -> salvage [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=false"]',
-            'review -> salvage [condition="outcome=failed && context.failure_class contains network"]',
-            'review -> salvage [condition="outcome=failed && context.failure_class contains environment"]',
-            'review -> salvage [condition="outcome=failed && context.verdict=BLOCKED"]',
+            'normalize_review -> salvage [condition="context.failure_class=network", weight=5]',
+            'normalize_review -> salvage [condition="context.failure_class=environment", weight=5]',
+            'normalize_review -> salvage [condition="context.verdict=BLOCKED", weight=5]',
             'rework -> salvage [condition="outcome=succeeded && context.rework_round > 2"]',
         )
 

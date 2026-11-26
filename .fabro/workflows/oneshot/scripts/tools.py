@@ -26,6 +26,16 @@ FAILURE_STAGES = (
     "prepare", "diagnose", "baseline", "implement", "check",
     "simplify", "review", "rework", "publish",
 )
+STAGE_RESULT_STAGES = ("implement", "simplify", "review")
+VERDICTS = ("APPROVED", "REJECTED", "BLOCKED")
+FAILURE_CLASSES = ("none", "network", "rate_limit", "baseline", "code", "environment")
+CHECK_STATUSES = ("passed", "failed", "unknown", "skipped")
+BASELINE_STATUSES = ("passed", "failed", "unknown", "not_recorded")
+STAGE_RESULT_FIELDS = {
+    "implement": ("impl_summary", "impl_files_changed", "impl_tests_run", "impl_concerns"),
+    "simplify": ("impl_summary", "impl_files_changed", "impl_tests_run", "impl_concerns"),
+    "review": ("review_summary", "review_mechanical", "review_findings", "review_remediation"),
+}
 
 
 def run(cmd, check=True, env=None):
@@ -379,6 +389,101 @@ def read_stdin_text():
         return stream.read().strip()
     except (OSError, ValueError):
         return ""
+
+
+def stage_result_error(stage, result):
+    # The typed stages are validated by Fabro before they run, but a second
+    # check here keeps routing deterministic if a context value is stale,
+    # truncated, or double-encoded.
+    if not isinstance(result, dict):
+        return "expected a JSON object"
+    if result.get("verdict") not in VERDICTS:
+        return "invalid verdict %r; expected one of %s" % (
+            result.get("verdict"), ", ".join(VERDICTS))
+    if result.get("failure_class") not in FAILURE_CLASSES:
+        return "invalid failure_class %r; expected one of %s" % (
+            result.get("failure_class"), ", ".join(FAILURE_CLASSES))
+    checks = result.get("check_results")
+    if not isinstance(checks, dict):
+        return "check_results must be an object"
+    for name, check in checks.items():
+        if not isinstance(check, dict):
+            return "check_results[%r] must be an object" % name
+        missing = [key for key in ("command", "status", "baseline_status", "reason")
+                   if key not in check]
+        if missing:
+            return "check_results[%r] is missing %s" % (name, ", ".join(missing))
+        if check["status"] not in CHECK_STATUSES:
+            return "check_results[%r] has invalid status %r" % (name, check["status"])
+        if check["baseline_status"] not in BASELINE_STATUSES:
+            return "check_results[%r] has invalid baseline_status %r" % (
+                name, check["baseline_status"])
+        for key in ("command", "reason"):
+            if not isinstance(check[key], str):
+                return "check_results[%r].%s must be a string" % (name, key)
+    for field in STAGE_RESULT_FIELDS[stage] + ("stage_failure",):
+        if field in result and not isinstance(result[field], str):
+            return "%s must be a string" % field
+    return ""
+
+
+def normalize_stage_result(stage, result):
+    updates = {
+        "verdict": result["verdict"],
+        "failure_class": result["failure_class"],
+    }
+    for field in STAGE_RESULT_FIELDS[stage]:
+        updates[field] = str(result.get(field) or "")
+    if stage in ("implement", "simplify"):
+        updates["impl_status"] = "READY" if result["verdict"] == "APPROVED" else "BLOCKED"
+    detail = str(result.get("stage_failure") or "").strip()
+    if not detail and (result["verdict"] != "APPROVED" or result["failure_class"] != "none"):
+        detail = "%s: verdict %s with failure_class %s" % (
+            stage, result["verdict"], result["failure_class"])
+    # An empty value clears a previous round's failure so a later stage's
+    # terminal failure cannot quote a stale reason.
+    updates["stage_failure"] = detail
+    return updates
+
+
+def write_review_record(updates):
+    record = {
+        "stage": "review",
+        "verdict": updates["verdict"],
+        "stage_failure": updates["stage_failure"],
+        "review_findings": updates["review_findings"],
+        "review_remediation": updates["review_remediation"],
+    }
+    try:
+        with open(REVIEW_PATH, "w") as f:
+            json.dump(record, f, indent=1, sort_keys=True)
+            f.write("\n")
+    except OSError as error:
+        print("normalize: could not write %s: %s" % (REVIEW_PATH, error), file=sys.stderr)
+
+
+def normalize(argv):
+    stage = argv[0] if argv else ""
+    if stage not in STAGE_RESULT_STAGES:
+        sys.exit("usage: tools.py normalize <%s>" % "|".join(STAGE_RESULT_STAGES))
+    raw = read_stdin_text()
+    if not raw:
+        sys.exit("normalize: %s result was empty; the agent did not emit the typed result" % stage)
+    try:
+        result = json.loads(raw)
+        # Context values are strings, so a custom-schema object can arrive
+        # JSON-encoded twice.
+        if isinstance(result, str):
+            result = json.loads(result)
+    except ValueError as error:
+        sys.exit("normalize: %s result is not valid JSON: %s" % (stage, error))
+    error = stage_result_error(stage, result)
+    if error:
+        sys.exit("normalize: %s result rejected: %s" % (stage, error))
+    updates = normalize_stage_result(stage, result)
+    if stage == "review":
+        write_review_record(updates)
+    print(json.dumps({"outcome": "succeeded", "context_updates": updates}))
 
 
 def record_stage_failure(stage, detail):
@@ -1044,13 +1149,14 @@ def publish(argv):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <prepare|diagnose|baseline|check|fail|publish> [args]")
+        sys.exit("usage: tools.py <prepare|diagnose|baseline|check|normalize|fail|publish> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
     handlers = {
         "prepare": prepare,
         "diagnose": diagnose,
         "baseline": baseline,
         "check": check,
+        "normalize": normalize,
         "fail": fail,
         "publish": publish,
     }

@@ -70,13 +70,14 @@ can decide.
 2. Environmental failures: if a check cannot be evaluated because the sandbox cannot
    resolve a host or fetch a pinned source, such as `Could not resolve host: github.com`,
    `Temporary failure in name resolution`, DNS errors, or network timeouts, stop treating
-   it as a code failure. Return `outcome` `failed`, set `failure_class` to `network`, and
-   put the concrete error in both `failure_reason` and `context_updates.stage_failure`.
-   Set `context_updates.verdict` to `BLOCKED`; do not describe the environmental failure
-   as a code defect. Apply this output to any failure that prevents review completion.
-   For every other rejected or blocked review, also set `context_updates.stage_failure`
-   to the concrete reason. Include the complete review findings in this value when any exist;
-   salvage publishes it in the draft PR body so the blocker and findings remain actionable.
+   it as a code failure. Set `verdict` to `BLOCKED`, set `failure_class` to `network`, and
+   put the concrete error in `stage_failure`; the normalize stage copies it into
+   `context_updates.stage_failure` so salvage publishes it in the draft PR body. Do not
+   describe the environmental failure as a code defect. Apply this output to any failure
+   that prevents review completion. For every other rejected or blocked review, also set
+   `stage_failure` to the concrete reason. Include the complete review findings in this
+   value when any exist; salvage publishes it in the draft PR body so the blocker and
+   findings remain actionable.
 3. Placeholder markers: grep the changed files for `TBD`, `TODO`, `FIXME`, `HACK`, `XXX`.
    New markers reject the change unless the issue itself requires them.
 4. Secrets: grep the changed files for hardcoded secrets or credentials. Concrete secret
@@ -131,21 +132,27 @@ and concrete.
 ## Final response
 
 Write a short narrative that includes the mechanical results, then end your response with
-exactly one JSON object as the final content; nothing after it. Keep every value a
-single-line JSON string; escape embedded double quotes as `\"` and newlines as `\n`.
+exactly one JSON object that satisfies the typed result schema Fabro appends; nothing
+after it. Keep every value a single-line JSON string; escape embedded double quotes as
+`\"` and newlines as `\n`.
+
+Set `verdict` to exactly `APPROVED`, `REJECTED`, or `BLOCKED`. Set `failure_class` to
+exactly `none`, `network`, `rate_limit`, `baseline`, `code`, or `environment`. Put one
+entry per command in `check_results`, keyed by a short name, with `command`, `status`,
+`baseline_status`, and `reason`; use `not_recorded` when no baseline result exists.
 
 When the change is approved:
 
-{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: <command> PASS; TODO grep: CLEAN; secrets grep: CLEAN; scratch files: NONE", "review_findings": "<baseline failures and evidence, explicitly non-blocking, or empty>", "review_remediation": ""}}
+{"verdict": "APPROVED", "failure_class": "none", "check_results": {"typed result tests": {"command": "python3 tests/fabro-workflows/oneshot-typed-result.test.py", "status": "passed", "baseline_status": "not_recorded", "reason": "exit 0"}}, "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: <command> PASS; placeholder grep: CLEAN; secrets grep: CLEAN; scratch files: NONE", "review_findings": "<baseline failures and evidence, explicitly non-blocking, or empty>", "review_remediation": ""}
 
 When the change is rejected for a change-introduced defect or an unverified requirement:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"verdict": "REJECTED", "stage_failure": "<concrete reason>", "review_summary": "<one-sentence outcome>", "review_mechanical": "<concise mechanical results>", "review_findings": "1. <finding with exact file, line range, and why it violates the issue>; 2. <finding>", "review_remediation": "1. <exact fix>; 2. <exact fix>"}}
+{"verdict": "REJECTED", "failure_class": "code", "check_results": {"<check name>": {"command": "<command>", "status": "failed", "baseline_status": "passed", "reason": "<why it failed>"}}, "stage_failure": "<concrete reason>", "review_summary": "<one-sentence outcome>", "review_mechanical": "<concise mechanical results>", "review_findings": "1. <finding with exact file, line range, and why it violates the issue>; 2. <finding>", "review_remediation": "1. <exact fix>; 2. <exact fix>"}
 
 When the review is blocked by a network failure:
 
-{"outcome": "failed", "failure_reason": "<concrete network error>", "context_updates": {"verdict": "BLOCKED", "failure_class": "network", "stage_failure": "<same concrete network error>", "review_summary": "Review blocked by a network failure.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}
+{"verdict": "BLOCKED", "failure_class": "network", "check_results": {"<blocked check>": {"command": "<command>", "status": "unknown", "baseline_status": "unknown", "reason": "<concrete network error>"}}, "stage_failure": "<same concrete network error>", "review_summary": "Review blocked by a network failure.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}
 
 When the review is blocked for another reason:
 
-{"outcome": "failed", "failure_reason": "<concrete blocker>", "context_updates": {"verdict": "BLOCKED", "stage_failure": "<same concrete blocker>", "review_summary": "Review blocked: <concrete blocker>.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}
+{"verdict": "BLOCKED", "failure_class": "environment", "check_results": {}, "stage_failure": "<concrete blocker>", "review_summary": "Review blocked: <concrete blocker>.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Oneshot stage result",
+  "description": "Typed result emitted by the oneshot implement, simplify, and review stages. Fabro validates the final response against this schema before the normalize node routes it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "failure_class", "check_results"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["APPROVED", "REJECTED", "BLOCKED"]
+    },
+    "failure_class": {
+      "type": "string",
+      "enum": ["none", "network", "rate_limit", "baseline", "code", "environment"]
+    },
+    "check_results": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "status", "baseline_status", "reason"],
+        "properties": {
+          "command": {"type": "string"},
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "unknown", "skipped"]
+          },
+          "baseline_status": {
+            "type": "string",
+            "enum": ["passed", "failed", "unknown", "not_recorded"]
+          },
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "stage_failure": {"type": "string"},
+    "impl_summary": {"type": "string"},
+    "impl_files_changed": {"type": "string"},
+    "impl_tests_run": {"type": "string"},
+    "impl_concerns": {"type": "string"},
+    "review_summary": {"type": "string"},
+    "review_mechanical": {"type": "string"},
+    "review_findings": {"type": "string"},
+    "review_remediation": {"type": "string"}
+  }
+}
