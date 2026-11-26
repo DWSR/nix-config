@@ -208,6 +208,10 @@ name = "hang"
         )
 
         workflow = self.root / "review-timeout.fabro"
+        shutil.copytree(
+            ROOT / ".fabro" / "workflows" / "oneshot" / "schemas",
+            self.root / "schemas",
+        )
         workflow.write_text(
             'digraph OneshotReviewTimeout {\n'
             '    graph [stall_timeout="10s"]\n'

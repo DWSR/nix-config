@@ -46,7 +46,8 @@ digraph Oneshot {
     implement [
         label="Implement issue",
         prompt="@prompts/implement.md",
-        output_schema="routing",
+        output_schema="@schemas/stage-result.schema.json",
+        output_retries=2,
         max_visits=8,
         max_retries=2,
         retry_policy="patient",
@@ -65,7 +66,8 @@ digraph Oneshot {
     simplify [
         label="Simplify change",
         prompt="@prompts/simplify.md",
-        output_schema="routing",
+        output_schema="@schemas/stage-result.schema.json",
+        output_retries=2,
         max_visits=5,
         max_retries=2,
         retry_policy="patient",
@@ -75,11 +77,42 @@ digraph Oneshot {
     review [
         label="Review change",
         prompt="@prompts/review.md",
-        output_schema="routing",
+        output_schema="@schemas/stage-result.schema.json",
+        output_retries=2,
         max_visits=8,
         max_retries=2,
         retry_policy="patient",
         timeout="30m"
+    ]
+
+    normalize_implement [
+        label="Normalize implement result",
+        shape=parallelogram,
+        output_schema="routing",
+        stdin_source="context.output.implement",
+        max_retries=0,
+        timeout="1m",
+        script="python3 .git/oneshot-scripts/tools.py normalize implement"
+    ]
+
+    normalize_simplify [
+        label="Normalize simplify result",
+        shape=parallelogram,
+        output_schema="routing",
+        stdin_source="context.output.simplify",
+        max_retries=0,
+        timeout="1m",
+        script="python3 .git/oneshot-scripts/tools.py normalize simplify"
+    ]
+
+    normalize_review [
+        label="Normalize review result",
+        shape=parallelogram,
+        output_schema="routing",
+        stdin_source="context.output.review",
+        max_retries=0,
+        timeout="1m",
+        script="python3 .git/oneshot-scripts/tools.py normalize review"
     ]
 
     rework [
@@ -151,10 +184,12 @@ digraph Oneshot {
     baseline -> implement [condition="outcome=succeeded"]
     baseline -> fail
 
-    implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
-    implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
-    implement -> salvage [condition="outcome=failed && context.impl_status=BLOCKED"]
+    implement -> normalize_implement [condition="outcome=succeeded"]
     implement -> fail
+    normalize_implement -> check [condition="outcome=succeeded && context.impl_status=READY && context.failure_class_ok=true"]
+    normalize_implement -> wait_implement_rate_limit [condition="context.failure_class=rate_limit", weight=10]
+    normalize_implement -> salvage [condition="context.impl_status=BLOCKED"]
+    normalize_implement -> fail
     wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
     wait_implement_rate_limit -> fail
 
@@ -163,19 +198,23 @@ digraph Oneshot {
     check -> salvage [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=false"]
     check -> fail
 
-    simplify -> check [condition="outcome=succeeded"]
-    simplify -> wait_simplify_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    simplify -> normalize_simplify [condition="outcome=succeeded"]
     simplify -> fail
+    normalize_simplify -> check [condition="outcome=succeeded && context.impl_status=READY && context.failure_class_ok=true"]
+    normalize_simplify -> wait_simplify_rate_limit [condition="context.failure_class=rate_limit", weight=10]
+    normalize_simplify -> fail
     wait_simplify_rate_limit -> simplify [condition="outcome=succeeded"]
     wait_simplify_rate_limit -> fail
 
-    review -> publish [condition="outcome=succeeded && context.verdict=APPROVED"]
-    review -> salvage [condition="outcome=failed && context.failure_class contains network"]
-    review -> salvage [condition="outcome=failed && context.failure_class contains environment"]
-    review -> salvage [condition="outcome=failed && context.verdict=BLOCKED"]
-    review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
-    review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
+    review -> normalize_review [condition="outcome=succeeded"]
     review -> fail
+    normalize_review -> publish [condition="outcome=succeeded && context.verdict=APPROVED && context.failure_class_ok=true"]
+    normalize_review -> wait_review_rate_limit [condition="context.failure_class=rate_limit", weight=10]
+    normalize_review -> salvage [condition="context.failure_class=network", weight=5]
+    normalize_review -> salvage [condition="context.failure_class=environment", weight=5]
+    normalize_review -> salvage [condition="context.verdict=BLOCKED", weight=5]
+    normalize_review -> rework [condition="context.verdict=REJECTED"]
+    normalize_review -> fail
     wait_review_rate_limit -> review [condition="outcome=succeeded"]
     wait_review_rate_limit -> fail
 
