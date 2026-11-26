@@ -40,14 +40,45 @@
 # `NIX_REMOTE=daemon`. The mounts live in the engine-level containers.conf,
 # not on the environment, because Fabro's environment schema has no mount
 # field (Requirement 5.3).
+#
+# `prewarmFlakeInputs` roots the repository flake's locked input sources in
+# the guest store (issue #374). Because sandbox containers see the guest
+# store through the bind mount, the guest store is the only place a
+# prewarmed closure can live; `nix.gc` would otherwise delete the source
+# paths once nothing references them, and a sandbox `nix flake check
+# --no-build` would then try to re-fetch the pinned nix-darwin / Home
+# Manager archives from GitHub, which the sandbox cannot resolve (the
+# resolver fix is issue #366).
 {
   config,
+  flakeInputSources,
   lib,
   pkgs,
   ...
 }:
 let
   cfg = config.fabro.sandboxImage;
+
+  # The prewarmed closure: one derivation whose output references every
+  # locked flake input source, so `system.extraDependencies` below pulls the
+  # whole set into the system closure (a GC root) without installing
+  # anything on PATH. `passthru.sources` exposes the exact set for
+  # tests/fabro-sandbox; the output file records the count and apparent size
+  # so an operator can audit the added closure (`nix path-info -rS`).
+  prewarmFlakeInputs =
+    pkgs.runCommand "fabro-sandbox-flake-inputs"
+      {
+        passthru.sources = flakeInputSources;
+      }
+      ''
+        {
+          echo "fabro-sandbox flake inputs: ${toString (lib.length flakeInputSources)} locked sources rooted in the guest store"
+          for source in ${lib.escapeShellArgs flakeInputSources}; do
+            echo "$source"
+          done
+          echo "total apparent bytes: $(du -sbc ${lib.escapeShellArgs flakeInputSources} | tail -n 1 | cut -f 1)"
+        } > "$out"
+      '';
 
   # The loader script is parameterised by the image name (baked in at build
   # time); the unit passes the archive and digest store paths positionally.
@@ -177,6 +208,12 @@ in
       ExecStart = lib.getExe reconcileScript;
     };
   };
+
+  # Keep the repository flake's locked input closure resident in the guest
+  # store: the system closure (and therefore the system profile GC root)
+  # references every prewarmed source, so the daily `nix.gc` cannot delete
+  # them out from under the sandboxes that share this store.
+  system.extraDependencies = [ prewarmFlakeInputs ];
 
   # Host-store and daemon sharing (Requirements 5.1-5.5). `virtualisation.podman`
   # enables `virtualisation.containers`, whose module renders
