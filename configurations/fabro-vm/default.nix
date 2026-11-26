@@ -15,8 +15,9 @@
 # Podman with a Docker-compatible API socket (fabro's docker sandbox
 # provider) plus the fabro, LiteLLM, and OpenCode services (with their
 # secrets from sops-nix, `sops` block below), a loopback-only iii engine
-# (./iii.nix) with its ADE console project (./iii-console.nix), and joins the
-# tailnet as a Tailscale Services host advertising the applications
+# (./iii.nix) with its ADE console project (./iii-console.nix) and the
+# `software-factory` llm-router project (./iii-software-factory.nix), and joins
+# the tailnet as a Tailscale Services host advertising the applications
 # (./tailscale.nix).
 {
   rsync34,
@@ -75,6 +76,11 @@ in
     # inside a generated `console` Compose project against the loopback
     # engine, with its state in /var/lib/iii-console.
     ./iii-console.nix
+    # The `software-factory` iii Compose project: the pinned `llm-router`
+    # worker plus the pinned `provider-openai` and `state` workers, pointed
+    # at the loopback LiteLLM proxy, with its state in
+    # /var/lib/iii-software-factory.
+    ./iii-software-factory.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
     # of the fabro, litellm, opencode, iii, and iii-console services
     # (svc:fabro / svc:litellm / svc:opencode / svc:iii / svc:iii-console).
@@ -287,6 +293,10 @@ in
       #     as both GITHUB_TOKEN and GH_TOKEN), the litellm master key for
       #     the provider's `{env:LITELLM_MASTER_KEY}` api key, and the
       #     server's basic-auth password.
+      #   * iii-software-factory-env — OPENAI_API_KEY, the provider-openai
+      #     credential fallback read in llm-router's process, carrying the
+      #     LiteLLM master key so the router authenticates to the loopback
+      #     proxy (iii-software-factory.nix).
       #
       # Each template restarts its consumer when the rendered value
       # changes: systemd does not track EnvironmentFile contents, so
@@ -317,6 +327,16 @@ in
             GH_TOKEN=${config.sops.placeholder."opencode-github-token"}
             LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
             OPENCODE_SERVER_PASSWORD=${config.sops.placeholder."opencode-server-password"}
+          '';
+        };
+
+        # provider-openai's credential_env_var is OPENAI_API_KEY, read by the
+        # llm-router process; the value is the same LiteLLM master key the
+        # `litellm-env` template gives the proxy.
+        "iii-software-factory-env" = {
+          restartUnits = [ "iii-software-factory.service" ];
+          content = ''
+            OPENAI_API_KEY=${config.sops.placeholder.litellm-master-key}
           '';
         };
       };

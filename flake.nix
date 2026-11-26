@@ -3046,6 +3046,27 @@
                 "-f"
                 "/var/lib/iii-console/console/worker-compose.yaml"
               ];
+              factoryExecStart = vm.systemd.services.iii-software-factory.serviceConfig.ExecStart or "";
+              factoryCompose = vm.fabro.iiiSoftwareFactory.composeConfig or { };
+              factoryContainers = factoryCompose.containers or { };
+              factoryRouter = factoryContainers.llm-router or { };
+              factoryProvider = factoryContainers.provider-openai or { };
+              factoryState = factoryContainers.state or { };
+              factoryRouterOverride = factoryRouter.config_override or { };
+              factoryRouterProviders = factoryRouterOverride.providers or { };
+              factoryRouterOpenai = factoryRouterProviders.openai or { };
+              factoryStateAdapter = factoryState.config_override.adapter or { };
+              expectedFactoryExecStart = pkgs.lib.escapeShellArgs [
+                (pkgs.lib.getExe vm.fabro.iii.package)
+                "compose"
+                "--engine"
+                vm.fabro.iiiSoftwareFactory.engineUrl
+                "--namespace"
+                "software-factory"
+                "--up"
+                "-f"
+                "/var/lib/iii-software-factory/software-factory/worker-compose.yaml"
+              ];
               guestReport =
                 assert pkgs.lib.assertMsg vm.services.lima.enable
                   "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
@@ -3911,6 +3932,110 @@
                   (package: pkgs.lib.hasPrefix "bash" (package.pname or package.name or ""))
                   (vm.systemd.services.iii-console.path or [ ])
                 ) "fabro-vm: iii-console must put bash on PATH so Compose can run scripts.run through sh -c.";
+                # The software-factory Compose project (configurations/fabro-vm/
+                # iii-software-factory.nix): llm-router + provider-openai +
+                # state, connected to the existing loopback engine and routed
+                # through the loopback LiteLLM proxy.
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services ? iii-software-factory
+                ) "fabro-vm: systemd.services.iii-software-factory must be defined (the llm-router project).";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "iii.service" (vm.systemd.services.iii-software-factory.requires or [ ])
+                    && builtins.elem "iii.service" (vm.systemd.services.iii-software-factory.after or [ ])
+                    && builtins.elem "iii.service" (vm.systemd.services.iii-software-factory.partOf or [ ])
+                  )
+                  "fabro-vm: iii-software-factory.service must require, start after, and restart with iii.service (the engine it connects to).";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "litellm.service" (vm.systemd.services.iii-software-factory.after or [ ])
+                    && builtins.elem "litellm.service" (vm.systemd.services.iii-software-factory.wants or [ ])
+                  )
+                  "fabro-vm: iii-software-factory.service must start after and want litellm.service (the gateway it routes to).";
+                assert pkgs.lib.assertMsg (vm.systemd.services.iii-software-factory.serviceConfig.DynamicUser
+                  or false
+                ) "fabro-vm: the iii-software-factory service must run as a DynamicUser.";
+                assert pkgs.lib.assertMsg
+                  (
+                    (vm.systemd.services.iii-software-factory.serviceConfig.StateDirectory or [ ])
+                    == [ "iii-software-factory" ]
+                  )
+                  "fabro-vm: the iii-software-factory service must own /var/lib/iii-software-factory via StateDirectory.";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.services.iii-software-factory.serviceConfig.EnvironmentFile
+                    == vm.sops.templates."iii-software-factory-env".path
+                  )
+                  "fabro-vm: iii-software-factory.service must consume the sops iii-software-factory-env template (OPENAI_API_KEY for provider-openai).";
+                assert pkgs.lib.assertMsg (factoryExecStart == expectedFactoryExecStart)
+                  "fabro-vm: iii-software-factory ExecStart must run `iii compose --engine <loopback> --namespace software-factory --up -f /var/lib/iii-software-factory/software-factory/worker-compose.yaml` against the existing engine, got '${factoryExecStart}'.";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasInfix
+                    (builtins.unsafeDiscardStringContext "${vm.fabro.iiiSoftwareFactory.projectDirectory}/software-factory")
+                    (builtins.unsafeDiscardStringContext (vm.systemd.services.iii-software-factory.preStart or ""))
+                  )
+                  "fabro-vm: iii-software-factory must copy the generated project out of the read-only store before Compose writes its lock file.";
+                assert pkgs.lib.assertMsg ((factoryCompose.namespace or "") == "software-factory")
+                  "fabro-vm: the iii software-factory Compose project must be named/namespace `software-factory`, got '${
+                    toString (factoryCompose.namespace or null)
+                  }'.";
+                assert pkgs.lib.assertMsg ((factoryRouter.worker or "") == "path://./llm-router")
+                  "fabro-vm: the software-factory project must declare llm-router as the path worker path://./llm-router.";
+                assert pkgs.lib.assertMsg ((factoryProvider.worker or "") == "path://./provider-openai")
+                  "fabro-vm: the software-factory project must declare provider-openai as the path worker path://./provider-openai.";
+                assert pkgs.lib.assertMsg (
+                  (factoryState.worker or "") == "path://./state"
+                ) "fabro-vm: the software-factory project must declare state as the path worker path://./state.";
+                assert pkgs.lib.assertMsg (
+                  (factoryRouter.required or false)
+                  && (factoryProvider.required or false)
+                  && (factoryState.required or false)
+                  && (factoryRouter.restart or "") == "always"
+                  && (factoryProvider.restart or "") == "always"
+                  && (factoryState.restart or "") == "always"
+                ) "fabro-vm: the software-factory workers must be required with restart=always.";
+                assert pkgs.lib.assertMsg ((factoryRouter.config_name or "") == "llm-router")
+                  "fabro-vm: the llm-router container must own the `llm-router` configuration entry (config_name), got '${
+                    toString (factoryRouter.config_name or null)
+                  }'.";
+                assert pkgs.lib.assertMsg ((factoryRouterOverride.default_provider or "") == "openai")
+                  "fabro-vm: the llm-router entry override must default to the `openai` provider (provider-openai behind LiteLLM).";
+                assert pkgs.lib.assertMsg
+                  ((factoryRouterOpenai.api_url or "") == "http://127.0.0.1:4000/v1/chat/completions")
+                  "fabro-vm: the llm-router openai provider slice must point at LiteLLM's Chat Completions endpoint http://127.0.0.1:4000/v1/chat/completions, got '${
+                    toString (factoryRouterOpenai.api_url or null)
+                  }'.";
+                assert pkgs.lib.assertMsg (!(factoryRouterOpenai ? api_key))
+                  "fabro-vm: the llm-router openai provider slice must not embed an api_key; the LiteLLM master key arrives as OPENAI_API_KEY from the sops template.";
+                assert pkgs.lib.assertMsg
+                  (
+                    (factoryStateAdapter.name or "") == "kv"
+                    && (factoryStateAdapter.config.store_method or "") == "file_based"
+                    && (factoryStateAdapter.config.file_path or "") == "/var/lib/iii-software-factory/state"
+                  )
+                  "fabro-vm: the state worker must persist its kv store at /var/lib/iii-software-factory/state (not the per-start project copy).";
+                assert pkgs.lib.assertMsg
+                  (
+                    toString vm.fabro.iiiSoftwareFactory.llmRouterPackage
+                    == toString self.nixosConfigurations.fabro-vm.pkgs.iii-workers.llm-router
+                    &&
+                      toString vm.fabro.iiiSoftwareFactory.providerOpenaiPackage
+                      == toString self.nixosConfigurations.fabro-vm.pkgs.iii-workers.provider-openai
+                    &&
+                      toString vm.fabro.iiiSoftwareFactory.statePackage
+                      == toString self.nixosConfigurations.fabro-vm.pkgs.iii-workers.state
+                  )
+                  "fabro-vm: fabro.iiiSoftwareFactory must use the pinned pkgs.iii-workers.{llm-router,provider-openai,state} packages.";
+                assert pkgs.lib.assertMsg (pkgs.lib.hasInfix "III_COMPOSE_STATE_DIR=/var/lib/iii-software-factory" (
+                  pkgs.lib.concatStringsSep " " (
+                    vm.systemd.services.iii-software-factory.serviceConfig.Environment or [ ]
+                  )
+                )) "fabro-vm: iii-software-factory must keep Compose state under /var/lib/iii-software-factory.";
+                assert pkgs.lib.assertMsg
+                  (builtins.any (package: pkgs.lib.hasPrefix "bash" (package.pname or package.name or "")) (
+                    vm.systemd.services.iii-software-factory.path or [ ]
+                  ))
+                  "fabro-vm: iii-software-factory must put bash on PATH so Compose can run scripts.run through sh -c.";
                 # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services ? opencode
@@ -4060,7 +4185,7 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
                   builtins.readFile ./configurations/fabro-vm/fabro.nix
                 )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; tailscale-reconcile re-runs tailscale up with the sops OAuth key on a two-minute timer whenever the ephemeral node is reaped (Self.Online=false, AuthURL set, or BackendState NeedsLogin/NeedsMachineAuth/Stopped); fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker), supervised by ${vm.fabro.iii.supervisorPackage.pname} (Type=notify/NotifyAccess=main, WatchdogSec ${toString vm.fabro.iii.watchdogSec}s, readiness gate ${toString vm.fabro.iii.readinessTimeoutSec}s on the engine-owned loopback listener, stop timeout ${toString vm.fabro.iii.stopTimeoutSec}s with SIGTERM→SIGKILL escalation); iii console: ${vm.fabro.iiiConsole.package.pname} ${vm.fabro.iiiConsole.package.version} installed as iii-console.service (DynamicUser, state in /var/lib/iii-console, generated console Compose project running the ade path worker on loopback 127.0.0.1:3113 and connected to ws://127.0.0.1:49134); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 and svc:iii-console tcp:443→127.0.0.1:3113 after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a --volumes → generated podman-prune oneshot+timer reaps leaked sandbox containers/images/volumes); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\" (its state store is the shared cluster's litellm database: owner litellm_migrator, a separate litellm_app role with CONNECT/USAGE/table-DML/sequence-USAGE grants and no DDL, the proxy as the fixed litellm account with DynamicUser=false on litellm-db plus the generated Prisma 5.17.0 client, DATABASE_URL host=/run/postgresql with no password, DISABLE_SCHEMA_UPDATE=true, and the chain postgresql→postgresql-setup→postgres-bootstrap→litellm-db-init→postgres-grants→litellm with /var/lib/litellm/chatgpt re-owned 0700 litellm:litellm), opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; tailscale-reconcile re-runs tailscale up with the sops OAuth key on a two-minute timer whenever the ephemeral node is reaped (Self.Online=false, AuthURL set, or BackendState NeedsLogin/NeedsMachineAuth/Stopped); fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; fabro-lima-user-manager enables linger and starts the cidata user manager for switch-to-configuration; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af --volumes); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only, the Nix daemon socket, and a /tmp tmpfs for every container; run.environment.id=default; iii engine: ${vm.fabro.iii.package.pname} ${vm.fabro.iii.package.version} installed as iii.service (DynamicUser, read-only rendered config with the single iii-worker-manager entry on loopback 127.0.0.1:49134 and no project worker), supervised by ${vm.fabro.iii.supervisorPackage.pname} (Type=notify/NotifyAccess=main, WatchdogSec ${toString vm.fabro.iii.watchdogSec}s, readiness gate ${toString vm.fabro.iii.readinessTimeoutSec}s on the engine-owned loopback listener, stop timeout ${toString vm.fabro.iii.stopTimeoutSec}s with SIGTERM→SIGKILL escalation); iii console: ${vm.fabro.iiiConsole.package.pname} ${vm.fabro.iiiConsole.package.version} installed as iii-console.service (DynamicUser, state in /var/lib/iii-console, generated console Compose project running the ade path worker on loopback 127.0.0.1:3113 and connected to ws://127.0.0.1:49134); iii software-factory: ${vm.fabro.iiiSoftwareFactory.llmRouterPackage.pname} ${vm.fabro.iiiSoftwareFactory.llmRouterPackage.version} + ${vm.fabro.iiiSoftwareFactory.providerOpenaiPackage.pname} ${vm.fabro.iiiSoftwareFactory.providerOpenaiPackage.version} + ${vm.fabro.iiiSoftwareFactory.statePackage.pname} ${vm.fabro.iiiSoftwareFactory.statePackage.version} installed as iii-software-factory.service (DynamicUser, state in /var/lib/iii-software-factory incl. the file-backed state worker store, generated software-factory Compose project on ws://127.0.0.1:49134 with the llm-router entry pointed at LiteLLM's http://127.0.0.1:4000/v1/chat/completions and the master key via sops OPENAI_API_KEY); tailscale-serve advertises svc:iii tcp:443→127.0.0.1:49134 and svc:iii-console tcp:443→127.0.0.1:3113 after the unchanged svc:fabro, svc:litellm, and svc:opencode handlers";
 
             in
             pkgs.runCommand "fabro-vm-guest-eval"
