@@ -157,6 +157,25 @@ class ModelFallbackTests(unittest.TestCase):
         self.assertIn("temporary detached checkout", review)
         self.assertIn("explicitly non-blocking", review)
 
+    def test_oneshot_reviewer_runs_preflight_only_for_workflow_diffs(self):
+        review = " ".join(ONESHOT_REVIEW.read_text().split())
+
+        self.assertIn("touches `.fabro/workflows/**` or any `workflow.toml`", review)
+        self.assertIn(
+            "Skip preflight entirely when the diff touches no workflow file", review)
+        self.assertIn(
+            "`fabro preflight .fabro/workflows/oneshot/workflow.toml`", review)
+        self.assertIn("`server.auth.github.allowed_usernames`", review)
+        self.assertIn("`failed to resolve manifest settings`", review)
+        self.assertIn("set `failure_class` to `environment`", review)
+        self.assertIn("never `REJECTED`", review)
+        self.assertIn("reproduces on an untouched workflow", review)
+
+    def test_fabro_server_sets_a_non_empty_github_auth_allowlist(self):
+        fabro = FABRO_NIX.read_text()
+
+        self.assertIn('github.allowed_usernames = [ "DWSR" ];', fabro)
+
     def test_oneshot_has_stage_timeouts_below_its_stall_watchdog(self):
         graph = ONESHOT_GRAPH.read_text()
         stall_timeout = 60

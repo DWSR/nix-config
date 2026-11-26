@@ -51,6 +51,10 @@ can decide.
      `nix flake check --no-build`.
    - For `tests/**` or `scripts/**`, run the suites covering the touched files and
      `nix develop --command prek run --all-files`.
+   - For a diff that touches `.fabro/workflows/**` or any `workflow.toml`, run
+     `fabro preflight` on the touched task config (for this repository,
+     `fabro preflight .fabro/workflows/oneshot/workflow.toml`). Skip preflight
+     entirely when the diff touches no workflow file.
    - Full `nix flake check` is required for any changed Nix module, package definition,
      or `.fabro/workflows/**/workflow.fabro` workflow graph. Apply every matching path
      rule; do not let one category suppress another.
@@ -67,6 +71,16 @@ can decide.
    explicitly non-blocking. In `review_mechanical`, record every selected check with the
    changed-path reason that selected it, along with universal checks and any required
    checks that could not run; do not report a bare pass/fail list.
+
+   Preflight failures split by cause. A validation error in the touched workflow graph
+   or task config that the diff introduces rejects the change. A Fabro server that
+   cannot start or resolve its run manifest for a server-config, auth, or sandbox
+   reason — an empty `server.auth.github.allowed_usernames`, a missing or malformed
+   dev-token pair (`SESSION_SECRET`, `FABRO_DEV_TOKEN`), `no settings.toml configured`,
+   or `failed to resolve manifest settings` — is an environment blocker: set
+   `failure_class` to `environment` and verdict `BLOCKED`, never `REJECTED`. The same
+   applies when the identical preflight failure reproduces on an untouched workflow at
+   `baseline_sha`.
 2. Environmental failures: if a check cannot be evaluated because the sandbox cannot
    resolve a host or fetch a pinned source, such as `Could not resolve host: github.com`,
    `Temporary failure in name resolution`, DNS errors, or network timeouts, stop treating
