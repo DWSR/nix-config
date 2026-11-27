@@ -9,6 +9,7 @@ Use the design's [migration rules](design.md#integration-and-migration-notes) in
   - Done when the baseline command detects a missing selector and records existing runner blockers separately from failures.
   - _Boundary: `tests/flake-layout/`, baseline checks in `flake.nix`_
   - _Requirements: 3.1, 3.2, 3.5, 4.1, 4.4, 6.5_
+  - _Blocked: patch is 1,602 changed lines vs the 1,000-line implementation-diff limit; reduce the implementation or get explicit human approval of a diff-limit exception_
 
 - [ ] 2. Add a disposable stock-Nix evaluator probe
   - Probe a captured tree with a root-relative and sibling-relative lock, strict effective-lock equality, and a tracked source-only edit. Identify the stock ARM Linux shell/runner used for the pilot before the permanent matrix exists.
