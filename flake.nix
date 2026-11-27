@@ -4737,6 +4737,43 @@
                 touch $out
               '';
 
+          # Pre-migration flake-layout compatibility baseline (spec
+          # flake-repository-layout, task 1; design "Integration and Migration
+          # Notes" 1 "Baseline first"). The recorded baseline inventories the
+          # root selectors per system, the personal host's registry/search-path
+          # aliases, CI lanes/exclusions, representative pins, and host wiring.
+          # `verify` fails when a recorded selector or alias disappears,
+          # reports additions and pin changes, and lists checks the current
+          # runner cannot build as blockers instead of passes. The observation
+          # is evaluated here (never re-evaluated inside the sandbox) so the
+          # check stays a leaf.
+          flake-layout-baseline =
+            pkgs.runCommand "flake-layout-baseline"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.python3
+                ];
+                observation = pkgs.writeText "flake-layout-observation.json" (
+                  builtins.toJSON (import ./tests/flake-layout/observation.nix { inherit self; })
+                );
+              }
+              ''
+                export HOME=$(mktemp -d)
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                python3 tests/flake-layout/baseline.py verify \
+                  --baseline tests/flake-layout/baseline.json \
+                  --observation "$observation" \
+                  --native-system ${system} \
+                  --static
+                python3 tests/flake-layout/baseline.py check-static \
+                  --baseline tests/flake-layout/baseline.json
+                python3 tests/flake-layout/test_baseline.py
+                touch $out
+              '';
+
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
             src = ./.;
             package = pkgs.prek;

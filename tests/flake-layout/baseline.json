@@ -1,0 +1,120 @@
+{
+  "ci": {
+    "dispatch_assignments": {"auto_merge": "false", "codeql": "false", "commit_count": "false", "flake_check": "false", "gitleaks": "false", "lima_config": "false", "prek": "false", "size": "false"},
+    "dispatch_guards": {"auto-merge": 1, "codeql": 2, "commit-count": 1, "flake-check": 1, "gitleaks": 1, "lima-config": 1, "prek": 1, "size": 1},
+    "dispatch_logic_sha256": "608e53fe25338f34189499371b7d6821945a5092fb64e0323c62ea7eb5b8744c",
+    "dispatch_outputs": {"auto-merge": "auto_merge", "codeql": "codeql", "commit-count": "commit_count", "flake-check": "flake_check", "gitleaks": "gitleaks", "lima-config": "lima_config", "prek": "prek", "size": "size"},
+    "flake_check_exclusions": ["opencode", "agentmemory-opencode", "lima-vm-config-validate", "fabro-workflows-validate", "formatting", "pre-commit-check"],
+    "job_conditions": {"analyze": "needs.dispatch.outputs.codeql == 'true'", "auto-merge": "needs.dispatch.outputs.auto-merge == 'true'", "commit-count": "needs.dispatch.outputs.commit-count == 'true'", "flake-check": "needs.dispatch.outputs.flake-check == 'true'", "gitleaks": "needs.dispatch.outputs.gitleaks == 'true'", "lima-config": "needs.dispatch.outputs.lima-config == 'true'", "prek": "needs.dispatch.outputs.prek == 'true'", "size": "needs.dispatch.outputs.size == 'true'"},
+    "jobs": {"analyze": "ubuntu-latest", "auto-merge": "ubuntu-latest", "commit-count": "ubuntu-latest", "dispatch": "ubuntu-latest", "flake-check": "macos-latest", "gitleaks": "ubuntu-latest", "lima-config": "macos-latest", "prek": "macos-latest", "size": "ubuntu-latest"},
+    "required_commands": ["nix develop --command prek run --all-files", "nix build --no-link --keep-going $attrs", "nix flake check --no-build --show-trace --keep-going", ".#checks.aarch64-darwin.lima-vm-config-validate"]
+  },
+  "host_wiring": {
+    "darwin_hosts": ["Brandons-MacBook-Pro", "mac-builder"],
+    "fabro_sops_age_key": "/var/lib/sops-nix/key.txt",
+    "fabro_sops_default_store": "fabro.fabro.yaml",
+    "fabro_sops_secrets": {
+      "build-client-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/build-client-key"},
+      "build-host-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/build-host-key"},
+      "fabro-dev-token": {"mode": "0400", "owner": null, "path": "/run/secrets/fabro-dev-token"},
+      "fabro-session-secret": {"mode": "0400", "owner": null, "path": "/run/secrets/fabro-session-secret"},
+      "github-token": {"mode": "0400", "owner": null, "path": "/run/secrets/github-token"},
+      "linux-builder-client-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/linux-builder-client-key"},
+      "litellm-master-key": {"mode": "0400", "owner": null, "path": "/run/secrets/litellm-master-key"},
+      "opencode-api-key": {"mode": "0400", "owner": null, "path": "/run/secrets/opencode-api-key"},
+      "opencode-github-token": {"mode": "0400", "owner": null, "path": "/run/secrets/opencode-github-token"},
+      "opencode-server-password": {"mode": "0400", "owner": null, "path": "/run/secrets/opencode-server-password"},
+      "opencode-signing-key": {"mode": "0400", "owner": null, "path": "/run/secrets/opencode-signing-key"},
+      "tailscale-oauth-secret": {"mode": "0400", "owner": null, "path": "/run/secrets/tailscale-oauth-secret"}
+    },
+    "nixos_hosts": ["fabro-vm", "linux-builder"],
+    "personal_host": "Brandons-MacBook-Pro",
+    "personal_opencode_base_package": "opencode-1.19.0",
+    "personal_opencode_package": "opencode-1.19.0",
+    "personal_sops_age_key": "/var/lib/sops-nix/key.txt",
+    "personal_sops_default_store": "mcp.personal.yaml",
+    "personal_sops_secrets": {
+      "agentmemory-bearer": {"mode": "0400", "owner": "root", "path": "/run/secrets/agentmemory-bearer"},
+      "deskflow-cert": {"mode": "0400", "owner": "brandonmcnama", "path": "/run/secrets/deskflow-cert"},
+      "fabro-dev-token": {"mode": "0400", "owner": "root", "path": "/run/secrets/fabro-dev-token"},
+      "gh-token": {"mode": "0400", "owner": "root", "path": "/run/secrets/gh-token"},
+      "linux-builder-client-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/linux-builder-client-key"},
+      "mac-builder-ssh-private-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/mac-builder-ssh-private-key"},
+      "mcp-beeper-token": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-beeper-token"},
+      "mcp-fastmail-caldav-password": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-fastmail-caldav-password"},
+      "mcp-fastmail-token": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-fastmail-token"},
+      "mcp-fastmail-username": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-fastmail-username"},
+      "mcp-github-token": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-github-token"},
+      "mcp-hangops-xoxc": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-hangops-xoxc"},
+      "mcp-hangops-xoxd": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-hangops-xoxd"},
+      "mcp-kagi-token": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcp-kagi-token"},
+      "mcpproxy-api-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/mcpproxy-api-key"},
+      "omlx-api-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/omlx-api-key"},
+      "opencode-api-key": {"mode": "0400", "owner": "root", "path": "/run/secrets/opencode-api-key"},
+      "sqlite-backup-archive-passphrase": {"mode": "0400", "owner": "root", "path": "/run/secrets/sqlite-backup-archive-passphrase"},
+      "sqlite-backup-rclone-config-passphrase": {"mode": "0400", "owner": "root", "path": "/run/secrets/sqlite-backup-rclone-config-passphrase"}
+    }
+  },
+  "inventory_sha256": "f48ea67d44b624acf604f47dac70e755653fafddb4249620b8994c538ced7a57",
+  "pins": {
+    "agentmemory": {"narHash": "sha256-6qcsBjMrSgBWC11Ye6ybhBFBUqhW5g84UERV/R6azk0=", "owner": "DWSR", "repo": "agentmemory", "rev": "03b171b1424fd48940265308e89dcfd1d005ea3f", "type": "github"},
+    "darwin": {"narHash": "sha256-53jIZEWNh96irEXhsMZFoNhLJgGSU3nYl1i4wFQHAsU=", "owner": "LnL7", "repo": "nix-darwin", "rev": "d31953cf55f9027a56e9be938daf5db8c5655663", "type": "github"},
+    "home-manager": {"narHash": "sha256-R2sZBXiOJo3HAnvTiVkbbHDJy//JMlAwUKEiPbfqPXk=", "owner": "nix-community", "repo": "home-manager", "rev": "6eb2d33d1d0c95a37ef6443c88e6c1686012ee8b", "type": "github"},
+    "nix-snapshotter": {"narHash": "sha256-uPdgkgNV4nOKeGRH2Ucy0XlR0pVgfxvi7w55GfBVo3A=", "owner": "pdtpartners", "repo": "nix-snapshotter", "rev": "8e875fb8eeb28947e2b4c3e7552f511d8d1f405a", "type": "github"},
+    "nixos-lima": {"narHash": "sha256-XJjjleAv5EXffTbbLL9D4KtvTjP7G2fe30G98kbIRK8=", "owner": "nixos-lima", "repo": "nixos-lima", "rev": "e0e086f24b6b8b3d062ca3a1dce1655eb681c237", "type": "github"},
+    "nixpkgs": {"narHash": "sha256-bWDN3JZcE9ovYoaD0/6WYbMtXYpUu0vd5onpK0pc/SE=", "owner": "NixOS", "repo": "nixpkgs", "rev": "57f1c8965649ce5bcac5118a0d2e41f1fbdc56e5", "type": "github"},
+    "nixpkgs-image": {"narHash": "sha256-MWhktfFtFE8Jl7bf9Pkp7TR5MSdYCjCswSo0Gkb4ywc=", "owner": "NixOS", "repo": "nixpkgs", "rev": "7c8764b7c7b09b34f632464276218ef9090eaa11", "type": "github"},
+    "nixpkgs-unstable": {"narHash": "sha256-WrSODdZFVIs/Hh2NzC0bY+ROByi0bATg8WfePX8dPj8=", "owner": "nixos", "repo": "nixpkgs", "rev": "4fe25e12eb9f4c744966dd3de5a05246cf098601", "type": "github"},
+    "nixvim": {"narHash": "sha256-UHEzSMFI/2M3e+tvFT+D3kHp0aAeAjb9AjVL1CEaZ3I=", "owner": "nix-community", "repo": "nixvim", "rev": "1523bd93bd60b4a667510664e7863d8fe56eb128", "type": "github"},
+    "opencode": {"narHash": "sha256-XL76Qpm4GEFEn7Pt7g84sx+djEKnlpTTZXRgXJF3NRs=", "owner": "anomalyco", "repo": "opencode", "rev": "733b2c627e5aec39cb33cc22373bdce33053ef2c", "type": "github"},
+    "pi": {"narHash": "sha256-5Hyqkp4g2LCKfEiDF8NTxa0WZh83NkUwbFogk1FHpDk=", "owner": "lukasl-dev", "repo": "pi.nix", "rev": "66ff1253be6cd025012f9cf0c2b53af9bf77383a", "type": "github"},
+    "rsync34": {"narHash": "sha256-IfuPcOpwC+bYvBdtUhA9hHhY7xV7k9T5LeOTZFiJB4o=", "owner": "NixOS", "repo": "nixpkgs", "rev": "b349185bb79c7cf7ad8ea8c097931730bf473c71", "type": "github"},
+    "sops-nix": {"narHash": "sha256-3q/hxp/flW1PnV3Dx+H3p8kHGEHJ7251BqVMNsAAB9E=", "owner": "Mic92", "repo": "sops-nix", "rev": "11e5885d241743ff0193465d533b20e754bc3ce0", "type": "github"},
+    "stylix": {"narHash": "sha256-/odhJRZ0iueFk7Ik25/KTZJlgjtNPdzZPdG7KO2FWhM=", "owner": "nix-community", "repo": "stylix", "rev": "dfb8f93ee16d817811363b26c64d9e59bec03c5b", "type": "github"},
+    "treefmt-nix": {"narHash": "sha256-4Ml+sg6VyqMQMHb1X/wtwRbo/ORd+qJRnyF0yOThQB4=", "owner": "numtide", "repo": "treefmt-nix", "rev": "a0c62241aeda51fb2d57f575b5ae4e9d81e9580a", "type": "github"}
+  },
+  "registry": {
+    "nix_path": ["/etc/nix/path"],
+    "registry_names": ["agentmemory", "darwin", "fenix", "git-hooks", "home-manager", "homebrew", "nix-index-database", "nix-snapshotter", "nixneovimplugins", "nixos-lima", "nixpkgs", "nixpkgs-image", "nixpkgs-unstable", "nixvim", "op-shell-plugins", "opencode", "pared", "pi", "pyproject-build-systems", "pyproject-nix", "self", "sops-nix", "stylix", "treefmt-nix", "uv2nix"],
+    "search_path_targets": ["/etc/nix/path/agentmemory", "/etc/nix/path/darwin", "/etc/nix/path/fenix", "/etc/nix/path/git-hooks", "/etc/nix/path/home-manager", "/etc/nix/path/homebrew", "/etc/nix/path/nix-index-database", "/etc/nix/path/nix-snapshotter", "/etc/nix/path/nixneovimplugins", "/etc/nix/path/nixos-lima", "/etc/nix/path/nixpkgs", "/etc/nix/path/nixpkgs-image", "/etc/nix/path/nixpkgs-unstable", "/etc/nix/path/nixvim", "/etc/nix/path/op-shell-plugins", "/etc/nix/path/opencode", "/etc/nix/path/pared", "/etc/nix/path/pi", "/etc/nix/path/pyproject-build-systems", "/etc/nix/path/pyproject-nix", "/etc/nix/path/self", "/etc/nix/path/sops-nix", "/etc/nix/path/stylix", "/etc/nix/path/treefmt-nix", "/etc/nix/path/uv2nix"]
+  },
+  "runner_blockers": [
+    {"kind": "ci-cold-build", "name": "opencode", "reason": "cold opencode build exceeds the flake-check lane budget"},
+    {"kind": "ci-cold-build", "name": "agentmemory-opencode", "reason": "AgentMemory/OpenCode matrix build is too cold for the lane"},
+    {"kind": "ci-non-root-runner", "name": "lima-vm-config-validate", "reason": "limactl refuses to run as root in the flake-check job"},
+    {"kind": "ci-build-dir-race", "name": "fabro-workflows-validate", "reason": "fabro validate races build-dir cleanup"},
+    {"kind": "ci-redundant-hook", "name": "formatting", "reason": "the prek job already runs the formatting hooks"},
+    {"kind": "ci-redundant-hook", "name": "pre-commit-check", "reason": "the prek job runs prek run --all-files"}
+  ],
+  "schema_version": 1,
+  "secrets": {
+    "sops_rules": ["secrets/deskflow-cert\\.personal\\.yaml$", "secrets/fabro\\.fabro\\.yaml$", "secrets/linux-builder-client\\.personal\\.yaml$", "secrets/mac-builder-client\\.personal\\.yaml$", "secrets/mcp\\.personal\\.yaml$", "secrets/remote-builder\\.linux-builder\\.yaml$", "secrets/remote-builder\\.mac-builder\\.yaml$"],
+    "stores": ["secrets/deskflow-cert.personal.yaml", "secrets/fabro.fabro.yaml", "secrets/linux-builder-client.personal.yaml", "secrets/mac-builder-client.personal.yaml", "secrets/mcp.personal.yaml", "secrets/remote-builder.linux-builder.yaml", "secrets/remote-builder.mac-builder.yaml"]
+  },
+  "selectors": {
+    "apps": {
+      "aarch64-darwin": ["fabro-darwin-live-failure-validate", "fabro-darwin-live-validate", "fabro-sync-from-1password", "git-cache-clone", "git-clone-isolation", "git-mcp-secure-enclave-acceptance", "mac-builder-deploy", "mac-builder-readiness", "mac-builder-sync-from-1password", "mcp-sync-from-1password", "mcp-verify-secrets", "opencode-nono-audit", "opencode-nono-validate", "rtk-opencode-validate"],
+      "aarch64-linux": ["deploy-moodist", "fabro-darwin-live-failure-validate", "fabro-darwin-live-validate", "fabro-sync-from-1password", "git-cache-clone", "git-clone-isolation", "git-mcp-secure-enclave-acceptance", "mac-builder-deploy", "mac-builder-readiness", "mac-builder-sync-from-1password", "mcp-sync-from-1password", "mcp-verify-secrets", "opencode-nono-audit", "opencode-nono-validate", "rtk-opencode-validate"],
+      "x86_64-darwin": ["fabro-darwin-live-failure-validate", "fabro-darwin-live-validate", "fabro-sync-from-1password", "git-cache-clone", "git-clone-isolation", "git-mcp-secure-enclave-acceptance", "mac-builder-deploy", "mac-builder-readiness", "mac-builder-sync-from-1password", "mcp-sync-from-1password", "mcp-verify-secrets", "opencode-nono-audit", "opencode-nono-validate", "rtk-opencode-validate"]
+    },
+    "checks": {
+      "aarch64-darwin": ["aarch64-linux-devshell", "agentmemory-opencode-matrix", "ast-grep-mcp", "dependency-cooldown", "deskflow-host-wiring", "deskflow-render", "fabro-darwin-builds", "fabro-sandbox-pinned", "fabro-sandbox-tests", "fabro-service", "fabro-tailscale-reconcile", "fabro-vm-guest-eval", "fabro-workflows-model-fallbacks", "fabro-workflows-validate", "formatting", "gh-stack-mcp", "git-cache-clone", "git-cache-clone-package", "git-clone-isolation", "git-clone-isolation-package", "git-mcp", "github-mcp-server", "grep-app-mcp", "hammerspoon-brightness-ac-semantic", "hammerspoon-caffeinate-semantic", "hammerspoon-caffeinate-wiring", "hammerspoon-config-semantic", "hammerspoon-config-semantic-rejects-bogus", "hammerspoon-deskflow-watchdog-render", "hammerspoon-deskflow-watchdog-semantic", "hammerspoon-deskflow-watchdog-tests", "hammerspoon-deskflow-watchdog-wiring", "hammerspoon-host-wiring", "hammerspoon-keybindings", "hammerspoon-mic-mute-semantic", "hammerspoon-mic-mute-wiring", "hammerspoon-package", "hammerspoon-timezone-menubar-semantic", "hammerspoon-timezone-menubar-tests", "hammerspoon-timezone-menubar-wiring", "iii-agentmemory-isolation", "iii-packages", "kiro-spec", "kiro-spec-corpus", "kiro-spec-wiring", "lima-vm-config-validate", "lima-vm-service", "linux-nix-remote-builder", "litellm-affinity-bridge", "litellm-routing", "litellm-service", "mac-nix-remote-builder", "nixvim-config", "nixvim-integration", "nixvim-smoke", "nixvim-textobjects-keymaps", "omlx-service", "opencode-nono-audit-tests", "opencode-nono-audit-validate-check", "opencode-nono-disabled-equiv", "opencode-nono-launch-equiv", "opencode-nono-tests", "opencode-nono-validate-check", "opencode-turn-timestamps-hosts", "opencode-turn-timestamps-package", "opencode-turn-timestamps-tests", "personal-tailscale-service", "pre-commit-check", "rtk-opencode-tests", "rtk-opencode-validate-check", "sqlite-backup-tests", "subagent-context-budget-tests"],
+      "aarch64-linux": ["aarch64-linux-devshell", "ast-grep-mcp", "dependency-cooldown", "fabro-darwin-builds", "fabro-sandbox-pinned", "fabro-sandbox-tests", "fabro-service", "fabro-tailscale-reconcile", "fabro-vm-guest-eval", "fabro-workflows-model-fallbacks", "fabro-workflows-validate", "fly-app-deploy", "fly-app-generator", "fly-app-image", "fly-app-module", "formatting", "git-cache-clone", "git-cache-clone-package", "git-clone-isolation", "git-clone-isolation-package", "github-mcp-server", "grep-app-mcp", "hammerspoon-keybindings", "iii-agentmemory-isolation", "iii-packages", "lima-vm-service", "linux-nix-remote-builder", "litellm-affinity-bridge", "litellm-db-init", "litellm-routing", "litellm-service", "mac-nix-remote-builder", "omlx-service", "opencode-nono-audit-tests", "opencode-nono-audit-validate-check", "opencode-nono-validate-check", "opencode-turn-timestamps-package", "opencode-turn-timestamps-tests", "personal-tailscale-service", "postgres-scratch", "pre-commit-check", "rtk-opencode-tests", "rtk-opencode-validate-check", "subagent-context-budget-tests"],
+      "x86_64-darwin": ["aarch64-linux-devshell", "ast-grep-mcp", "dependency-cooldown", "fabro-darwin-builds", "fabro-sandbox-pinned", "fabro-sandbox-tests", "fabro-service", "fabro-tailscale-reconcile", "fabro-vm-guest-eval", "fabro-workflows-model-fallbacks", "formatting", "git-cache-clone", "git-cache-clone-package", "git-clone-isolation", "git-clone-isolation-package", "git-mcp", "github-mcp-server", "grep-app-mcp", "hammerspoon-keybindings", "iii-agentmemory-isolation", "iii-packages", "kiro-spec", "kiro-spec-corpus", "kiro-spec-wiring", "lima-vm-config-validate", "lima-vm-service", "linux-nix-remote-builder", "litellm-affinity-bridge", "litellm-routing", "litellm-service", "mac-nix-remote-builder", "omlx-service", "opencode-nono-audit-tests", "opencode-nono-audit-validate-check", "opencode-nono-tests", "opencode-nono-validate-check", "opencode-turn-timestamps-hosts", "opencode-turn-timestamps-package", "opencode-turn-timestamps-tests", "personal-tailscale-service", "pre-commit-check", "rtk-opencode-tests", "rtk-opencode-validate-check", "sqlite-backup-tests", "subagent-context-budget-tests"]
+    },
+    "darwinConfigurations": ["Brandons-MacBook-Pro", "mac-builder"],
+    "devShells": {
+      "aarch64-darwin": ["default"],
+      "aarch64-linux": ["default"],
+      "x86_64-darwin": ["default"]
+    },
+    "formatter": ["aarch64-darwin", "aarch64-linux", "x86_64-darwin"],
+    "lib": ["flyAppModule", "mkFlyAppImage", "mkFlyApps"],
+    "nixosConfigurations": ["fabro-vm", "linux-builder"],
+    "overlays": ["custom-packages", "fabro", "fixed-packages", "omlx", "tailscale", "unstable-packages"],
+    "packages": {
+      "aarch64-linux": ["fabro-sandbox-image", "fabro-sandbox-image-digest", "fabro-sandbox-smoke", "fabro-sandbox-verify", "fabro-vm-image", "fly-app-deploy", "kiro-spec"]
+    },
+    "systems": ["aarch64-darwin", "aarch64-linux", "x86_64-darwin"]
+  }
+}

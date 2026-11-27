@@ -1,0 +1,27 @@
+{
+  "selectors": {
+    "systems": ["aarch64-linux"],
+    "checks": { "aarch64-linux": ["alpha", "beta"] },
+    "apps": { "aarch64-linux": ["deploy"] },
+    "devShells": { "aarch64-linux": ["default"] },
+    "packages": { "aarch64-linux": ["image"] },
+    "formatter": ["aarch64-linux"],
+    "overlays": ["shared"],
+    "lib": ["mkThing"],
+    "darwinConfigurations": [],
+    "nixosConfigurations": ["guest"]
+  },
+  "registry": {
+    "registry_names": ["nixpkgs", "self"],
+    "nix_path": ["/etc/nix/path"],
+    "search_path_targets": ["/etc/nix/path/nixpkgs", "/etc/nix/path/self"]
+  },
+  "host_wiring": {
+    "personal_host": "host-a",
+    "darwin_hosts": ["host-a"],
+    "nixos_hosts": ["guest"],
+    "personal_opencode_base_package": "opencode-1.0.0",
+    "personal_opencode_package": "opencode-1.0.0",
+    "personal_sops_age_key": "/var/lib/sops-nix/key.txt"
+  }
+}

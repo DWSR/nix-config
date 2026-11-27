@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "selectors": {
+    "systems": ["aarch64-linux"],
+    "checks": { "aarch64-linux": ["alpha", "beta"] },
+    "apps": { "aarch64-linux": ["deploy"] },
+    "devShells": { "aarch64-linux": ["default"] },
+    "packages": { "aarch64-linux": ["image"] },
+    "formatter": ["aarch64-linux"],
+    "overlays": ["shared"],
+    "lib": ["mkThing"],
+    "darwinConfigurations": [],
+    "nixosConfigurations": ["guest"]
+  },
+  "registry": {
+    "registry_names": ["nixpkgs", "self"],
+    "nix_path": ["/etc/nix/path"],
+    "search_path_targets": ["/etc/nix/path/nixpkgs", "/etc/nix/path/self"]
+  },
+  "host_wiring": {
+    "personal_host": "host-a",
+    "darwin_hosts": ["host-a"],
+    "nixos_hosts": ["guest"],
+    "personal_opencode_base_package": "opencode-1.0.0",
+    "personal_opencode_package": "opencode-1.0.0",
+    "personal_sops_age_key": "/var/lib/sops-nix/key.txt"
+  },
+  "pins": {
+    "nixpkgs": {
+      "type": "github",
+      "owner": "NixOS",
+      "repo": "nixpkgs",
+      "rev": "0123456789abcdef",
+      "narHash": "sha256-fixture"
+    }
+  },
+  "ci": {
+    "jobs": { "flake-check": "macos-latest" },
+    "job_conditions": { "flake-check": "needs.dispatch.outputs.flake-check == 'true'" },
+    "dispatch_outputs": { "flake-check": "flake_check" },
+    "dispatch_assignments": { "flake_check": "false" },
+    "dispatch_guards": { "flake-check": 1 },
+    "dispatch_logic_sha256": "fixture-dispatch-logic",
+    "flake_check_exclusions": ["opencode"],
+    "required_commands": ["nix flake check"]
+  },
+  "secrets": {
+    "stores": ["secrets/example.yaml"],
+    "sops_rules": ["secrets/example\\.yaml$"]
+  },
+  "runner_blockers": [
+    {
+      "name": "opencode",
+      "kind": "ci-cold-build",
+      "reason": "the flake-check lane excludes the cold opencode build"
+    }
+  ]
+}
