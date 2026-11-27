@@ -25,6 +25,10 @@ FAILURE_PATH = ".git/oneshot-failure.md"
 FAILURE_REASON_PATH = ".git/oneshot-failure-reason"
 STAGE_FAILURE_PATH = ".git/oneshot-stage-failure.json"
 REVIEW_PATH = ".git/oneshot-review.json"
+RATE_LIMIT_WAIT_PATH = ".git/oneshot-rate-limit-wait.json"
+RATE_LIMIT_WAIT_CAP = 3600
+RATE_LIMIT_WAIT_CHUNK = 900
+RATE_LIMIT_WAIT_BACKOFF = 300
 REPORT_LIMIT = 60000
 DETAIL_LIMIT = 1500
 FAILURE_STAGES = (
@@ -518,6 +522,118 @@ def read_stdin_text():
         return ""
 
 
+def parse_rate_limit_hint(reason):
+    # Providers disagree on the field name and format: LiteLLM reports
+    # resets_in_seconds, HTTP clients report Retry-After, and both may appear
+    # as JSON, a header, or prose inside a stage failure. Prefer the longest
+    # hint when several are present so a wait never stops early.
+    hints = []
+    for pattern in (
+            r"resets?_in_seconds['\"]?\s*[:=]\s*['\"]?(-?\d+)",
+            r"retry[-_ ]?after['\"]?\s*[:=]\s*['\"]?(-?\d+)"):
+        for match in re.finditer(pattern, reason or "", re.I):
+            value = int(match.group(1))
+            if value > 0:
+                hints.append(value)
+    return max(hints) if hints else None
+
+
+def load_rate_limit_wait():
+    return load_json_file(RATE_LIMIT_WAIT_PATH)
+
+
+def save_rate_limit_wait(state):
+    try:
+        with open(RATE_LIMIT_WAIT_PATH, "w") as f:
+            json.dump(state, f, indent=1, sort_keys=True)
+    except OSError as error:
+        print("oneshot wait: could not save %s: %s" % (RATE_LIMIT_WAIT_PATH, error),
+              file=sys.stderr)
+
+
+def clear_rate_limit_wait(stage):
+    state = load_rate_limit_wait()
+    if stage not in state:
+        return
+    state.pop(stage, None)
+    save_rate_limit_wait(state)
+
+
+def plan_rate_limit_wait(reason, stage, state, now):
+    # A visit sleeps at most one chunk so the command never approaches the
+    # graph stall timeout (60m). The deadline survives visits, so a reset
+    # reported as resets_in_seconds=2856 is covered across several chunks
+    # even when the stage keeps failing in between.
+    entry = state.get(stage) if isinstance(state.get(stage), dict) else {}
+    waited = int(entry.get("waited") or 0)
+    deadline = entry.get("deadline")
+    try:
+        deadline = float(deadline)
+    except (TypeError, ValueError):
+        deadline = None
+    hint = parse_rate_limit_hint(reason)
+    if hint is not None:
+        candidate = now + hint
+        # Keep the earliest live deadline. A provider that repeats the same
+        # static hint must not push the reset out on every visit; a genuinely
+        # extended reset is picked up from the next failure after this one
+        # completes.
+        if deadline is None or deadline <= now or candidate < deadline:
+            deadline = candidate
+    if deadline is None or deadline <= now:
+        deadline = now + RATE_LIMIT_WAIT_BACKOFF
+    remaining = max(0.0, deadline - now)
+    budget = max(0, RATE_LIMIT_WAIT_CAP - waited)
+    if remaining > budget:
+        return {
+            "failure": (
+                "provider limit exceeds wait cap: %d seconds remain but only "
+                "%d of the %d second oneshot wait budget is left" % (
+                    remaining, budget, RATE_LIMIT_WAIT_CAP)),
+            "sleep": 0,
+            "state": state,
+            "waited": waited,
+        }
+    sleep_for = min(remaining, RATE_LIMIT_WAIT_CHUNK)
+    waited += int(round(sleep_for))
+    # Keep the record after the deadline passes so a stage that is still rate
+    # limited hits the explicit cap failure instead of a generic node-visit
+    # limit. normalize clears it once the stage succeeds or fails otherwise.
+    state[stage] = {"deadline": deadline, "waited": waited}
+    return {"failure": "", "sleep": sleep_for, "state": state, "waited": waited}
+
+
+def wait_rate_limit(argv, stdin=None, sleep=None):
+    stage = argv[0] if argv else ""
+    if stage not in STAGE_RESULT_STAGES:
+        sys.exit("usage: tools.py wait <%s>" % "|".join(STAGE_RESULT_STAGES))
+    if stdin is None:
+        reason = read_stdin_text()
+    else:
+        reason = (stdin.read() or "").strip()
+    plan = plan_rate_limit_wait(
+        reason, stage, load_rate_limit_wait(), time.time())
+    if plan["failure"]:
+        print("oneshot wait: %s" % plan["failure"], file=sys.stderr)
+        print(json.dumps({
+            "outcome": "failed",
+            "failure_reason": plan["failure"],
+            "context_updates": {
+                "stage_failure": plan["failure"],
+                "rate_limit_wait_seconds": str(plan["waited"]),
+            },
+        }))
+        return
+    if plan["sleep"] > 0:
+        (sleep or time.sleep)(plan["sleep"])
+    save_rate_limit_wait(plan["state"])
+    print("oneshot wait: %s waited %d seconds in total" % (
+        stage, plan["waited"]), file=sys.stderr)
+    print(json.dumps({"outcome": "succeeded", "context_updates": {
+        "rate_limit_wait_seconds": str(plan["waited"]),
+    }}))
+
+
 def stage_result_error(stage, result):
     # The typed stages are validated by Fabro before they run, but a second
     # check here keeps routing deterministic if a context value is stale,
@@ -587,6 +703,14 @@ def normalize_stage_result(stage, result):
     if stage == "implement" and updates["impl_status"] == "BLOCKED":
         if load_json_file(STATE_PATH).get("issue_mode") == "triage":
             updates["stage_failure"] = with_triage_findings(result, detail)
+    # The wait nodes read this flat key through stdin_source. Keep the provider
+    # error (including resets_in_seconds/retry_after) for rate-limit routes, and
+    # clear it otherwise so a later wait cannot quote a stale hint.
+    if result["failure_class"] == "rate_limit":
+        updates["failure_reason"] = updates["stage_failure"]
+    else:
+        updates["failure_reason"] = ""
+        clear_rate_limit_wait(stage)
     return updates
 
 
@@ -1358,7 +1482,7 @@ def publish(argv):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <prepare|diagnose|baseline|check|normalize|fail|publish> [args]")
+        sys.exit("usage: tools.py <prepare|diagnose|baseline|check|normalize|wait|fail|publish> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
     handlers = {
         "prepare": prepare,
@@ -1366,6 +1490,7 @@ def main():
         "baseline": baseline,
         "check": check,
         "normalize": normalize,
+        "wait": wait_rate_limit,
         "fail": fail,
         "publish": publish,
     }
