@@ -189,6 +189,7 @@ digraph Oneshot {
     normalize_implement -> check [condition="outcome=succeeded && context.impl_status=READY && context.failure_class_ok=true"]
     normalize_implement -> wait_implement_rate_limit [condition="context.failure_class=rate_limit", weight=10]
     normalize_implement -> salvage [condition="context.impl_status=BLOCKED"]
+    normalize_implement -> salvage [condition="context.impl_status=BLOCKED && context.issue_mode=triage", weight=10]
     normalize_implement -> fail
     wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
     wait_implement_rate_limit -> fail
