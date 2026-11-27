@@ -49,7 +49,7 @@ let
     starship = mkInitCache "starship" "${config.programs.starship.package}/bin/starship init zsh > $out";
     pay-respects = mkInitCache "pay-respects" "${config.programs.pay-respects.package}/bin/pay-respects zsh --alias > $out";
     nix-your-shell = mkInitCache "nix-your-shell" "${config.programs.nix-your-shell.package}/bin/nix-your-shell zsh > $out";
-    direnv = mkInitCache "direnv" "${config.programs.direnv.package}/bin/direnv hook zsh > $out";
+    direnv-instant = mkInitCache "direnv-instant" "${config.programs.direnv-instant.finalPackage}/bin/direnv-instant hook zsh > $out";
     # atuin init zsh reads ~/.config/atuin/config.toml to decide which
     # bindkey/keymap_mode lines to emit. Within Nix's sandbox HOME is
     # /homeless-shelter (read-only), so atuin can't read or auto-create
@@ -76,6 +76,7 @@ in
   programs.pay-respects.enableZshIntegration = lib.mkForce false;
   programs.nix-your-shell.enableZshIntegration = lib.mkForce false;
   programs.direnv.enableZshIntegration = lib.mkForce false;
+  programs.direnv-instant.enableZshIntegration = lib.mkForce false;
   programs.atuin.enableZshIntegration = lib.mkForce false;
 
   programs.zsh = {
@@ -117,9 +118,9 @@ in
       '')
       (lib.mkOrder 600 ''
         # Cached tool init sources — replaces upstream HM enableZshIntegration
-        # eval-on-startup pattern. Each `source` line is byte-for-byte
-        # equivalent to the corresponding `eval "$(<tool> init zsh)"` but
-        # avoids a per-invocation subprocess fork. Cumulative measured
+        # eval-on-startup pattern. Each `source` loads the captured output of
+        # that tool's init or hook command, avoiding a per-invocation subprocess
+        # fork. Cumulative measured
         # savings vs. uncached: ~235ms warm.
         # Rex already multiplexes terminal panes, so auto-launching zellij
         # inside one nests two multiplexers. REX_BLOCK is set in every Rex
@@ -209,7 +210,7 @@ in
         fi
         source ${cachedInits.pay-respects}
         source ${cachedInits.nix-your-shell}
-        source ${cachedInits.direnv}
+        source ${cachedInits.direnv-instant}
         if [[ $options[zle] = on ]]; then
           source ${cachedInits.atuin}
         fi

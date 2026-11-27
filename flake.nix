@@ -3,6 +3,11 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
 
+    direnv-instant = {
+      url = "github:Mic92/direnv-instant";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Sandbox image builder for the fabro Lima VM guest
     # (configurations/fabro-vm): the pinned pdtpartners/nix-snapshotter,
     # consumed through its `overlays.default` so the guest's

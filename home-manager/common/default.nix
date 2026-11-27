@@ -8,6 +8,7 @@
 {
   imports = [
     inputs.nix-index-database.homeModules.nix-index
+    inputs.direnv-instant.homeModules.direnv-instant
 
     ./agentmemory.nix
     ./atuin.nix
@@ -122,7 +123,6 @@
       cosign
       crane
       curl
-      direnv
       dyff
       entr
       karabiner-elements
@@ -227,6 +227,7 @@
     mise.enable = false;
     nix-direnv.enable = true;
   };
+  programs.direnv-instant.enable = true;
 
   programs.fd = {
     enable = true;
