@@ -4,6 +4,9 @@ READY_LABEL = "fabro-ready"
 RUNNING_LABEL = "fabro-running"
 FAILED_LABEL = "fabro-failed"
 TYPE_LABEL = "type/oneshot"
+TRIAGE_LABEL = "fabro-failure-triage"
+TRIAGE_TITLE_PREFIX = "[fabro-failure-triage]"
+TRIAGE_BODY_MARKER = "<!-- fabro-failure-triage:"
 FABRO_API_DEFAULT = "http://host.docker.internal:32276/api/v1"
 ACTIVE_RUN_STATUSES = ("pending", "runnable", "initializing", "running", "blocked")
 DIFF_LIMIT = 1000
@@ -215,6 +218,19 @@ def write_issue_file(issue, owner, repo, labels):
         f.write("- Labels: %s\n" % (", ".join(sorted(labels)) or "(none)"))
         f.write("- Repository: %s/%s\n\n" % (owner, repo))
         f.write("## Body\n\n%s\n" % (issue.get("body") or "(empty)"))
+
+
+def issue_mode(title, body, labels):
+    # The failure-triage workflow files investigation issues with a dedicated
+    # label, title prefix, and body marker; any one of them selects the triage
+    # implementation rules.
+    if TRIAGE_LABEL in (labels or ()):
+        return "triage"
+    if re.match(r"^\s*%s" % re.escape(TRIAGE_TITLE_PREFIX), title or "", re.I):
+        return "triage"
+    if TRIAGE_BODY_MARKER in (body or ""):
+        return "triage"
+    return "standard"
 
 
 def issue_fingerprint(title, body):
@@ -538,6 +554,16 @@ def stage_result_error(stage, result):
     return ""
 
 
+def with_triage_findings(result, detail):
+    # A blocked triage issue still needs its investigation published, so keep
+    # the implementer's findings in the salvage reason even when the typed
+    # result only carried them in impl_concerns.
+    findings = str(result.get("impl_concerns") or "").strip()
+    if not findings or findings in detail:
+        return detail
+    return ("%s\n\n%s" % (detail, findings)) if detail else findings
+
+
 def normalize_stage_result(stage, result):
     updates = {
         "verdict": result["verdict"],
@@ -558,6 +584,9 @@ def normalize_stage_result(stage, result):
     # An empty value clears a previous round's failure so a later stage's
     # terminal failure cannot quote a stale reason.
     updates["stage_failure"] = detail
+    if stage == "implement" and updates["impl_status"] == "BLOCKED":
+        if load_json_file(STATE_PATH).get("issue_mode") == "triage":
+            updates["stage_failure"] = with_triage_findings(result, detail)
     return updates
 
 
@@ -876,6 +905,7 @@ def prepare(argv):
     title = (issue.get("title") or "").strip()
     if not title:
         sys.exit("issue #%d has an empty title" % issue_number)
+    mode = issue_mode(title, issue.get("body"), labels)
 
     pull, pull_reason = find_open_pull_request(owner, repo, issue_number)
     if pull is not None:
@@ -940,6 +970,7 @@ def prepare(argv):
             "repo": "%s/%s" % (owner, repo),
             "trunk": detect_trunk(),
             "baseline_sha": run(["git", "rev-parse", "HEAD"]),
+            "issue_mode": mode,
             "simplify_round": 0,
             "created_at": now_iso(),
             "fingerprint": fingerprint,
@@ -958,6 +989,7 @@ def prepare(argv):
     state.pop("environment_blocker", None)
     state["issue_title"] = title
     state["issue_url"] = issue.get("html_url", "")
+    state["issue_mode"] = mode
     write_issue_file(issue, owner, repo, labels)
     save_state(state)
     if persist_meta:
@@ -972,6 +1004,7 @@ def prepare(argv):
         "issue_title": title,
         "trunk": state["trunk"],
         "baseline_sha": state["baseline_sha"],
+        "issue_mode": mode,
     }}))
 
 
