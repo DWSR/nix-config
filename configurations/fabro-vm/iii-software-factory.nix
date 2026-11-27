@@ -11,8 +11,8 @@
 # absolute store path is the container's `gh_executable` setting, and the
 # GitHub PAT reaches each child gh process as `GH_TOKEN` from the sops
 # `iii-software-factory-env` template. PR webhooks stay disabled (the upstream
-# default), so the project does not run the `http`, `queue`, or `cron` workers
-# that path would need.
+# default), so the project does not run the `http` or `queue` workers that path
+# would need; the `cron` worker is included separately for scheduled functions.
 #
 # The same project runs the evaluation pair: the pinned `judge` hub and a
 # source-built `judge-openai` provider whose fixed OpenAI Decisions endpoint
@@ -63,6 +63,7 @@ let
     "llm-router"
     "provider-openai"
     "state"
+    "cron"
     "github"
     "judge"
     "judge-openai"
@@ -122,6 +123,16 @@ let
           "llm-router"
         ];
         scripts.run = lib.getExe cfg.providerOpenaiPackage;
+      };
+
+      # The cron worker hosts `cron::on-tick`, so factory functions can run on
+      # schedules without the http/queue webhook path.
+      cron = {
+        worker = "path://./cron";
+        required = true;
+        restart = "always";
+        startup_timeout = "60s";
+        scripts.run = lib.getExe cfg.cronPackage;
       };
 
       # The github worker exposes gh as typed github::* functions. It resolves
@@ -218,6 +229,14 @@ in
       description = ''
         Pinned state worker package backing llm-router's registry and the
         provider registration tokens.
+      '';
+    };
+
+    cronPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.iii-workers.cron;
+      description = ''
+        Pinned cron worker package hosting `cron::on-tick` schedules.
       '';
     };
 

@@ -77,7 +77,7 @@ in
     # engine, with its state in /var/lib/iii-console.
     ./iii-console.nix
     # The `software-factory` iii Compose project: the pinned `llm-router`,
-    # `provider-openai`, `state`, `github`, `judge`, and source-built
+    # `provider-openai`, `state`, `cron`, `github`, `judge`, and source-built
     # `judge-openai` workers, pointed at the loopback LiteLLM proxy, with its
     # state in /var/lib/iii-software-factory.
     ./iii-software-factory.nix
