@@ -131,6 +131,31 @@ class OneshotSalvageTests(unittest.TestCase):
             self.assertIn("Closes #372", create["body"])
             self.assertIn("refs/heads/oneshot/issue-372", git(origin, "for-each-ref", "--format=%(refname)", "refs/heads"))
 
+    def test_triage_draft_pr_carries_findings_and_remaining_external_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            (work / "fixture.txt").write_text("triage mitigation\n")
+            publish = {
+                "title": "fix(kiro-task): bound the review stage",
+                "summary": (
+                    "## Findings\n\nThe review stage hung until the stall watchdog cancelled it."
+                    "\n\n## Remaining external work\n\nRe-dispatch the task after the fix."),
+            }
+            (work / ".git/oneshot-publish.json").write_text(json.dumps(publish))
+            github = FakeGitHub()
+
+            run_publish(work, github, "implement: findings in the salvage reason")
+
+            create = next(req[2] for req in github.requests
+                          if req[:2] == ("POST", "/repos/example/project/pulls"))
+            self.assertTrue(create["draft"])
+            self.assertEqual(create["title"], publish["title"])
+            self.assertIn("## Findings", create["body"])
+            self.assertIn("The review stage hung", create["body"])
+            self.assertIn("## Remaining external work", create["body"])
+            self.assertIn("Re-dispatch the task after the fix.", create["body"])
+            self.assertIn("implement: findings in the salvage reason", create["body"])
+
     def test_salvage_posts_the_failure_summary_on_the_issue_and_draft_pr(self):
         with tempfile.TemporaryDirectory() as tmp:
             work, _origin = make_repo(tmp)

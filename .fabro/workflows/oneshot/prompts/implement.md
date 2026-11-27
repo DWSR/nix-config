@@ -10,9 +10,9 @@ pull request; a separate reviewer will adversarially re-check your work.
 
 - Issue content: `.git/oneshot-issue.md` (title, URL, labels, body). The issue is the
   contract: implement what it asks, nothing more.
-- Run state: `.git/oneshot-state.json` — `repo`, `trunk`, `baseline_sha`, and baseline check
-  evidence in `baseline_results`. Your change is measured with `git diff` against
-  `baseline_sha` and must stay under 1000 changed
+- Run state: `.git/oneshot-state.json` — `repo`, `trunk`, `baseline_sha`, `issue_mode`,
+  and baseline check evidence in `baseline_results`. Your change is measured with
+  `git diff` against `baseline_sha` and must stay under 1000 changed
   lines, where a modified line counts as one addition plus one deletion. Keep the diff
   minimal: no drive-by refactors, formatting churn, or unrelated renames.
 - Repository conventions: read `AGENTS.md` / `CLAUDE.md`, `README*`, and `CONTRIBUTING*`,
@@ -22,11 +22,33 @@ pull request; a separate reviewer will adversarially re-check your work.
   feedback on top of the issue: fix every finding and re-run the full validation set.
   Do not redo work the review already approved.
 
+## Triage issues
+
+When `issue_mode` in `.git/oneshot-state.json` is `triage`, the issue was filed by the
+`failure-triage` workflow to investigate failed runs. Apply these rules instead of the
+default investigation guidance:
+
+1. Investigate the cited runs and evidence before changing code. Use the run IDs, Fabro
+   URLs, and failure excerpts in the issue to establish the failing stage and root cause;
+   do not stop at restating the issue or at the external cancellation source.
+2. Implement the narrowest safe in-repo mitigation that keeps the failure from recurring,
+   following the same scope, test, and validation rules as any other oneshot. Prefer the
+   smallest workflow, timeout, or configuration change supported by the evidence.
+3. Write `.git/oneshot-publish.json` so its summary carries the investigation under
+   `## Findings` and names anything that must happen outside the repository under
+   `## Remaining external work`. The salvage publisher uses this text in the draft PR
+   body, so include the concrete evidence and the run IDs.
+4. Return `BLOCKED` only when no safe in-repo mitigation exists. In that case put the
+   findings, evidence, and remaining external work in both `stage_failure` and
+   `impl_concerns`; the workflow routes the blocked triage issue to the salvage publisher
+   so the draft PR carries them instead of ending as a bare failure.
+
 ## Execution protocol
 
 1. Read the issue and the surrounding code before writing anything. If the issue is
    ambiguous, pick the reading the repository's conventions support. Report BLOCKED only
-   when no reasonable reading exists, and say exactly what context is missing.
+   when no reasonable reading exists, and say exactly what context is missing. For a
+   `triage` issue, apply the triage rules above instead.
 2. Implement the smallest complete change that resolves the issue:
    - real behavior only: no mocks, stubs, placeholders, or TODO-only paths,
    - no new TBD, TODO, FIXME, HACK, or XXX markers in changed files,
@@ -71,7 +93,9 @@ pull request; a separate reviewer will adversarially re-check your work.
 
 Before finishing, write `.git/oneshot-publish.json` with the proposed PR metadata as a
 single JSON object: `{"title": "<single-line Conventional Commits title: type(scope): summary>", "summary": "<short markdown summary for the PR body>"}`.
-Then end your response with exactly one JSON object that satisfies the typed result schema
+For a `triage` issue, the summary must include the `## Findings` and
+`## Remaining external work` sections described above. Then end your response with
+exactly one JSON object that satisfies the typed result schema
 Fabro appends, and nothing after it. Keep every value a single-line JSON string; escape
 embedded double quotes as `\"` and newlines as `\n`.
 
@@ -88,6 +112,10 @@ On success:
 When blocked:
 
 {"verdict": "BLOCKED", "failure_class": "environment", "check_results": {}, "stage_failure": "implement: <the same concrete blocker>", "impl_summary": "<one line describing how far the change got>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": ""}
+
+When a `triage` issue has no safe in-repo mitigation, use `failure_class` `code` and put
+the findings, evidence, and remaining external work in `stage_failure` and
+`impl_concerns` so the salvage publisher can carry them into the draft PR.
 
 Use the same `stage_failure` shape for any other failure that stops the implementation
 before the change is ready, not only a blocked change.
