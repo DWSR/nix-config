@@ -1,0 +1,14 @@
+{
+ "baseline_sha": "3f759f34d771dc5d417f551be4f5ef7b48007122",
+ "created_at": "2026-11-27T21:45:36Z",
+ "fingerprint": "5906bd2c0c6e06027fd9765bf4045550c0f85b874442ac9208e804fd8616a5c5",
+ "issue": 376,
+ "issue_mode": "standard",
+ "issue_title": "fix(oneshot): wait out provider rate limits adaptively",
+ "issue_url": "https://github.com/DWSR/nix-config/issues/376",
+ "last_diff_files": 7,
+ "last_diff_lines": 389,
+ "repo": "DWSR/nix-config",
+ "simplify_round": 0,
+ "trunk": "main"
+}
