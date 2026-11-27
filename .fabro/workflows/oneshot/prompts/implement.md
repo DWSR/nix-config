@@ -101,7 +101,9 @@ embedded double quotes as `\"` and newlines as `\n`.
 
 Set `verdict` to `APPROVED` when the change is ready and `BLOCKED` when it is not. Set
 `failure_class` to `none` on success, or to `network`, `rate_limit`, `baseline`, `code`, or
-`environment` for the matching blocker. Put one entry per command in `check_results`,
+`environment` for the matching blocker. When the blocker is a provider rate limit, copy its
+`resets_in_seconds` or `retry_after` value into `stage_failure` so the wait stage can cover
+the reset. Put one entry per command in `check_results`,
 keyed by a short name, with `command`, `status`, `baseline_status`, and `reason`; use
 `not_recorded` when no baseline result exists.
 

@@ -128,27 +128,33 @@ digraph Oneshot {
         label="Wait for rate limit (implement)",
         shape=parallelogram,
         output_schema="routing",
-        timeout="6m",
-        max_visits=3,
-        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+        stdin_source="failure_reason",
+        timeout="18m",
+        max_visits=5,
+        max_retries=0,
+        script="python3 .git/oneshot-scripts/tools.py wait implement"
     ]
 
     wait_simplify_rate_limit [
         label="Wait for rate limit (simplify)",
         shape=parallelogram,
         output_schema="routing",
-        timeout="6m",
-        max_visits=3,
-        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+        stdin_source="failure_reason",
+        timeout="18m",
+        max_visits=5,
+        max_retries=0,
+        script="python3 .git/oneshot-scripts/tools.py wait simplify"
     ]
 
     wait_review_rate_limit [
         label="Wait for rate limit (review)",
         shape=parallelogram,
         output_schema="routing",
-        timeout="6m",
-        max_visits=3,
-        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+        stdin_source="failure_reason",
+        timeout="18m",
+        max_visits=5,
+        max_retries=0,
+        script="python3 .git/oneshot-scripts/tools.py wait review"
     ]
 
     publish [
