@@ -151,7 +151,9 @@ after it. Keep every value a single-line JSON string; escape embedded double quo
 `\"` and newlines as `\n`.
 
 Set `verdict` to exactly `APPROVED`, `REJECTED`, or `BLOCKED`. Set `failure_class` to
-exactly `none`, `network`, `rate_limit`, `baseline`, `code`, or `environment`. Put one
+exactly `none`, `network`, `rate_limit`, `baseline`, `code`, or `environment`. When the
+blocker is a provider rate limit, copy its `resets_in_seconds` or `retry_after` value into
+`stage_failure` so the wait stage can cover the reset. Put one
 entry per command in `check_results`, keyed by a short name, with `command`, `status`,
 `baseline_status`, and `reason`; use `not_recorded` when no baseline result exists.
 
