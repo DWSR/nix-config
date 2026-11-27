@@ -1,0 +1,14 @@
+{
+ "baseline_sha": "aef245ed183326a1645cc7c27485364a2013e9af",
+ "created_at": "2026-11-27T01:15:33Z",
+ "fingerprint": "5a466dc1eabbc72372ca9ac30f73df8d5a7f968d7fe3772f4c0c74e4d8da85c0",
+ "issue": 377,
+ "issue_mode": "standard",
+ "issue_title": "feat(oneshot): handle investigation issues with a mitigation PR",
+ "issue_url": "https://github.com/DWSR/nix-config/issues/377",
+ "last_diff_files": 6,
+ "last_diff_lines": 356,
+ "repo": "DWSR/nix-config",
+ "simplify_round": 0,
+ "trunk": "main"
+}
