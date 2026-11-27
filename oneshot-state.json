@@ -1,0 +1,13 @@
+{
+ "baseline_sha": "624621ef9cc8cdec0de010dd97af8054cadbaf94",
+ "created_at": "2026-11-27T00:15:32Z",
+ "fingerprint": "f1e5c8bee0fd9b497030941e6a52421148bcc0628c5b567c614ca6052756e3f7",
+ "issue": 385,
+ "issue_title": "test(oneshot): cover the failure-routing matrix",
+ "issue_url": "https://github.com/DWSR/nix-config/issues/385",
+ "last_diff_files": 2,
+ "last_diff_lines": 349,
+ "repo": "DWSR/nix-config",
+ "simplify_round": 0,
+ "trunk": "main"
+}
